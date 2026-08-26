@@ -1,5 +1,13 @@
 export type AgentStatus = "ready" | "busy" | "stopped" | "error";
-export type RunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "blocked"
+  | "held"
+  | "terminated";
 
 export interface Agent {
   id: string;
@@ -36,6 +44,35 @@ export interface AgentRun {
     outputTokens?: number;
   } | null;
   createdAt: string;
+}
+
+export interface PolicyDecision {
+  id: string;
+  agentId: string;
+  runId: string;
+  rule: string;
+  command: string;
+  detail: string;
+  /** False when the policy only observed the command (monitor mode). */
+  enforced: boolean;
+  decidedAt: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  agentId: string;
+  runId: string;
+  prompt: string;
+  rule: string;
+  command: string;
+  detail: string;
+  hosts: string[];
+  status: "pending" | "approved" | "denied";
+  requestedAt: string;
+  resolvedBy: string | null;
+  decisionReason: string | null;
+  resolvedAt: string | null;
+  continuationRunId: string | null;
 }
 
 export interface SystemInfo {

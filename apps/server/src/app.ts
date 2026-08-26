@@ -10,6 +10,13 @@ import type { AgentService } from "./agent-service.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
+const approvalIdParams = z.object({ id: z.string().uuid() });
+const approvalDecisionBody = z.object({
+  decision: z.enum(["approve", "deny"]),
+  actor: z.string().trim().min(1).max(120),
+  // Required: the audit trail claims every decision records why, so enforce it.
+  reason: z.string().trim().min(1).max(2000),
+});
 const createAgentBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().max(500).optional(),
@@ -121,6 +128,28 @@ export async function createApp(
     const body = messageBody.parse(request.body);
     const result = await service.sendMessage(id, body.content);
     return reply.code(202).send(result);
+  });
+
+  app.get("/api/agents/:id/policy-events", async (request) => {
+    const { id } = agentIdParams.parse(request.params);
+    return { policyEvents: service.getPolicyEvents(id) };
+  });
+
+  app.get("/api/agents/:id/approvals", async (request) => {
+    const { id } = agentIdParams.parse(request.params);
+    return { approvals: service.listApprovals(id) };
+  });
+
+  app.post("/api/approvals/:id", async (request, reply) => {
+    const { id } = approvalIdParams.parse(request.params);
+    const body = approvalDecisionBody.parse(request.body);
+    const result = await service.resolveApproval(
+      id,
+      body.decision,
+      body.actor,
+      body.reason,
+    );
+    return reply.code(200).send(result);
   });
 
   app.get("/api/runs/:id", async (request) => {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildCodexArgs, parseCodexEventLine } from "./codex-runner.js";
+import {
+  buildCodexArgs,
+  emptyParsedEvents,
+  parseCodexEventLine,
+} from "./codex-runner.js";
 
 describe("Codex runner protocol", () => {
   it("builds a new-session invocation", () => {
@@ -38,16 +42,7 @@ describe("Codex runner protocol", () => {
   });
 
   it("extracts the session, final message and usage", () => {
-    const parsed = {
-      messages: [] as string[],
-      threadId: null as string | null,
-      usage: null as {
-        inputTokens?: number;
-        cachedInputTokens?: number;
-        outputTokens?: number;
-      } | null,
-      errors: [] as string[],
-    };
+    const parsed = emptyParsedEvents(null);
     parseCodexEventLine(
       JSON.stringify({ type: "thread.started", thread_id: "thread-123" }),
       parsed,

@@ -1,4 +1,11 @@
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type {
+  Agent,
+  AgentRun,
+  ApprovalRequest,
+  Message,
+  PolicyDecision,
+  SystemInfo,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -78,4 +85,18 @@ export const api = {
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
+  policyEvents: (id: string) =>
+    request<{ policyEvents: PolicyDecision[] }>("/api/agents/" + id + "/policy-events"),
+  approvals: (id: string) =>
+    request<{ approvals: ApprovalRequest[] }>("/api/agents/" + id + "/approvals"),
+  resolveApproval: (
+    approvalId: string,
+    decision: "approve" | "deny",
+    actor: string,
+    reason: string,
+  ) =>
+    request<{ approval: ApprovalRequest; continuationRun: AgentRun | null }>(
+      "/api/approvals/" + approvalId,
+      { method: "POST", body: JSON.stringify({ decision, actor, reason }) },
+    ),
 };

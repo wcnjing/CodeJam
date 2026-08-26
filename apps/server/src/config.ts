@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { REVIEWABLE_RULES } from "./command-policy.js";
 
 const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
@@ -44,6 +45,15 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://ark.cn-beijing.volces.com/api/v3"),
+  POLICY_ALLOWED_HOSTS: z.string().default(""),
+  POLICY_ENFORCEMENT: z.enum(["enforce", "monitor"]).default("enforce"),
+  // Rules whose denials pause for human approval instead of hard-blocking.
+  // Deliberately defaults to egress only: secret-access rules are never
+  // reviewable, so no human can approve exfiltrating a protected secret.
+  POLICY_REVIEW_RULES: z.string().default("network-egress-denied"),
+  // Step budget: max shell commands one run may execute before it is killed as
+  // runaway. Enforced by the platform, not the agent, and always on.
+  POLICY_MAX_COMMANDS: z.coerce.number().int().positive().default(50),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
@@ -87,8 +97,37 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",
     arkBaseUrl: env.ARK_BASE_URL.replace(/\/+$/, ""),
+    policyAllowedHosts: env.POLICY_ALLOWED_HOSTS.split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter((host) => host.length > 0),
+    policyEnforcement: env.POLICY_ENFORCEMENT,
+    policyMaxCommands: env.POLICY_MAX_COMMANDS,
+    policyReviewRules: parseReviewRules(env.POLICY_REVIEW_RULES),
     nodeEnv: env.NODE_ENV,
   };
+}
+
+/**
+ * Parses POLICY_REVIEW_RULES and enforces the code-level invariant that only
+ * REVIEWABLE_RULES may be human-approved. A config that names a secret-access
+ * rule is rejected at startup — loudly — rather than silently letting an
+ * operator approve exfiltration. Fails closed: unknown rules are refused.
+ */
+function parseReviewRules(raw: string): string[] {
+  const requested = raw
+    .split(",")
+    .map((rule) => rule.trim())
+    .filter((rule) => rule.length > 0);
+  const forbidden = requested.filter((rule) => !REVIEWABLE_RULES.includes(rule));
+  if (forbidden.length > 0) {
+    throw new Error(
+      "POLICY_REVIEW_RULES may only contain reviewable rules (" +
+        REVIEWABLE_RULES.join(", ") +
+        "). Secret-access rules can never be human-approved. Rejected: " +
+        forbidden.join(", "),
+    );
+  }
+  return requested;
 }
 
 export function isArkConfigured(config: AppConfig): boolean {

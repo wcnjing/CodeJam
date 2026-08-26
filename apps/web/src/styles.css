@@ -13,6 +13,7 @@
   --purple-soft: #efecff;
   --green: #33906d;
   --red: #c55353;
+  --amber: #c98a2e;
   --shadow: 0 24px 60px rgba(39, 38, 33, 0.12);
 }
 
@@ -1095,4 +1096,174 @@ textarea:focus {
   .form-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Command policy: enforcement is visually distinct from an ordinary failure —
+   a blocked Run means the control worked, not that something broke. */
+.run-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 2px solid var(--amber);
+  background: #fdf4e6;
+  padding: 11px 13px;
+  color: #8a5a1c;
+  font-size: 11px;
+}
+
+.run-blocked strong {
+  font-size: 12px;
+}
+
+.policy-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 3px;
+  padding-top: 7px;
+  border-top: 1px solid #f0dfc2;
+}
+
+.policy-rule {
+  align-self: flex-start;
+  border-radius: 3px;
+  background: #8a5a1c;
+  padding: 2px 6px;
+  color: #fdf4e6;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.run-blocked code,
+.policy-list code {
+  display: block;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: #f6ead6;
+  padding: 6px 8px;
+  color: #6f4715;
+  font-size: 10px;
+  white-space: pre;
+}
+
+.policy-count {
+  margin-left: 5px;
+  border-radius: 8px;
+  background: var(--amber);
+  padding: 1px 6px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.policy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.policy-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--amber);
+  border-radius: 5px;
+  background: var(--paper);
+  padding: 10px 12px;
+}
+
+.policy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.policy-note,
+.policy-empty {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.policy-empty {
+  margin: 0;
+}
+
+.policy-mode {
+  margin-right: auto;
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.policy-mode.enforced {
+  background: #f6e0e0;
+  color: #9e4545;
+}
+
+.policy-mode.monitored {
+  background: #e6e9f5;
+  color: #4a5480;
+}
+
+/* Held for human approval: neither success nor failure — a decision is pending.
+   Distinct blue so it reads as "your move", not "something broke". */
+.run-held {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-left: 2px solid var(--purple);
+  background: var(--purple-soft);
+  padding: 12px 14px;
+  color: #3f3486;
+  font-size: 11px;
+}
+
+.run-held strong {
+  font-size: 12px;
+}
+
+.approval-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.approval-controls label {
+  display: flex;
+  flex: 1 1 160px;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+  color: #5a4fa3;
+}
+
+.approval-controls input {
+  border: 1px solid #cfc6f2;
+  border-radius: 5px;
+  background: var(--paper);
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mini-held,
+.status-held .status-dot,
+.mini-dot.mini-held {
+  background: var(--purple);
 }

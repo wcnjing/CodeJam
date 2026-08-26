@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type {
+  Agent,
+  AgentRun,
+  ApprovalRequest,
+  Message,
+  PolicyDecision,
+  SystemInfo,
+} from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -45,6 +52,11 @@ export default function App() {
   const [form, setForm] = useState(emptyForm);
   const [prompt, setPrompt] = useState("");
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
+  const [policyEvents, setPolicyEvents] = useState<PolicyDecision[]>([]);
+  const [showPolicy, setShowPolicy] = useState(false);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [approver, setApprover] = useState("operator");
+  const [approvalReason, setApprovalReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -54,6 +66,27 @@ export default function App() {
   const mountedRef = useRef(true);
   const pollingRunIds = useRef(new Set<string>());
   selectedIdRef.current = selectedId;
+
+  const pendingApproval = useMemo(
+    () =>
+      approvals.find(
+        (item) => item.runId === activeRun?.id && item.status === "pending",
+      ) ?? null,
+    [approvals, activeRun],
+  );
+
+  const resolvedApproval = useMemo(
+    () =>
+      approvals.find(
+        (item) => item.runId === activeRun?.id && item.status !== "pending",
+      ) ?? null,
+    [approvals, activeRun],
+  );
+
+  const blockedDecision = useMemo(
+    () => policyEvents.find((event) => event.runId === activeRun?.id) ?? null,
+    [policyEvents, activeRun],
+  );
 
   const selected = useMemo(
     () => agents.find((agent) => agent.id === selectedId) ?? null,
@@ -74,6 +107,20 @@ export default function App() {
     const result = await api.messages(agentId);
     if (mountedRef.current && selectedIdRef.current === agentId) {
       setMessages(result.messages);
+    }
+  }, []);
+
+  const refreshPolicyEvents = useCallback(async (agentId: string) => {
+    const result = await api.policyEvents(agentId);
+    if (mountedRef.current && selectedIdRef.current === agentId) {
+      setPolicyEvents(result.policyEvents);
+    }
+  }, []);
+
+  const refreshApprovals = useCallback(async (agentId: string) => {
+    const result = await api.approvals(agentId);
+    if (mountedRef.current && selectedIdRef.current === agentId) {
+      setApprovals(result.approvals);
     }
   }, []);
 
@@ -99,10 +146,16 @@ export default function App() {
   useEffect(() => {
     setActiveRun(null);
     setShowSettings(false);
+    setShowPolicy(false);
+    setPolicyEvents([]);
+    setApprovals([]);
+    setApprovalReason("");
     if (!selectedId) {
       setMessages([]);
       return;
     }
+    void refreshPolicyEvents(selectedId).catch(() => undefined);
+    void refreshApprovals(selectedId).catch(() => undefined);
     void Promise.all([refreshMessages(selectedId), api.runs(selectedId)])
       .then(([, result]) => {
         if (selectedIdRef.current !== selectedId) return;
@@ -117,7 +170,7 @@ export default function App() {
       .catch((reason) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
-  }, [refreshMessages, selectedId]);
+  }, [refreshMessages, refreshPolicyEvents, refreshApprovals, selectedId]);
 
   useEffect(() => {
     if (selected) {
@@ -211,12 +264,46 @@ export default function App() {
         const result = await api.run(runId);
         if (selectedIdRef.current === agentId) setActiveRun(result.run);
         if (!["queued", "running"].includes(result.run.status)) {
-          await Promise.all([refreshMessages(agentId), refreshAgents()]);
+          await Promise.all([
+            refreshMessages(agentId),
+            refreshAgents(),
+            refreshPolicyEvents(agentId),
+            refreshApprovals(agentId),
+          ]);
           return;
         }
       }
     } finally {
       pollingRunIds.current.delete(runId);
+    }
+  };
+
+  const resolveApproval = async (
+    approval: ApprovalRequest,
+    decision: "approve" | "deny",
+  ) => {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.resolveApproval(
+        approval.id,
+        decision,
+        approver.trim() || "operator",
+        approvalReason.trim(),
+      );
+      setApprovalReason("");
+      await Promise.all([refreshApprovals(selected.id), refreshAgents()]);
+      if (result.continuationRun) {
+        setActiveRun(result.continuationRun);
+        void pollRun(result.continuationRun.id, selected.id).catch((reason) =>
+          setError(reason instanceof Error ? reason.message : String(reason)),
+        );
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -418,6 +505,16 @@ export default function App() {
                   {selected.status === "stopped" ? "Start" : "Stop"}
                 </button>
                 <button
+                  className="button button-ghost"
+                  onClick={() => setShowPolicy((current) => !current)}
+                  disabled={busy}
+                >
+                  Policy
+                  {policyEvents.length > 0 && (
+                    <span className="policy-count">{policyEvents.length}</span>
+                  )}
+                </button>
+                <button
                   className="button button-danger"
                   onClick={deleteAgent}
                   disabled={busy || selected.status === "busy"}
@@ -426,6 +523,85 @@ export default function App() {
                 </button>
               </div>
             </header>
+
+            {showPolicy && (
+              <section className="settings-panel">
+                <div className="settings-title">
+                  <div>
+                    <span className="eyebrow">Command policy</span>
+                    <h2>Enforcement decisions</h2>
+                  </div>
+                  <button type="button" onClick={() => setShowPolicy(false)}>×</button>
+                </div>
+                {policyEvents.length === 0 ? (
+                  <p className="policy-empty">
+                    No commands have been denied for this Agent. Decisions are recorded
+                    by the Runtime when a Run is blocked, not by this screen.
+                  </p>
+                ) : (
+                  <ul className="policy-list">
+                    {policyEvents.map((event) => (
+                      <li key={event.id}>
+                        <div className="policy-row">
+                          <span className="policy-rule">{event.rule}</span>
+                          <span
+                            className={
+                              "policy-mode " + (event.enforced ? "enforced" : "monitored")
+                            }
+                          >
+                            {event.enforced ? "blocked" : "observed only"}
+                          </span>
+                          <span>{formatTime(event.decidedAt)}</span>
+                        </div>
+                        <code>{event.command}</code>
+                        <span className="policy-note">{event.detail}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {approvals.length > 0 && (
+                  <>
+                    <div className="settings-title">
+                      <div>
+                        <span className="eyebrow">Approvals</span>
+                        <h2>Decision history</h2>
+                      </div>
+                    </div>
+                    <ul className="policy-list">
+                      {approvals.map((item) => (
+                        <li key={item.id}>
+                          <div className="policy-row">
+                            <span className="policy-rule">{item.rule}</span>
+                            <span
+                              className={
+                                "policy-mode " +
+                                (item.status === "approved"
+                                  ? "monitored"
+                                  : item.status === "denied"
+                                    ? "enforced"
+                                    : "")
+                              }
+                            >
+                              {item.status}
+                            </span>
+                            <span>
+                              {item.resolvedAt ? formatTime(item.resolvedAt) : "pending"}
+                            </span>
+                          </div>
+                          <code>{item.command}</code>
+                          <span className="policy-note">
+                            {item.resolvedBy
+                              ? item.status + " by " + item.resolvedBy +
+                                (item.decisionReason ? " — " + item.decisionReason : "")
+                              : "awaiting a human decision"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </section>
+            )}
 
             {showSettings && (
               <form className="settings-panel" onSubmit={saveAgent}>
@@ -536,6 +712,101 @@ export default function App() {
                   <article className="run-error">
                     <strong>Run failed</strong>
                     <span>{activeRun.error}</span>
+                  </article>
+                )}
+                {activeRun?.status === "terminated" && (
+                  <article className="run-blocked" role="alert">
+                    <strong>Run terminated by resource budget</strong>
+                    <span>
+                      {activeRun.error ??
+                        "The Run exceeded its step budget and was stopped by the platform."}
+                    </span>
+                  </article>
+                )}
+                {activeRun?.status === "held" && !pendingApproval && resolvedApproval && (
+                  <article className="run-held" role="status">
+                    <strong>
+                      Approval {resolvedApproval.status}
+                      {resolvedApproval.resolvedBy ? " by " + resolvedApproval.resolvedBy : ""}
+                    </strong>
+                    <span>
+                      {resolvedApproval.status === "denied"
+                        ? "The request was denied; the held Run did not continue."
+                        : "The request was approved and resumed as a new Run."}
+                    </span>
+                    {resolvedApproval.decisionReason && (
+                      <span className="policy-note">{resolvedApproval.decisionReason}</span>
+                    )}
+                  </article>
+                )}
+                {activeRun?.status === "held" && pendingApproval && (
+                  <article className="run-held" role="alert">
+                    <strong>Human approval required</strong>
+                    <span>
+                      The Agent tried to reach a host outside the allowlist. The Run
+                      is held and its container destroyed. A person must approve or
+                      deny before the task can continue.
+                    </span>
+                    <div className="policy-detail">
+                      <span className="policy-rule">{pendingApproval.rule}</span>
+                      <code>{pendingApproval.command}</code>
+                      <span>{pendingApproval.detail}</span>
+                    </div>
+                    <div className="approval-controls">
+                      <label>
+                        Approver
+                        <input
+                          value={approver}
+                          onChange={(event) => setApprover(event.target.value)}
+                          placeholder="your name"
+                        />
+                      </label>
+                      <label>
+                        Reason
+                        <input
+                          value={approvalReason}
+                          onChange={(event) => setApprovalReason(event.target.value)}
+                          placeholder="why you approve or deny"
+                        />
+                      </label>
+                    </div>
+                    <div className="approval-actions">
+                      <button
+                        className="button button-primary"
+                        disabled={busy || !approver.trim() || !approvalReason.trim()}
+                        onClick={() => resolveApproval(pendingApproval, "approve")}
+                      >
+                        Approve &amp; resume
+                      </button>
+                      <button
+                        className="button button-danger"
+                        disabled={busy || !approver.trim() || !approvalReason.trim()}
+                        onClick={() => resolveApproval(pendingApproval, "deny")}
+                      >
+                        Deny
+                      </button>
+                      {!approvalReason.trim() && (
+                        <span className="policy-note">A reason is required to decide.</span>
+                      )}
+                    </div>
+                  </article>
+                )}
+                {activeRun?.status === "blocked" && (
+                  <article className="run-blocked" role="alert">
+                    <strong>Run blocked by command policy</strong>
+                    <span>
+                      The Agent attempted an action the platform denies. Its Runtime
+                      container was terminated; any partial effect of the command
+                      already in flight may have occurred, and all further commands
+                      and retries are stopped.
+                    </span>
+                    {blockedDecision && (
+                      <div className="policy-detail">
+                        <span className="policy-rule">{blockedDecision.rule}</span>
+                        <code>{blockedDecision.command}</code>
+                        <span>{blockedDecision.detail}</span>
+                      </div>
+                    )}
                   </article>
                 )}
                 <div ref={messageEnd} />

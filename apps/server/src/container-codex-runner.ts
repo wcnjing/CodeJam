@@ -1,14 +1,14 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
-import { buildCodexArgs, parseCodexEventLine } from "./codex-runner.js";
-import { RunCancelledError } from "./errors.js";
-import type {
-  AgentRunner,
-  RunUsage,
-  RunnerRequest,
-  RunnerResult,
-} from "./types.js";
+import {
+  buildCodexArgs,
+  emptyParsedEvents,
+  parseCodexEventLine,
+} from "./codex-runner.js";
+import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
+import { policyContextFrom, scanCommands, type DetectedViolation } from "./command-policy.js";
+import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,15 +18,10 @@ interface ActiveContainer {
   cancelled: boolean;
   timedOut: boolean;
   outputExceeded: boolean;
+  violation: DetectedViolation | null;
+  budgetExceeded: boolean;
   settled: Promise<void>;
   termination: Promise<void> | null;
-}
-
-interface ParsedEvents {
-  messages: string[];
-  threadId: string | null;
-  usage: RunUsage | null;
-  errors: string[];
 }
 
 export function containerName(agentId: string, instanceId = "default"): string {
@@ -161,20 +156,24 @@ export class ContainerCodexRunner implements AgentRunner {
       cancelled: false,
       timedOut: false,
       outputExceeded: false,
+      violation: null,
+      budgetExceeded: false,
       settled,
       termination: null,
     };
     this.active.set(request.agentId, active);
 
-    const parsed: ParsedEvents = {
-      messages: [],
-      threadId: request.threadId,
-      usage: null,
-      errors: [],
-    };
+    const parsed = emptyParsedEvents(request.threadId);
+    const policyContext = policyContextFrom(
+      this.config.arkBaseUrl,
+      [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
+      [this.config.arkApiKey],
+    );
     let stdout = "";
     let stderr = "";
     let totalBytes = 0;
+    let scannedCommands = 0;
+    const observations: DetectedViolation[] = [];
 
     const consume = (chunk: Buffer, target: "stdout" | "stderr") => {
       totalBytes += chunk.byteLength;
@@ -188,9 +187,30 @@ export class ContainerCodexRunner implements AgentRunner {
         const lines = stdout.split(/\r?\n/);
         stdout = lines.pop() ?? "";
         for (const line of lines) parseCodexEventLine(line, parsed);
+        applyPolicy();
       } else {
         stderr += chunk.toString("utf8");
         if (stderr.length > 16_384) stderr = stderr.slice(-16_384);
+      }
+    };
+
+    // Scans commands not yet evaluated, records every denial, and destroys the
+    // container on the first. Declared here so the final stdout flush (below)
+    // is evaluated too — a command in the last unterminated line must not escape.
+    const applyPolicy = () => {
+      const violations = scanCommands(parsed.commands, scannedCommands, policyContext);
+      scannedCommands = parsed.commands.length;
+      // Step budget is a hard resource limit: enforced regardless of monitor
+      // mode, because a runaway loop must be stopped whether or not command
+      // policy is in shadow mode.
+      if (!active.budgetExceeded && parsed.commands.length > this.config.policyMaxCommands) {
+        active.budgetExceeded = true;
+        void this.removeContainer(active);
+      }
+      for (const violation of violations) observations.push(violation);
+      if (violations.length > 0 && !active.violation) {
+        active.violation = violations[0]!;
+        if (this.config.policyEnforcement === "enforce") void this.removeContainer(active);
       }
     };
 
@@ -209,7 +229,23 @@ export class ContainerCodexRunner implements AgentRunner {
         child.once("close", (code) => resolve(code ?? 1));
       });
       if (stdout.trim()) parseCodexEventLine(stdout.trim(), parsed);
+      // The final flush may have added commands; evaluate them before deciding.
+      applyPolicy();
       if (active.cancelled) throw new RunCancelledError();
+      if (active.violation && this.config.policyEnforcement === "enforce") {
+        throw new PolicyViolationError(
+          active.violation.rule,
+          active.violation.command,
+          active.violation.detail,
+          active.violation.hosts ?? [],
+        );
+      }
+      if (active.budgetExceeded) {
+        throw new BudgetExceededError(
+          this.config.policyMaxCommands,
+          parsed.commands.length,
+        );
+      }
       if (active.timedOut) {
         throw new Error("Runtime timed out after " + this.config.codexTimeoutMs + " ms");
       }
@@ -228,7 +264,12 @@ export class ContainerCodexRunner implements AgentRunner {
       }
       const output = parsed.messages.at(-1)?.trim();
       if (!output) throw new Error("Codex completed without an agent message");
-      return { output, threadId: parsed.threadId, usage: parsed.usage };
+      return {
+        output,
+        threadId: parsed.threadId,
+        usage: parsed.usage,
+        violations: observations,
+      };
     } finally {
       clearTimeout(timeout);
       this.active.delete(request.agentId);
