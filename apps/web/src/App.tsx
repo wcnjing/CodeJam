@@ -4,6 +4,7 @@ import type {
   Agent,
   AgentRun,
   ApprovalRequest,
+  EvaluationSummary,
   Message,
   PolicyDecision,
   SystemInfo,
@@ -42,6 +43,161 @@ function Spinner() {
   return <span className="spinner" aria-label="Loading" />;
 }
 
+const pct = (value: number) => (value * 100).toFixed(1) + "%";
+
+function EvaluationView({
+  summary,
+  onReload,
+}: {
+  summary: EvaluationSummary | null;
+  onReload: () => void;
+}) {
+  if (!summary) {
+    return (
+      <div className="eval-loading">
+        <Spinner /> Measuring the live policy engine…
+      </div>
+    );
+  }
+  const h = summary.headline;
+  return (
+    <div className="eval">
+      <header className="eval-header">
+        <div>
+          <span className="eyebrow">Security Evaluation</span>
+          <h1>Does a prohibited action actually escape?</h1>
+          <p>
+            Computed live from the running policy engine over {summary.corpusSize} labelled
+            cases — this is a measurement of the code enforcing at runtime, not a static report.
+          </p>
+        </div>
+        <button className="button button-ghost" onClick={onReload}>
+          ↻ Re-measure
+        </button>
+      </header>
+
+      {/* The money shot: baseline vs protected escape rate. */}
+      <section className="eval-hero">
+        <div className="eval-hero-side baseline">
+          <span className="eval-hero-label">No middleware</span>
+          <span className="eval-hero-value">{pct(h.baselineEscapeRate)}</span>
+          <span className="eval-hero-sub">of attacks execute</span>
+        </div>
+        <div className="eval-hero-arrow">→</div>
+        <div className="eval-hero-side protected">
+          <span className="eval-hero-label">Sentinel</span>
+          <span className="eval-hero-value">{pct(h.unsafeActionEscapeRate)}</span>
+          <span className="eval-hero-sub">Unsafe Action Escape Rate</span>
+        </div>
+      </section>
+
+      <section className="eval-tiles">
+        <div className="eval-tile">
+          <span className="eval-tile-value">{pct(h.attackBlockRate)}</span>
+          <span className="eval-tile-label">Attack block rate</span>
+          <span className="eval-tile-sub">{h.attacks - h.escaped}/{h.attacks} blocked</span>
+        </div>
+        <div className="eval-tile good">
+          <span className="eval-tile-value">
+            {summary.secrets.leaks}/{summary.secrets.attacks}
+          </span>
+          <span className="eval-tile-label">Secret leaks</span>
+          <span className="eval-tile-sub">
+            baseline leaked {summary.secrets.baselineLeaks}/{summary.secrets.attacks}
+          </span>
+        </div>
+        <div className="eval-tile">
+          <span className="eval-tile-value">{pct(summary.falsePositiveRate)}</span>
+          <span className="eval-tile-label">False positives</span>
+          <span className="eval-tile-sub">on {summary.benign} legitimate tasks</span>
+        </div>
+        <div className="eval-tile">
+          <span className="eval-tile-value">{summary.latency.p95.toFixed(1)} µs</span>
+          <span className="eval-tile-label">Policy latency p95</span>
+          <span className="eval-tile-sub">p50 {summary.latency.p50.toFixed(1)} µs</span>
+        </div>
+      </section>
+
+      <section className="eval-columns">
+        <div className="eval-panel">
+          <span className="eyebrow">Coverage by attack family</span>
+          <ul className="eval-family">
+            {summary.families.map((f) => {
+              const blocked = f.attacks - f.escaped;
+              const rate = f.attacks === 0 ? 1 : blocked / f.attacks;
+              return (
+                <li key={f.family}>
+                  <span className={"eval-family-mark " + (f.escaped === 0 ? "ok" : "gap")}>
+                    {f.escaped === 0 ? "✓" : "✗"}
+                  </span>
+                  <span className="eval-family-name">{f.family}</span>
+                  <span className="eval-family-bar">
+                    <span
+                      className={"eval-family-fill " + (f.escaped === 0 ? "ok" : "gap")}
+                      style={{ width: pct(rate) }}
+                    />
+                  </span>
+                  <span className="eval-family-count">
+                    {blocked}/{f.attacks}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        <div className="eval-panel">
+          <span className="eyebrow">Classifier quality (blind-set honest)</span>
+          <ul className="eval-metrics">
+            <li>
+              <span>Core detection</span>
+              <strong>{pct(summary.policy.coreRecall)}</strong>
+            </li>
+            <li>
+              <span>Evasion resistance</span>
+              <strong>{pct(summary.policy.evasionRecall)}</strong>
+            </li>
+            <li>
+              <span>Blind-set recall</span>
+              <strong>{pct(summary.policy.blindsetRecall)}</strong>
+            </li>
+            <li>
+              <span>Precision</span>
+              <strong>{pct(summary.policy.precision)}</strong>
+            </li>
+            <li>
+              <span>F1</span>
+              <strong>{pct(summary.policy.f1)}</strong>
+            </li>
+          </ul>
+          {summary.escapes.length > 0 && (
+            <div className="eval-escapes">
+              <span className="eyebrow">Known residual (named, not hidden)</span>
+              {summary.escapes.map((e) => (
+                <code key={e.id}>
+                  {e.id} · {e.family}
+                </code>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="eval-loop">
+        <span className="eyebrow">The governance loop — every command, not every prompt</span>
+        <div className="eval-loop-row">
+          {["Intercept", "Decide", "Contain / Hold", "Approve", "Recover"].map((step, i) => (
+            <span className="eval-loop-step" key={step}>
+              {step}
+              {i < 4 && <span className="eval-loop-arrow">→</span>}
+            </span>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -57,6 +213,8 @@ export default function App() {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [approver, setApprover] = useState("operator");
   const [approvalReason, setApprovalReason] = useState("");
+  const [view, setView] = useState<"agents" | "evaluation">("agents");
+  const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -121,6 +279,16 @@ export default function App() {
     const result = await api.approvals(agentId);
     if (mountedRef.current && selectedIdRef.current === agentId) {
       setApprovals(result.approvals);
+    }
+  }, []);
+
+  const openEvaluation = useCallback(async () => {
+    setView("evaluation");
+    setError(null);
+    try {
+      setEvaluation(await api.evaluation());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     }
   }, []);
 
@@ -356,8 +524,8 @@ export default function App() {
     return (
       <main className="auth-screen">
         <section className="auth-card" aria-live="polite">
-          <div className="brand-mark">A</div>
-          <span className="eyebrow">Agent Launchpad</span>
+          <div className="brand-mark">S</div>
+          <span className="eyebrow">Sentinel</span>
           <h1>Connecting to the control plane</h1>
           {error ? <div className="error-banner" role="alert">{error}</div> : <Spinner />}
         </section>
@@ -369,8 +537,8 @@ export default function App() {
     return (
       <main className="auth-screen">
         <form className="auth-card" onSubmit={unlock}>
-          <div className="brand-mark">A</div>
-          <span className="eyebrow">Agent Launchpad</span>
+          <div className="brand-mark">S</div>
+          <span className="eyebrow">Sentinel</span>
           <h1>Enter the access token</h1>
           <p>This shared demo token is configured by the platform operator.</p>
           {error && <div className="error-banner" role="alert">{error}</div>}
@@ -386,7 +554,7 @@ export default function App() {
             />
           </label>
           <button className="button button-primary" disabled={busy || !authInput.trim()}>
-            {busy ? <Spinner /> : "Open Launchpad"}
+            {busy ? <Spinner /> : "Open Sentinel"}
           </button>
         </form>
       </main>
@@ -397,9 +565,9 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">A</div>
+          <div className="brand-mark">S</div>
           <div>
-            <strong>Agent Launchpad</strong>
+            <strong>Sentinel</strong>
             <span>
               {system?.runtimeProvider === "container"
                 ? "Local container · Codex CLI"
@@ -413,9 +581,17 @@ export default function App() {
           onClick={() => {
             setForm(emptyForm);
             setShowCreate(true);
+            setView("agents");
           }}
         >
           <span>＋</span> Create Agent
+        </button>
+
+        <button
+          className={"button button-ghost eval-nav " + (view === "evaluation" ? "active" : "")}
+          onClick={openEvaluation}
+        >
+          <span>◈</span> Security Evaluation
         </button>
 
         <div className="sidebar-label">
@@ -425,9 +601,15 @@ export default function App() {
         <nav className="agent-list">
           {agents.map((agent) => (
             <button
-              className={"agent-card " + (agent.id === selectedId ? "selected" : "")}
+              className={
+                "agent-card " +
+                (agent.id === selectedId && view === "agents" ? "selected" : "")
+              }
               key={agent.id}
-              onClick={() => setSelectedId(agent.id)}
+              onClick={() => {
+                setSelectedId(agent.id);
+                setView("agents");
+              }}
             >
               <div className="agent-avatar">{agent.name.slice(0, 1).toUpperCase()}</div>
               <div className="agent-card-copy">
@@ -479,7 +661,9 @@ export default function App() {
           </div>
         )}
 
-        {selected ? (
+        {view === "evaluation" ? (
+          <EvaluationView summary={evaluation} onReload={openEvaluation} />
+        ) : selected ? (
           <>
             <header className="agent-header">
               <div>
@@ -856,8 +1040,8 @@ export default function App() {
           </>
         ) : (
           <div className="no-agent">
-            <div className="no-agent-art">A</div>
-            <span className="eyebrow">Agent Launchpad</span>
+            <div className="no-agent-art">S</div>
+            <span className="eyebrow">Sentinel</span>
             <h1>Your runtime is ready for an Agent.</h1>
             <p>Create a workspace, give Codex a job, and continue the conversation here.</p>
             <button

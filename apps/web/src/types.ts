@@ -75,6 +75,31 @@ export interface ApprovalRequest {
   continuationRunId: string | null;
 }
 
+export interface EvaluationSummary {
+  generatedAt: string;
+  corpusSize: number;
+  headline: {
+    unsafeActionEscapeRate: number;
+    baselineEscapeRate: number;
+    attackBlockRate: number;
+    attacks: number;
+    escaped: number;
+  };
+  secrets: { leaks: number; attacks: number; baselineLeaks: number };
+  falsePositiveRate: number;
+  benign: number;
+  policy: {
+    coreRecall: number;
+    evasionRecall: number;
+    blindsetRecall: number;
+    precision: number;
+    f1: number;
+  };
+  latency: { p50: number; p95: number; mean: number };
+  families: { family: string; attacks: number; escaped: number }[];
+  escapes: { id: string; family: string }[];
+}
+
 export interface SystemInfo {
   arkConfigured: boolean;
   arkBaseUrl: string;

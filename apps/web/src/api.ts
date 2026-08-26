@@ -2,6 +2,7 @@ import type {
   Agent,
   AgentRun,
   ApprovalRequest,
+  EvaluationSummary,
   Message,
   PolicyDecision,
   SystemInfo,
@@ -85,6 +86,7 @@ export const api = {
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
+  evaluation: () => request<EvaluationSummary>("/api/evaluation"),
   policyEvents: (id: string) =>
     request<{ policyEvents: PolicyDecision[] }>("/api/agents/" + id + "/policy-events"),
   approvals: (id: string) =>

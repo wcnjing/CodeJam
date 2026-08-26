@@ -1,15 +1,38 @@
-# Volc Agent Launchpad
+# Sentinel — govern every action, not just every prompt
 
-A minimal Agent platform for three-day middleware hackathons. It provides Agent
-CRUD, a browser Playground, persistent workspaces, and Codex CLI backed by the
-Volcengine Ark Responses API.
+**The problem.** AI agents run real shell commands with real credentials and
+open networking — and today nobody can see, approve, or stop what they actually
+*do*. Prompt filters guard what you say to an agent; nothing guards what the
+agent then executes.
 
-Run it locally with Docker, Colima, or rootless Podman, or deploy it to
-Volcengine ECS.
+**Sentinel** is a governance layer at the **action** boundary. Every command an
+agent runs is intercepted mid-execution, checked against policy, **stopped or
+held for human approval**, and recorded as redacted evidence — a complete loop of
+*intercept → decide → contain → approve → recover*, measured against an
+adversarial benchmark.
+
+**Why it's different.** Not a regex bolted on a chat box: a streamed runtime
+enforcement point + scoped human approval + recovery + a live evaluation
+dashboard that measures whether a prohibited action *escaped* (not whether a
+classifier fired). Built on the CodeJam starter kit's Kill Switch track.
+
+| | No middleware | Sentinel |
+| --- | ---: | ---: |
+| Attacks that execute (escape rate) | 100% | **1.6%** |
+| Secret leaks across 5 channels | 33/33 | **0/33** |
+| Legitimate tasks blocked | 0% | 2.3% |
+| Added per-command latency (p95) | — | **~2 µs** |
+
+*Numbers computed live in-app at **Security Evaluation** (`npm run bench:security`
+for the CLI). The one residual escape — a fully base64-encoded command — is named,
+not hidden.*
+
+Run it locally with Docker, Colima, or rootless Podman.
 
 > [!WARNING]
-> This is a single-user proof of concept. It has no identity or tracing
-> middleware. Do not use production data or credentials. See
+> Single-user proof of concept built on the CodeJam starter kit. The command
+> policy is a **reactive command-text guard, not a network allowlist** (see
+> Limitations). Do not use production data or credentials. See
 > [SECURITY.md](SECURITY.md).
 
 ## Selected track: Kill Switch (safety and sandboxing)
@@ -190,7 +213,9 @@ classifier fired:
 npm run bench:security   # headline dashboard + baseline-vs-protected
 ```
 
-It reports the **Unsafe Action Escape Rate**, secret-leak rate across channels,
+The same numbers render **live in the app** under **Security Evaluation** in the
+sidebar — computed on demand from the running policy engine, so the dashboard can
+never drift from what actually enforces. It reports the **Unsafe Action Escape Rate**, secret-leak rate across channels,
 per-family coverage, and a baseline-vs-protected comparison. On the current
 corpus: escape rate drops from 100% (no middleware) to 1.6% (one documented
 base64 residual, named not hidden), secret leaks from 33/33 to 0/33, with a
