@@ -1194,6 +1194,47 @@ textarea:focus {
   line-height: 1.5;
 }
 
+/* What the command asked to do, in the vocabulary the policy decides on. */
+.policy-capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.policy-capabilities li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+}
+.capability-name {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+.capability-resource {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  padding: 0 5px;
+  border-radius: 3px;
+  line-height: 1.6;
+}
+.capability-resource.untrusted {
+  background: #fdeceb;
+  color: #a3231b;
+}
+.capability-resource.trusted {
+  background: #eaf3ec;
+  color: #256b39;
+}
+.capability-via {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
 .policy-empty {
   margin: 0;
 }

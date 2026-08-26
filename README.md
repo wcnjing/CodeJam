@@ -74,6 +74,31 @@ and destroys the Runtime container on the first denial.
 > which is deliberately deferred (see Limitations). The claims below are scoped
 > to what a command-text guard can actually enforce.
 
+The engine is layered so that a rule is a statement about capabilities, not a
+pattern over shell syntax:
+
+```
+command text
+  -> shell-parse.ts    structured invocations + the destinations they name
+  -> capabilities.ts   what the action would DO: NETWORK_EGRESS, SECRET_READ
+  -> command-policy.ts rules over capabilities, first match decides
+```
+
+Each rule names the invariant it enforces — *"An actor holding SECRET_READ may
+not also exercise NETWORK_EGRESS"* — rather than enumerating the spellings that
+reach it. `curl`, `python -c`, a `/dev/tcp` redirect and an obfuscated binary
+next to a URL are four spellings of one capability, and the rule says so once.
+The decision carries the capability set, so evidence and the operator timeline
+report *what was attempted* (`NETWORK_EGRESS -> attacker.example, via
+network-tool`) rather than which regex matched.
+
+This is an abstraction over the same evidence, not a stronger guarantee than
+parsing can give: capabilities are still *inferred from command text*, so a
+destination built at runtime or a fully encoded command remains invisible. The
+seam exists so that the ceiling is in one identified layer, and so the same
+rules can later govern non-shell actions — an MCP tool call or a database write
+reaches the policy as a capability request too.
+
 ```mermaid
 flowchart LR
   UI["Browser<br/>Playground"] -->|POST /messages| API["Fastify API"]

@@ -770,6 +770,28 @@ export default function App() {
                         </div>
                         <code>{event.command}</code>
                         <span className="policy-note">{event.detail}</span>
+                        {event.capabilities && event.capabilities.length > 0 && (
+                          <ul className="policy-capabilities">
+                            {event.capabilities.map((request, index) => (
+                              <li key={index}>
+                                <span className="capability-name">
+                                  {request.capability}
+                                </span>
+                                {request.resource && (
+                                  <span
+                                    className={
+                                      "capability-resource " +
+                                      (request.trusted ? "trusted" : "untrusted")
+                                    }
+                                  >
+                                    {request.resource}
+                                  </span>
+                                )}
+                                <span className="capability-via">via {request.via}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>
