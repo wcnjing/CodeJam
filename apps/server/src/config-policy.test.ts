@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config.js";
+import { codexConfigToml, loadConfig } from "./config.js";
 
 const base = { NODE_ENV: "test", ARK_API_KEY: "k", ARK_MODEL: "ep-test" } as const;
 
@@ -27,5 +27,19 @@ describe("POLICY_REVIEW_RULES invariant", () => {
 
   it("defaults to egress-only", () => {
     expect(loadConfig(base).policyReviewRules).toEqual(["network-egress-denied"]);
+  });
+});
+
+// @covers TM-AGENT-002
+describe("Codex shell credential isolation", () => {
+  it("keeps the Ark key available to Codex but excludes it from shell commands", () => {
+    const toml = codexConfigToml(loadConfig(base));
+    expect(toml).toContain('env_key = "ARK_API_KEY"');
+    expect(toml).toContain("[shell_environment_policy]");
+    expect(toml).toContain("ignore_default_excludes = false");
+    // `exclude` is the documented key; a `filters` sub-table does not exist and
+    // would leave the explicit rule inert.
+    expect(toml).toContain('exclude = ["ARK_API_KEY"]');
+    expect(toml).not.toContain("[shell_environment_policy.filters]");
   });
 });

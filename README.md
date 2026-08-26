@@ -19,10 +19,10 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 
 | Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
-| Attacks the policy would allow | 100% | **1.4%** |
-| Secret-channel attacks allowed | 33/33 | **0/33** |
-| Legitimate tasks blocked | 0% | 2.2% |
-| Added per-command decision latency (p95) | — | **~2 µs** |
+| Attacks the policy would allow | 100% | **1.0%** |
+| Secret-channel attacks allowed | 39/39 | **0/39** |
+| Legitimate tasks blocked | 0% | 1.4% |
+| Added per-command decision latency (p95) | — | **~24 µs** |
 
 *Computed live in-app at **Security Evaluation** (`npm run bench:security` for the
 CLI). These are policy **decisions** on a corpus we authored, not observed
@@ -34,7 +34,7 @@ Run it locally with Docker, Colima, or rootless Podman.
 
 > [!WARNING]
 > Single-user proof of concept built on the CodeJam starter kit. The command
-> policy is a **reactive command-text guard, not a network allowlist** (see
+> network policy is a **reactive command-text guard, not a network allowlist** (see
 > Limitations). Do not use production data or credentials. See
 > [SECURITY.md](SECURITY.md).
 
@@ -46,9 +46,10 @@ contains attempted secret exfiltration from inside the Agent Runtime.**
 ### The problem
 
 The Starter Kit hands every Agent Run a container with real shell access, a real
-credential in its environment (`ARK_API_KEY`), and unrestricted outbound
-networking. Nothing observed what commands the Agent ran — the event parser read
-only assistant messages and token usage, discarding everything else. A
+model credential available to Codex, and unrestricted outbound networking.
+Originally, Agent-authored commands inherited that credential as
+`ARK_API_KEY`. Nothing observed what commands the Agent ran — the event parser
+read only assistant messages and token usage, discarding everything else. A
 prompt-injected or malicious task could run:
 
 ```
@@ -106,6 +107,12 @@ flowchart LR
   `item.started`, before it finishes), so this stops continuation and retries —
   but a fast single command may complete a partial effect before the container
   is torn down. It is containment, not a guarantee that zero bytes left.
+- **Credential boundary:** generated Codex configuration keeps `ARK_API_KEY`
+  available to the model provider but excludes it from spawned shell commands;
+  Codex's default KEY/SECRET/TOKEN exclusions remain enabled. Generic `env`,
+  Node `process.env`, and Python `os.environ` inspection therefore stays usable
+  without disclosing credentials. Explicit Ark-key dereferences and
+  `/proc/.../environ` reads are also denied as defense in depth.
 - **On failure:** a policy denial keeps the Agent `ready`, not `error` — the
   control working is not an operator problem to clear, and the next task runs
   normally.
@@ -220,13 +227,14 @@ sidebar — computed on demand from the running policy engine, so the dashboard 
 never drift from what actually enforces. It reports the **policy-predicted escape
 rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
-drops from 100% (no middleware) to 1.4% (one documented base64 residual, named
-not hidden), secret-channel attacks allowed from 33/33 to 0/33, with a p95
-decision latency of ~2 µs.
+drops from 100% (no middleware) to 1.0% (one documented base64 residual, named
+not hidden), secret-channel attacks allowed from 39/39 to 0/39, with a p95
+decision latency of ~24 µs in the latest CLI run.
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
-> a corpus *we authored*, so 1.4% is corpus performance, not an expected
+> an authored corpus plus a retained external-review regression set, so 1.0% is
+> corpus performance, not an expected
 > real-world bypass rate (simple obfuscations still exist — see Limitations). The
 > physical proof that a byte never leaves is the separate **live mock-collector
 > demo** (zero requests), which does exercise a real container.
@@ -277,11 +285,11 @@ Recorded honestly, because each one is a real gap:
 
 ### Security Evaluation — measured live from the running policy engine
 
-Baseline-vs-Sentinel escape rate, secret-leak rate, per-family coverage (with the
+Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage (with the
 one residual named), classifier quality, and policy latency — computed on demand
 from the same engine that enforces, so it can never drift from what actually runs.
 
-![Sentinel Security Evaluation dashboard: 100% to 1.4% policy-predicted escape rate, 0/33 secret leaks, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
+![Sentinel Security Evaluation dashboard: 100% to 1.0% policy-predicted escape rate, 0/39 secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
 ### Human approval — a held run awaiting a decision
 

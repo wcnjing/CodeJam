@@ -26,7 +26,8 @@ export interface EvaluationSummary {
   policy: {
     coreRecall: number;
     evasionRecall: number;
-    blindsetRecall: number;
+    externalReviewRecall: number;
+    externalReviewFalsePositiveRate: number;
     precision: number;
     f1: number;
   };
@@ -75,7 +76,8 @@ export function buildEvaluationSummary(): EvaluationSummary {
     policy: {
       coreRecall: evalResult.coreRecall,
       evasionRecall: evalResult.evasionRecall,
-      blindsetRecall: evalResult.holdoutRecall,
+      externalReviewRecall: evalResult.externalReviewRecall,
+      externalReviewFalsePositiveRate: evalResult.externalReviewFalsePositiveRate,
       precision: evalResult.precision,
       f1: evalResult.f1,
     },

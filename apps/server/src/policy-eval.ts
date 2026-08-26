@@ -40,9 +40,9 @@ export interface EvaluationResult {
   evasionMisses: CorpusEntry[];
   precision: number;
   f1: number;
-  /** Recall restricted to entries written without reading the rule source. */
-  holdoutRecall: number;
-  holdoutFalsePositiveRate: number;
+  /** Recall on the retained external-review challenge cases. */
+  externalReviewRecall: number;
+  externalReviewFalsePositiveRate: number;
   byCategory: CategoryScore[];
   ruleCounts: Record<string, number>;
   /** Mean evaluateCommand cost in microseconds. */
@@ -77,10 +77,10 @@ export function evaluatePolicy(
   let evasionDetected = 0;
   let evasionTotal = 0;
   let benignTotal = 0;
-  let holdoutMaliciousTotal = 0;
-  let holdoutMaliciousDetected = 0;
-  let holdoutBenignTotal = 0;
-  let holdoutBenignBlocked = 0;
+  let externalMaliciousTotal = 0;
+  let externalMaliciousDetected = 0;
+  let externalBenignTotal = 0;
+  let externalBenignBlocked = 0;
 
   for (const entry of corpus) {
     const rule = isBlocked(entry);
@@ -103,9 +103,9 @@ export function evaluatePolicy(
         else falseNegatives.push(entry);
       }
 
-      if (entry.holdout) {
-        holdoutMaliciousTotal += 1;
-        if (rule) holdoutMaliciousDetected += 1;
+      if (entry.source === "external-review") {
+        externalMaliciousTotal += 1;
+        if (rule) externalMaliciousDetected += 1;
       }
     } else {
       benignTotal += 1;
@@ -113,9 +113,9 @@ export function evaluatePolicy(
       if (!rule) bucket.detected += 1;
       else falsePositives.push(entry);
 
-      if (entry.holdout) {
-        holdoutBenignTotal += 1;
-        if (rule) holdoutBenignBlocked += 1;
+      if (entry.source === "external-review") {
+        externalBenignTotal += 1;
+        if (rule) externalBenignBlocked += 1;
       }
     }
 
@@ -141,9 +141,9 @@ export function evaluatePolicy(
     evasionMisses,
     precision,
     f1,
-    holdoutRecall: rate(holdoutMaliciousDetected, holdoutMaliciousTotal),
-    holdoutFalsePositiveRate:
-      holdoutBenignTotal === 0 ? 0 : holdoutBenignBlocked / holdoutBenignTotal,
+    externalReviewRecall: rate(externalMaliciousDetected, externalMaliciousTotal),
+    externalReviewFalsePositiveRate:
+      externalBenignTotal === 0 ? 0 : externalBenignBlocked / externalBenignTotal,
     byCategory: [...categoryTotals.entries()]
       .map(([category, value]) => ({
         category,
@@ -194,9 +194,14 @@ export function formatReport(result: EvaluationResult): string {
   lines.push("  Precision           " + percent(result.precision));
   lines.push("  F1                  " + percent(result.f1));
   lines.push(
-    "  Blind-set recall    " +
-      percent(result.holdoutRecall) +
-      "   (entries written without reading the rules)",
+    "  External-review recall " +
+      percent(result.externalReviewRecall) +
+      "   (retained reviewer challenge cases)",
+  );
+  lines.push(
+    "  External-review FPR    " +
+      percent(result.externalReviewFalsePositiveRate) +
+      "   (legitimate reviewer cases blocked)",
   );
   lines.push("  Mean eval cost      " + result.meanMicroseconds.toFixed(1) + " us/command");
   lines.push("");

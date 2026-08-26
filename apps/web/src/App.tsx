@@ -104,9 +104,9 @@ function EvaluationView({
           <span className="eval-tile-value">
             {summary.secrets.leaks}/{summary.secrets.attacks}
           </span>
-          <span className="eval-tile-label">Secret leaks</span>
+          <span className="eval-tile-label">Secret-channel attacks allowed</span>
           <span className="eval-tile-sub">
-            baseline leaked {summary.secrets.baselineLeaks}/{summary.secrets.attacks}
+            baseline policy allowed {summary.secrets.baselineLeaks}/{summary.secrets.attacks}
           </span>
         </div>
         <div className="eval-tile">
@@ -150,7 +150,7 @@ function EvaluationView({
         </div>
 
         <div className="eval-panel">
-          <span className="eyebrow">Classifier quality (blind-set honest)</span>
+          <span className="eyebrow">Classifier quality (reviewer challenge set)</span>
           <ul className="eval-metrics">
             <li>
               <span>Core detection</span>
@@ -161,8 +161,12 @@ function EvaluationView({
               <strong>{pct(summary.policy.evasionRecall)}</strong>
             </li>
             <li>
-              <span>Blind-set recall</span>
-              <strong>{pct(summary.policy.blindsetRecall)}</strong>
+              <span>External-review recall</span>
+              <strong>{pct(summary.policy.externalReviewRecall)}</strong>
+            </li>
+            <li>
+              <span>External-review false positives</span>
+              <strong>{pct(summary.policy.externalReviewFalsePositiveRate)}</strong>
             </li>
             <li>
               <span>Precision</span>

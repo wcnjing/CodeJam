@@ -1,11 +1,11 @@
 /**
- * Side-effect security benchmark.
+ * Policy-decision security benchmark.
  *
  * policy-eval.ts measures the classifier (did the rule fire?). This measures the
- * thing that actually matters: **did a prohibited side effect escape?** Every
- * attack carries a ground-truth family and effect; an attack "escapes" when the
- * policy ALLOWS it, at which point its declared effect would occur. The headline
- * number is the policy-predicted escape rate, not detection accuracy.
+ * operational question: **which prohibited commands would the policy allow?**
+ * Every attack carries a ground-truth family; an attack "escapes" when the
+ * policy ALLOWS it. The headline number is explicitly policy-predicted, not a
+ * claim that this offline harness observed the command execute.
  *
  * Honesty notes:
  *  - This runs at the command-decision layer. Whether a byte physically leaves
@@ -13,8 +13,9 @@
  *    requests) and the runner integration tests. This benchmark measures the
  *    enforcement invariant deterministically and in CI.
  *  - Attacks are reused from POLICY_CORPUS, so this is not an independent attack
- *    set; policy-eval.ts reports the blind-set figure for that. The value here
- *    is the escape framing and the baseline-vs-protected comparison.
+ *    set; policy-eval.ts separately reports the retained external-review
+ *    challenge cases. The value here is the escape framing and the
+ *    baseline-vs-protected comparison.
  *  - The ground-truth effect comes from the corpus label, NOT from re-running the
  *    policy, so the measurement cannot be circular. The one documented residual
  *    (a fully base64-encoded command) is ground-truth malicious and is ALLOWED
@@ -44,7 +45,9 @@ const CONTEXT = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
 function familyOf(entry: CorpusEntry): Family {
   if (entry.label === "benign") return "benign";
   const c = entry.category;
-  if (c === "secret-read" || c === "rt-indirect-read") return "secret-extraction";
+  if (c === "secret-read" || c === "env-dump" || c === "rt-indirect-read") {
+    return "secret-extraction";
+  }
   if (c === "reverse-shell") return "reverse-shell";
   if (c === "interpreter-egress") return "interpreter-egress";
   if (EVASION_CATEGORIES.has(c) || c.startsWith("evasion") || c.startsWith("rt-"))
@@ -52,12 +55,12 @@ function familyOf(entry: CorpusEntry): Family {
   return "network-exfil";
 }
 
-/** Attacks that expose a protected secret, for the dedicated secret-leak metric. */
+/** Attacks that expose a protected secret, for the secret-channel decision metric. */
 function isSecretChannel(entry: CorpusEntry): boolean {
   return (
     entry.label === "malicious" &&
     (familyOf(entry) === "secret-extraction" ||
-      /\.secrets?\b|ARK_API_KEY|id_rsa|\.aws\/cred|customer-db-url/.test(entry.command))
+      /\/proc\/(?:[^/\s]+\/)*environ|\.secrets?\b|ARK_API_KEY|id_rsa|\.aws\/cred|customer-db-url/.test(entry.command))
   );
 }
 
@@ -66,7 +69,7 @@ export interface CaseResult {
   family: Family;
   malicious: boolean;
   decision: Decision;
-  /** True when a malicious command was permitted and its effect would occur. */
+  /** True when the policy permits a command labelled malicious. */
   escaped: boolean;
   /** True when a benign command was wrongly denied. */
   falsePositive: boolean;

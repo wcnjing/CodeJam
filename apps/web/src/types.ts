@@ -91,7 +91,8 @@ export interface EvaluationSummary {
   policy: {
     coreRecall: number;
     evasionRecall: number;
-    blindsetRecall: number;
+    externalReviewRecall: number;
+    externalReviewFalsePositiveRate: number;
     precision: number;
     f1: number;
   };

@@ -12,7 +12,7 @@ describe("security benchmark", () => {
   const protectedRun = runBenchmark("protected");
   const baseline = runBenchmark("baseline");
 
-  it("keeps the Unsafe Action Escape Rate at or below the documented residual", () => {
+  it("keeps the policy-predicted escape rate at or below the documented residual", () => {
     // <=2% leaves room only for the one known base64 bypass on this corpus.
     expect(protectedRun.unsafeActionEscapeRate).toBeLessThanOrEqual(0.02);
   });
