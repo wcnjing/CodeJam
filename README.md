@@ -266,13 +266,24 @@ Recorded honestly, because each one is a real gap:
 
 ## Screenshots
 
+### Security Evaluation — measured live from the running policy engine
+
+Baseline-vs-Sentinel escape rate, secret-leak rate, per-family coverage (with the
+one residual named), classifier quality, and policy latency — computed on demand
+from the same engine that enforces, so it can never drift from what actually runs.
+
+![Sentinel Security Evaluation dashboard: 100% to 1.6% escape rate, 0/33 secret leaks, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
+
+### Human approval — a held run awaiting a decision
+
+A reviewable egress denial pauses the run and shows the exact command, the rule,
+and requires a named approver + reason before it can continue or be denied.
+
+![A held run showing the Human approval required card with the network-egress-denied rule, the exact command, and approve/deny controls](docs/assets/held-approval.png)
+
 ### Agent Playground
 
 ![Agent Playground showing lifecycle controls, starter prompts, and the Codex Runtime](docs/assets/playground.jpg)
-
-### Create an Agent
-
-![Create Agent form with name, description, and workspace instructions](docs/assets/create-agent.jpg)
 
 ## Features
 

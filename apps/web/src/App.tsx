@@ -304,12 +304,16 @@ export default function App() {
         if (!mountedRef.current) return;
         setAuthRequired(required);
         if (!required) await bootstrap();
+        // Deep-link: #evaluation opens the Security Evaluation dashboard directly.
+        if (!required && window.location.hash === "#evaluation") {
+          void openEvaluation();
+        }
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
     return () => {
       mountedRef.current = false;
     };
-  }, [bootstrap]);
+  }, [bootstrap, openEvaluation]);
 
   useEffect(() => {
     setActiveRun(null);
