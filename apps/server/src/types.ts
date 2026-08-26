@@ -80,7 +80,7 @@ export interface ApprovalRequest {
   rule: string;
   command: string;
   detail: string;
-  /** Hosts an approval would grant a scoped, single-use exception for. */
+  /** Hosts an approval would grant a run-scoped grant for. */
   hosts: string[];
   status: ApprovalStatus;
   requestedAt: string;

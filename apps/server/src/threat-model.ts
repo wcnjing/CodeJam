@@ -139,7 +139,7 @@ export const THREAT_REGISTER: Threat[] = [
     ],
     residual: { likelihood: 2, impact: 5 },
     residualNote:
-      "58 offline probes + 6 live red-team prompts; one residual (base64 eval). Corpus keeps every probe so fixes cannot regress.",
+      "red-team + external-review probes folded into the corpus; one residual (base64 eval). Corpus keeps every probe so fixes cannot regress.",
     owner: "runtime-security",
     status: "mitigated",
     reviewTriggers: ["new evasion class discovered"],
@@ -187,7 +187,7 @@ export const THREAT_REGISTER: Threat[] = [
     controls: [
       {
         id: "CTRL-APPROVAL",
-        description: "Reviewable egress holds the run for a named human; approval grants a scoped, single-use exception; decision and reason recorded",
+        description: "Reviewable egress holds the run for a named human; approval grants a run-scoped host grant (for the reviewed hosts, this run only); decision and reason recorded",
         where: "agent-service.ts resolveApproval",
       },
       {

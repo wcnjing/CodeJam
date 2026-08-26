@@ -8,7 +8,7 @@
  * prints the human-readable report used in the writeup.
  */
 
-import { allowedHostsFrom, evaluateCommand } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom } from "./command-policy.js";
 import {
   EVASION_CATEGORIES,
   POLICY_CORPUS,
@@ -50,7 +50,7 @@ export interface EvaluationResult {
 }
 
 const DEFAULT_CONTEXT = {
-  allowedHosts: allowedHostsFrom("https://ark.cn-beijing.volces.com/api/v3"),
+  ...policyContextFrom("https://ark.cn-beijing.volces.com/api/v3"),
 };
 
 function isBlocked(entry: CorpusEntry, context = DEFAULT_CONTEXT): string | null {

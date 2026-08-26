@@ -67,7 +67,7 @@ notes in the register):
 | TM-AGENT-002 | Secret exfiltration to a recognisable non-allowlisted host | 20 CRIT | Recognisable-egress denial + hard secret rule + redaction | 10 MED | ✅ |
 | TM-AGENT-003 | Obfuscated command evades the policy | 15 HIGH | Destination-based egress (any binary/scheme) | 10 MED | ✅ |
 | TM-AGENT-004 | Runaway execution / denial of wallet | 12 MED | Platform step budget (always on) | 6 LOW | ✅ |
-| TM-AGENT-005 | Consequential egress without oversight | 12 MED | Human approval, scoped single-use grant | 6 LOW | ✅ |
+| TM-AGENT-005 | Consequential egress without oversight | 12 MED | Human approval, run-scoped host grant | 6 LOW | ✅ |
 | TM-AGENT-006 | Cross-agent evidence leakage | 6 LOW | Per-agent scoping in the service | 3 LOW | ✅ |
 | TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction only — retention **not** bounded | 6 LOW | ⬜ open |
 
@@ -92,7 +92,7 @@ radius, not the worst-case consequence.
 
 - **Verified-control rate: 6/6** mitigated threats have a passing test, enforced
   by CI. Removing a control's test fails the build and names the threat.
-- **Negative testing:** 52 corpus attacks + 58 offline red-team probes + 6 live
+- **Negative testing:** 69 labelled attacks (incl. red-team and external-review probes) + 6 live
   red-team prompts against the running model. One residual bypass (base64 `eval`)
   is documented, not hidden.
 - **Live end-to-end:** benign task completes; disallowed egress is blocked

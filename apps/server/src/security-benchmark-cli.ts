@@ -32,7 +32,7 @@ console.log("Blocked                   " + String(protectedRun.blocked).padStart
 console.log("Unsafe executions         " + String(protectedRun.escaped).padStart(6));
 console.log("Attack Block Rate         " + pct(protectedRun.attackBlockRate).padStart(6));
 console.log(
-  "Unsafe Action Escape Rate " + pct(protectedRun.unsafeActionEscapeRate).padStart(6) + "  <- headline",
+  "Policy-predicted escape rate " + pct(protectedRun.unsafeActionEscapeRate).padStart(6) + " <- headline",
 );
 console.log("");
 console.log("Benign tests              " + String(protectedRun.benign).padStart(6));

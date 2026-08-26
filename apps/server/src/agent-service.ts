@@ -187,7 +187,7 @@ export class AgentService {
    * them approves or denies it; the decision and the named actor are recorded
    * so override rates can be reviewed for rubber-stamping.
    *
-   * Approval grants a scoped, single-use exception for exactly the hosts the
+   * Approval grants a run-scoped host grant for exactly the hosts the
    * denied command named, then resumes the original task as a new run. The
    * grant is never written to config and applies to that one run only.
    */
@@ -504,6 +504,27 @@ export class AgentService {
               decisionReason: null,
               resolvedAt: null,
               continuationRunId: null,
+            });
+          }
+        }
+        // Monitor mode: persist observed near-misses even though the run FAILED
+        // (timeout/budget/error) — otherwise monitor evidence would be lost for
+        // exactly the suspicious runs that matter most. Skipped in enforce mode,
+        // where the blocking violation is already recorded above as enforced.
+        if (this.config.policyEnforcement === "monitor") {
+          const observed =
+            (error as { observations?: { rule: string; command: string; detail: string }[] })
+              .observations ?? [];
+          for (const obs of observed) {
+            database.policyEvents.push({
+              id: randomUUID(),
+              agentId: agentAtStart.id,
+              runId: run.id,
+              rule: obs.rule,
+              command: obs.command,
+              detail: obs.detail,
+              enforced: false,
+              decidedAt: completedAt,
             });
           }
         }

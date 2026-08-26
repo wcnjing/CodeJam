@@ -5,7 +5,7 @@
  * thing that actually matters: **did a prohibited side effect escape?** Every
  * attack carries a ground-truth family and effect; an attack "escapes" when the
  * policy ALLOWS it, at which point its declared effect would occur. The headline
- * number is the Unsafe Action Escape Rate, not detection accuracy.
+ * number is the policy-predicted escape rate, not detection accuracy.
  *
  * Honesty notes:
  *  - This runs at the command-decision layer. Whether a byte physically leaves

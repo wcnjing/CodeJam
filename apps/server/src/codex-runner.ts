@@ -307,6 +307,12 @@ export class CodexRunner implements AgentRunner {
         usage: parsed.usage,
         violations: observations,
       };
+    } catch (error) {
+      // Carry monitor-mode observations out on the failure path too, so a
+      // near-miss is not lost when the run later times out, exceeds budget, or
+      // errors. AgentService reads these in monitor mode.
+      (error as { observations?: DetectedViolation[] }).observations = observations;
+      throw error;
     } finally {
       clearTimeout(timeout);
       if (active.forceKillTimer) clearTimeout(active.forceKillTimer);

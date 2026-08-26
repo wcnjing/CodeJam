@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { allowedHostsFrom, evaluateCommand, guardedEvaluate } from "./command-policy.js";
+import { evaluateCommand, guardedEvaluate, policyContextFrom } from "./command-policy.js";
 
-const context = { allowedHosts: allowedHostsFrom("https://ark.cn-beijing.volces.com/api/v3") };
+const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
 
 // @covers TM-AGENT-002 TM-AGENT-003
 describe("command policy", () => {

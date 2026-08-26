@@ -13,19 +13,22 @@ adversarial benchmark.
 
 **Why it's different.** Not a regex bolted on a chat box: a streamed runtime
 enforcement point + scoped human approval + recovery + a live evaluation
-dashboard that measures whether a prohibited action *escaped* (not whether a
-classifier fired). Built on the CodeJam starter kit's Kill Switch track.
+dashboard reporting the **policy-predicted escape rate** (would an attack get
+past the policy?) alongside a live mock-collector demo that proves zero bytes
+actually leave. Built on the CodeJam starter kit's Kill Switch track.
 
-| | No middleware | Sentinel |
+| Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
-| Attacks that execute (escape rate) | 100% | **1.6%** |
-| Secret leaks across 5 channels | 33/33 | **0/33** |
-| Legitimate tasks blocked | 0% | 2.3% |
-| Added per-command latency (p95) | — | **~2 µs** |
+| Attacks the policy would allow | 100% | **1.4%** |
+| Secret-channel attacks allowed | 33/33 | **0/33** |
+| Legitimate tasks blocked | 0% | 2.2% |
+| Added per-command decision latency (p95) | — | **~2 µs** |
 
-*Numbers computed live in-app at **Security Evaluation** (`npm run bench:security`
-for the CLI). The one residual escape — a fully base64-encoded command — is named,
-not hidden.*
+*Computed live in-app at **Security Evaluation** (`npm run bench:security` for the
+CLI). These are policy **decisions** on a corpus we authored, not observed
+execution — real-world bypasses exist (see Limitations); the physical
+"zero bytes left" claim comes from the live collector demo, not this table. The
+one residual — a fully base64-encoded command — is named, not hidden.*
 
 Run it locally with Docker, Colima, or rootless Podman.
 
@@ -120,7 +123,7 @@ flowchart LR
   destination like a package registry — does not have to be final. Instead of
   hard-blocking, it holds the run and raises an approval request. A named human
   reviews the exact command and reason and either denies it or grants a
-  **scoped, single-use** exception that resumes the task. Secret-access rules
+  **run-scoped host grant** (the named hosts, this run only) that resumes the task. Secret-access rules
   are never reviewable: no human may approve exfiltrating a protected secret.
   Every decision records who approved, when, and why, so override rates can be
   audited for rubber-stamping. Configure the reviewable rules with
@@ -159,7 +162,7 @@ the default config this is **`held`**, not blocked: `registry.npmjs.org` is a
 plausibly-legitimate destination, so the Run pauses and raises an approval
 request showing the exact command and rule.
    - **Deny** (with a reason) → the held Run stays denied; nothing continues.
-   - **Approve** (with a reason) → a scoped, single-use grant resumes the task
+   - **Approve** (with a reason) → a run-scoped host grant resumes the task
      as a continuation Run that reaches the registry. A *second* task to the same
      host is held again — the grant never widened the standing allowlist.
 
@@ -205,9 +208,8 @@ npm run eval:policy
 See [docs/POLICY_EVALUATION.md](docs/POLICY_EVALUATION.md) for the methodology,
 the defects the harness found, and the measured figures.
 
-A second harness measures **side effects, not decisions** — the metric that
-actually matters is whether a prohibited action *escaped*, not whether a
-classifier fired:
+A second harness reframes the same corpus around the outcome that matters —
+would an attack **get past the policy?** — rather than classifier accuracy:
 
 ```bash
 npm run bench:security   # headline dashboard + baseline-vs-protected
@@ -215,12 +217,19 @@ npm run bench:security   # headline dashboard + baseline-vs-protected
 
 The same numbers render **live in the app** under **Security Evaluation** in the
 sidebar — computed on demand from the running policy engine, so the dashboard can
-never drift from what actually enforces. It reports the **Unsafe Action Escape Rate**, secret-leak rate across channels,
-per-family coverage, and a baseline-vs-protected comparison. On the current
-corpus: escape rate drops from 100% (no middleware) to 1.6% (one documented
-base64 residual, named not hidden), secret leaks from 33/33 to 0/33, with a
-policy-evaluation p95 of ~2 us. Whether a byte physically leaves the container
-is proven separately by the live mock-collector test (zero requests).
+never drift from what actually enforces. It reports the **policy-predicted escape
+rate**, secret-channel block rate, per-family coverage, and a
+baseline-vs-protected comparison. On the current corpus the predicted escape rate
+drops from 100% (no middleware) to 1.4% (one documented base64 residual, named
+not hidden), secret-channel attacks allowed from 33/33 to 0/33, with a p95
+decision latency of ~2 µs.
+
+> **Honest scope.** This benchmark measures the policy **decision**, not observed
+> execution — it does not run containers or watch a collector. Its numbers are on
+> a corpus *we authored*, so 1.4% is corpus performance, not an expected
+> real-world bypass rate (simple obfuscations still exist — see Limitations). The
+> physical proof that a byte never leaves is the separate **live mock-collector
+> demo** (zero requests), which does exercise a real container.
 
 ### Threat model
 
@@ -272,7 +281,7 @@ Baseline-vs-Sentinel escape rate, secret-leak rate, per-family coverage (with th
 one residual named), classifier quality, and policy latency — computed on demand
 from the same engine that enforces, so it can never drift from what actually runs.
 
-![Sentinel Security Evaluation dashboard: 100% to 1.6% escape rate, 0/33 secret leaks, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
+![Sentinel Security Evaluation dashboard: 100% to 1.4% policy-predicted escape rate, 0/33 secret leaks, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
 ### Human approval — a held run awaiting a decision
 
@@ -283,7 +292,7 @@ and requires a named approver + reason before it can continue or be denied.
 
 ### Agent Playground
 
-![Agent Playground showing lifecycle controls, starter prompts, and the Codex Runtime](docs/assets/playground.jpg)
+![Sentinel Playground: an Agent completing a benign coding task, with the Security Evaluation nav](docs/assets/playground.png)
 
 ## Features
 

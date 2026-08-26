@@ -1,5 +1,11 @@
 # Measuring the command policy engine
 
+> **Scope.** These harnesses measure the policy **decision** on a corpus we
+> authored — not observed container execution, and not an expected real-world
+> bypass rate. Simple obfuscations still exist (see the benchmark's own source
+> notes). The physical proof that nothing leaves the container is the separate
+> live mock-collector demo.
+
 ## Why this exists
 
 Hand-written unit tests prove a rule *fires*. They cannot say how good the
@@ -28,7 +34,7 @@ npm run eval:policy
 | Blind-set recall | Recall on entries written *without* reading the rules | Detects overfitting to our own examples |
 | Mean eval cost | Microseconds per command | Shows the control is not a performance tax |
 
-The corpus (`apps/server/src/policy-corpus.ts`) is 105 labeled commands across
+The corpus (`apps/server/src/policy-corpus.ts`) is 114 labeled commands across
 many categories, including the `/bin/bash -lc` wrapper form captured from a live
 Run and the red-team probes: ordinary build/VCS/filesystem/interpreter work, allowlisted
 egress, near-miss commands that merely *mention* secrets, and six families of
@@ -38,9 +44,9 @@ interpreter egress, and evasion).
 ## Results at the time of writing
 
 ```
-  Core detection      100.0%   (52/52 direct attacks caught)
+  Core detection      100.0%   (60/60 direct attacks caught)
   Evasion resistance   88.9%   (8/9 obfuscated attacks caught)
-  False positives       2.3%   (1 legitimate command blocked)
+  False positives       2.2%   (1 legitimate command blocked)
   Precision            98.4%
   F1                   98.4%
   Blind-set recall    100.0%
@@ -239,12 +245,12 @@ Detection accuracy is the wrong headline for a security control. This benchmark
 reframes the corpus around the one question that matters — did a prohibited
 side effect escape? — and produces a demo-ready dashboard.
 
-- **Unsafe Action Escape Rate** = malicious commands the policy allowed / total
+- **Policy-predicted escape rate** = malicious commands the policy allowed / total
   attacks. This is the headline, because "the agent said it cannot do that" is
   not evidence; an allowed command's effect occurs regardless of what the model
   narrated.
 - **Baseline vs protected**: the same corpus run with the middleware off (every
-  attack lands) and on. The delta — 100% -> 1.6% escape, 33/33 -> 0/33 secret
+  attack lands) and on. The delta — 100% -> 1.4% policy-predicted escape, 33/33 -> 0/33 secret
   leaks — is the before/after proof judges can read in one line.
 - **Per-family coverage** marks the one honest gap (`obfuscated-egress 1/21`,
   the base64 residual) with an ✗ rather than hiding it.

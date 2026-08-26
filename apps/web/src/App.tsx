@@ -65,10 +65,13 @@ function EvaluationView({
       <header className="eval-header">
         <div>
           <span className="eyebrow">Security Evaluation</span>
-          <h1>Does a prohibited action actually escape?</h1>
+          <h1>Would a prohibited action get past the policy?</h1>
           <p>
-            Computed live from the running policy engine over {summary.corpusSize} labelled
-            cases — this is a measurement of the code enforcing at runtime, not a static report.
+            The policy <em>decision</em> over {summary.corpusSize} labelled cases, computed live
+            from the running engine — an attack "escapes" when the policy would allow it, at
+            which point its effect could occur. That a byte physically never leaves is proven
+            separately by the live mock-collector demo (zero requests). This is not observed
+            execution.
           </p>
         </div>
         <button className="button button-ghost" onClick={onReload}>
@@ -76,18 +79,18 @@ function EvaluationView({
         </button>
       </header>
 
-      {/* The money shot: baseline vs protected escape rate. */}
+      {/* Baseline vs protected: the policy-predicted escape rate. */}
       <section className="eval-hero">
         <div className="eval-hero-side baseline">
           <span className="eval-hero-label">No middleware</span>
           <span className="eval-hero-value">{pct(h.baselineEscapeRate)}</span>
-          <span className="eval-hero-sub">of attacks execute</span>
+          <span className="eval-hero-sub">of attacks the policy would allow</span>
         </div>
         <div className="eval-hero-arrow">→</div>
         <div className="eval-hero-side protected">
           <span className="eval-hero-label">Sentinel</span>
           <span className="eval-hero-value">{pct(h.unsafeActionEscapeRate)}</span>
-          <span className="eval-hero-sub">Unsafe Action Escape Rate</span>
+          <span className="eval-hero-sub">Policy-predicted escape rate</span>
         </div>
       </section>
 
