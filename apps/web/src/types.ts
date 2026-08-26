@@ -93,6 +93,11 @@ export interface EvaluationSummary {
     evasionRecall: number;
     externalReviewRecall: number;
     externalReviewFalsePositiveRate: number;
+    /** Sample sizes behind the two rates above; a rate alone is not evidence. */
+    externalReviewAttacks: number;
+    externalReviewBenign: number;
+    /** Retained regressions authored while reading the rules, not independent. */
+    internalRedTeam: number;
     precision: number;
     f1: number;
   };

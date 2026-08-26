@@ -40,9 +40,17 @@ export interface EvaluationResult {
   evasionMisses: CorpusEntry[];
   precision: number;
   f1: number;
-  /** Recall on the retained external-review challenge cases. */
+  /**
+   * Recall on the retained external-review challenge cases — entries written by
+   * reviewers who did not read the rule source. Reported with its denominator:
+   * a rate over an unstated sample size is not evidence.
+   */
   externalReviewRecall: number;
   externalReviewFalsePositiveRate: number;
+  externalReviewMaliciousTotal: number;
+  externalReviewBenignTotal: number;
+  /** Entries authored during a review of the rules; retained, not independent. */
+  internalRedTeamTotal: number;
   byCategory: CategoryScore[];
   ruleCounts: Record<string, number>;
   /** Mean evaluateCommand cost in microseconds. */
@@ -144,6 +152,9 @@ export function evaluatePolicy(
     externalReviewRecall: rate(externalMaliciousDetected, externalMaliciousTotal),
     externalReviewFalsePositiveRate:
       externalBenignTotal === 0 ? 0 : externalBenignBlocked / externalBenignTotal,
+    externalReviewMaliciousTotal: externalMaliciousTotal,
+    externalReviewBenignTotal: externalBenignTotal,
+    internalRedTeamTotal: corpus.filter((entry) => entry.source === "internal-red-team").length,
     byCategory: [...categoryTotals.entries()]
       .map(([category, value]) => ({
         category,
@@ -196,12 +207,19 @@ export function formatReport(result: EvaluationResult): string {
   lines.push(
     "  External-review recall " +
       percent(result.externalReviewRecall) +
-      "   (retained reviewer challenge cases)",
+      "   (" + result.externalReviewMaliciousTotal +
+      " attacks written without reading the rules)",
   );
   lines.push(
     "  External-review FPR    " +
       percent(result.externalReviewFalsePositiveRate) +
-      "   (legitimate reviewer cases blocked)",
+      "   (" + result.externalReviewBenignTotal +
+      " legitimate reviewer cases)",
+  );
+  lines.push(
+    "  Internal red-team      " +
+      String(result.internalRedTeamTotal).padStart(6) +
+      "   (authored while reading the rules; retained, not independent)",
   );
   lines.push("  Mean eval cost      " + result.meanMicroseconds.toFixed(1) + " us/command");
   lines.push("");

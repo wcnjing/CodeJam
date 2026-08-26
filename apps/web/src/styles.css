@@ -1472,12 +1472,22 @@ textarea:focus {
 }
 .eval-metrics li {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid #eceae3;
   padding-bottom: 8px;
   font-size: 12px;
   color: var(--muted);
+}
+/* Sample size next to a rate: a percentage alone is not evidence. */
+.eval-metric-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+  opacity: 0.7;
 }
 .eval-metrics strong {
   color: var(--ink);

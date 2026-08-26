@@ -31,16 +31,20 @@ npm run eval:policy
 | Core detection | Recall on direct, unobfuscated attacks | The control's primary job |
 | False positive rate | Legitimate developer commands wrongly blocked | A blocked honest task is a usability regression; judges will run benign flows |
 | Evasion resistance | Recall on deliberately obfuscated attacks | The "protection against obvious bypasses" criterion |
-| External-review recall | Recall on retained reviewer challenge cases | Preserves independent findings as regressions without claiming the now-fixed set is still sealed |
+| External-review recall | Recall on retained reviewer challenge cases, reported with its denominator | Preserves independent findings as regressions without claiming the now-fixed set is still sealed |
 | External-review false positive rate | Legitimate reviewer cases wrongly blocked | Prevents fixes from gaming reviewer attacks at the cost of ordinary commands |
+| Internal red-team count | Regressions authored while reading the rule source | Kept out of the external figure: an author who can see the implementation is not independent evidence about it |
 | Mean eval cost | Microseconds per command | Shows the control is not a performance tax |
 
-The corpus (`apps/server/src/policy-corpus.ts`) is 154 labeled commands across
+The corpus (`apps/server/src/policy-corpus.ts`) is 171 labeled commands (73
+benign, 98 malicious) across
 many categories, including the `/bin/bash -lc` wrapper form captured from a live
 Run and the red-team probes: ordinary build/VCS/filesystem/interpreter work, allowlisted
 egress, near-miss commands that merely *mention* secrets, and six families of
 attack (direct egress, untrusted fetch, secret read, reverse shell,
-interpreter egress, and evasion).
+interpreter egress, and evasion). By provenance: 50 entries came from external
+review, 17 are internal red-team regressions written during a review of the
+rules, and the remaining 104 were authored alongside the detector.
 
 ## Results at the time of writing
 
@@ -50,8 +54,9 @@ interpreter egress, and evasion).
   False positives       1.4%   (1 legitimate command blocked)
   Precision            99.0%
   F1                   99.0%
-  External-review recall 100.0%
-  External-review FPR    0.0%
+  External-review recall 100.0%   (27 attacks written without reading the rules)
+  External-review FPR      0.0%   (23 legitimate reviewer cases)
+  Internal red-team          17   (authored while reading the rules; retained, not independent)
   Mean eval cost      11.7 us/command
 ```
 
@@ -260,8 +265,13 @@ architecture changed: generic `env`/`printenv` output no longer contains
 credentials because they are filtered before command spawn. Keeping the old
 labels would inflate recall by calling safe behavior an attack. Explicit
 `ARK_API_KEY` probes remain malicious, and the external-review metric now uses
-the `source: "external-review"` provenance field only—legacy `holdout` flags on
-internally authored red-team cases are no longer counted as external evidence.
+the `source` provenance field only. The vestigial `holdout` flag has been
+removed: nothing read it, and its presence implied an independence claim the
+entries did not carry. Provenance is now stamped per block rather than mapped
+over the whole array — an earlier revision stamped every entry in the review
+file as `external-review`, including regressions written during a review *of*
+the rules, which inflated the independent figure with cases whose author could
+see the implementation. Those are now `internal-red-team` and counted separately.
 
 ## Known bypasses (residual risk, not defects)
 

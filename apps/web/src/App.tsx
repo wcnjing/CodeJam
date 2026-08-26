@@ -161,12 +161,32 @@ function EvaluationView({
               <strong>{pct(summary.policy.evasionRecall)}</strong>
             </li>
             <li>
-              <span>External-review recall</span>
+              <span>
+                External-review recall
+                <em className="eval-metric-note">
+                  {summary.policy.externalReviewAttacks} attacks written without
+                  reading the rules
+                </em>
+              </span>
               <strong>{pct(summary.policy.externalReviewRecall)}</strong>
             </li>
             <li>
-              <span>External-review false positives</span>
+              <span>
+                External-review false positives
+                <em className="eval-metric-note">
+                  {summary.policy.externalReviewBenign} legitimate reviewer cases
+                </em>
+              </span>
               <strong>{pct(summary.policy.externalReviewFalsePositiveRate)}</strong>
+            </li>
+            <li>
+              <span>
+                Internal red-team regressions
+                <em className="eval-metric-note">
+                  authored while reading the rules; retained, not independent
+                </em>
+              </span>
+              <strong>{summary.policy.internalRedTeam}</strong>
             </li>
             <li>
               <span>Precision</span>
