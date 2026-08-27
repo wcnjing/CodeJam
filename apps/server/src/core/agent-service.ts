@@ -7,7 +7,7 @@ import {
   PolicyViolationError,
   RunCancelledError,
 } from "./errors.js";
-import { isReviewableRule } from "./command-policy.js";
+import { isReviewableRule } from "../middleware/command-policy.js";
 import { JsonStore } from "./store.js";
 import type {
   Agent,

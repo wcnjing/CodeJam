@@ -24,9 +24,9 @@ import {
   policyContextFrom,
   REVIEWABLE_RULES,
   type PolicyContext,
-} from "../../apps/server/src/command-policy.js";
-import { loadConfig } from "../../apps/server/src/config.js";
-import { POLICY_CORPUS } from "../../apps/server/src/policy-corpus.js";
+} from "../../apps/server/src/middleware/command-policy.js";
+import { loadConfig } from "../../apps/server/src/core/config.js";
+import { POLICY_CORPUS } from "../../apps/server/src/evaluation/policy-corpus.js";
 import type { TestCase } from "./types.js";
 
 export type Decision = "allow" | "deny" | "n/a";

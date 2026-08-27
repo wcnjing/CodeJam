@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config.js";
+import { loadConfig } from "../core/config.js";
 
 const base = { NODE_ENV: "test", ARK_API_KEY: "k", ARK_MODEL: "ep-test" } as const;
 

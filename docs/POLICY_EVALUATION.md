@@ -34,7 +34,7 @@ npm run eval:policy
 | Blind-set recall | Recall on entries written *without* reading the rules | Detects overfitting to our own examples |
 | Mean eval cost | Microseconds per command | Shows the control is not a performance tax |
 
-The corpus (`apps/server/src/policy-corpus.ts`) is 114 labeled commands across
+The corpus (`apps/server/src/evaluation/policy-corpus.ts`) is 114 labeled commands across
 many categories, including the `/bin/bash -lc` wrapper form captured from a live
 Run and the red-team probes: ordinary build/VCS/filesystem/interpreter work, allowlisted
 egress, near-miss commands that merely *mention* secrets, and six families of
@@ -183,7 +183,7 @@ the model being willing to misbehave.
 
 **10. Red-teaming: 17 bypasses, then a false positive, then a live false positive.**
 
-A 58-probe adversarial sweep (`apps/server/src/redteam.ts`) against the
+A 58-probe adversarial sweep (`apps/server/redteam.ts`) against the
 `/bin/bash -lc` wrapper form found **17 bypasses** in the first pass — almost all
 sharing one root cause: they hid the *tool name* (`c""url`, `$X`, printf-built
 binaries, base64-decoded commands) while still naming the destination. The fix

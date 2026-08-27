@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
-import { buildEvaluationSummary } from "./evaluation-summary.js";
+import { buildEvaluationSummary } from "../evaluation/evaluation-summary.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });

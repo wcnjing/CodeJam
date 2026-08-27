@@ -3,7 +3,7 @@
  *
  * AGENTS.md: "find and curate a list of test cases from past examples".
  * This script imports the project's own historical material:
- *   1. POLICY_CORPUS (apps/server/src/policy-corpus.ts) — 114+ labeled
+ *   1. POLICY_CORPUS (apps/server/src/evaluation/policy-corpus.ts) — 114+ labeled
  *      commands including live-observed wrapped forms and red-team probes.
  *   2. The adversarial probe list (apps/server/redteam.ts) — 58 named probes.
  *   3. The defect history in docs/POLICY_EVALUATION.md — every finding is
@@ -20,7 +20,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { POLICY_CORPUS, type CorpusEntry } from "../../apps/server/src/policy-corpus.js";
+import { POLICY_CORPUS, type CorpusEntry } from "../../apps/server/src/evaluation/policy-corpus.js";
 import { CASES_DIR } from "../lib/catalog.js";
 import { TAG_VOCABULARY } from "../lib/tags.js";
 import type { TestCase } from "../lib/types.js";
@@ -122,7 +122,7 @@ function toCase(entry: CorpusEntry, id: string, source: string): TestCase {
 
 export async function main(): Promise<void> {
   const cases: TestCase[] = POLICY_CORPUS.map((entry, index) =>
-    toCase(entry, "past-" + index, "policy-corpus (apps/server/src/policy-corpus.ts)"),
+    toCase(entry, "past-" + index, "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)"),
   );
 
   // Red-team probes (apps/server/redteam.ts), all wrapped in the live form.

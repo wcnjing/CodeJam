@@ -2,9 +2,9 @@ import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { ContainerCodexRunner } from "./container-codex-runner.js";
-import { loadConfig } from "./config.js";
-import { PolicyViolationError } from "./errors.js";
+import { ContainerCodexRunner } from "../runners/container-codex-runner.js";
+import { loadConfig } from "../core/config.js";
+import { PolicyViolationError } from "../core/errors.js";
 
 /**
  * @covers TM-AGENT-001 TM-AGENT-002

@@ -11,7 +11,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -27,7 +27,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -43,7 +43,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -59,7 +59,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -75,7 +75,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -91,7 +91,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -107,7 +107,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -123,7 +123,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -139,7 +139,7 @@
       ],
       "category": "vcs",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -155,7 +155,7 @@
       ],
       "category": "vcs",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -172,7 +172,7 @@
       ],
       "category": "vcs",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -188,7 +188,7 @@
       ],
       "category": "vcs",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -204,7 +204,7 @@
       ],
       "category": "vcs",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -221,7 +221,7 @@
       ],
       "category": "build",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -238,7 +238,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -254,7 +254,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -270,7 +270,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -287,7 +287,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -303,7 +303,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -319,7 +319,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -336,7 +336,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -352,7 +352,7 @@
       ],
       "category": "filesystem",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -369,7 +369,7 @@
       ],
       "category": "interpreter",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -386,7 +386,7 @@
       ],
       "category": "interpreter",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -403,7 +403,7 @@
       ],
       "category": "interpreter",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -421,7 +421,7 @@
       ],
       "category": "env-local",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -440,7 +440,7 @@
       ],
       "category": "env-local",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -458,7 +458,7 @@
       ],
       "category": "env-local",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -476,7 +476,7 @@
       ],
       "category": "env-local",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -493,7 +493,7 @@
       ],
       "category": "allowlisted-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -511,7 +511,7 @@
       ],
       "category": "near-miss",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -530,7 +530,7 @@
       ],
       "category": "near-miss",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -548,7 +548,7 @@
       ],
       "category": "near-miss",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -568,7 +568,7 @@
       ],
       "category": "near-miss",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -586,7 +586,7 @@
       ],
       "category": "near-miss",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -603,7 +603,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -624,7 +624,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -644,7 +644,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -664,7 +664,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -685,7 +685,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -706,7 +706,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -725,7 +725,7 @@
       ],
       "category": "direct-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -746,7 +746,7 @@
       ],
       "category": "untrusted-fetch",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -767,7 +767,7 @@
       ],
       "category": "untrusted-fetch",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -788,7 +788,7 @@
       ],
       "category": "untrusted-fetch",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -808,7 +808,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -827,7 +827,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -846,7 +846,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -866,7 +866,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -885,7 +885,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -904,7 +904,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -924,7 +924,7 @@
       ],
       "category": "reverse-shell",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -944,7 +944,7 @@
       ],
       "category": "reverse-shell",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -964,7 +964,7 @@
       ],
       "category": "reverse-shell",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -983,7 +983,7 @@
       ],
       "category": "reverse-shell",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -1003,7 +1003,7 @@
       ],
       "category": "interpreter-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -1026,7 +1026,7 @@
       ],
       "category": "interpreter-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -1049,7 +1049,7 @@
       ],
       "category": "interpreter-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -1072,7 +1072,7 @@
       ],
       "category": "interpreter-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002",
         "TM-AGENT-003"
@@ -1096,7 +1096,7 @@
       ],
       "category": "evasion-path",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1119,7 +1119,7 @@
       ],
       "category": "evasion-wrapper",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1141,7 +1141,7 @@
       ],
       "category": "evasion-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1162,7 +1162,7 @@
       ],
       "category": "evasion-indirection",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1185,7 +1185,7 @@
       ],
       "category": "evasion-encoding",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1209,7 +1209,7 @@
       ],
       "category": "evasion-encoding",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1231,7 +1231,7 @@
       ],
       "category": "evasion-quoting",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1254,7 +1254,7 @@
       ],
       "category": "evasion-dns",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1277,7 +1277,7 @@
       ],
       "category": "evasion-staging",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1297,7 +1297,7 @@
       ],
       "category": "alt-channel-vcs",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1318,7 +1318,7 @@
       ],
       "category": "alt-channel-package",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1338,7 +1338,7 @@
       ],
       "category": "alt-channel-package",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1358,7 +1358,7 @@
       ],
       "category": "alt-channel-tls",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1378,7 +1378,7 @@
       ],
       "category": "alt-channel-archive",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1401,7 +1401,7 @@
       ],
       "category": "alt-channel-tunnel",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1420,7 +1420,7 @@
       ],
       "category": "alt-channel-protocol",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1441,7 +1441,7 @@
       ],
       "category": "secret-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1462,7 +1462,7 @@
       ],
       "category": "wrapped-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1483,7 +1483,7 @@
       ],
       "category": "wrapped-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1504,7 +1504,7 @@
       ],
       "category": "wrapped-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1524,7 +1524,7 @@
       ],
       "category": "wrapped-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1543,7 +1543,7 @@
       ],
       "category": "wrapped-egress",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -1564,7 +1564,7 @@
       ],
       "category": "wrapped-benign",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -1581,7 +1581,7 @@
       ],
       "category": "wrapped-benign",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -1598,7 +1598,7 @@
       ],
       "category": "wrapped-benign",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -1615,7 +1615,7 @@
       ],
       "category": "wrapped-benign",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -1632,7 +1632,7 @@
       ],
       "category": "wrapped-benign",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -1651,7 +1651,7 @@
       ],
       "category": "rt-obfuscated-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1672,7 +1672,7 @@
       ],
       "category": "rt-obfuscated-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1693,7 +1693,7 @@
       ],
       "category": "rt-obfuscated-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1715,7 +1715,7 @@
       ],
       "category": "rt-obfuscated-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1738,7 +1738,7 @@
       ],
       "category": "rt-obfuscated-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1761,7 +1761,7 @@
       ],
       "category": "rt-alt-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1784,7 +1784,7 @@
       ],
       "category": "rt-alt-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1806,7 +1806,7 @@
       ],
       "category": "rt-alt-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1826,7 +1826,7 @@
       ],
       "category": "rt-alt-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1846,7 +1846,7 @@
       ],
       "category": "rt-alt-tool",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1867,7 +1867,7 @@
       ],
       "category": "rt-indirect-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1888,7 +1888,7 @@
       ],
       "category": "rt-indirect-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1912,7 +1912,7 @@
       ],
       "category": "rt-indirect-read",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1932,7 +1932,7 @@
       ],
       "category": "rt-false-positive",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -1951,7 +1951,7 @@
       ],
       "category": "rt-false-positive",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",
@@ -1972,7 +1972,7 @@
       ],
       "category": "rt-allowlist",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -1994,7 +1994,7 @@
       ],
       "category": "rt-allowlist",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-003"
       ],
@@ -2014,7 +2014,7 @@
       ],
       "category": "rt-allowlist",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -2031,7 +2031,7 @@
       ],
       "category": "literal-host",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2051,7 +2051,7 @@
       ],
       "category": "literal-host",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2071,7 +2071,7 @@
       ],
       "category": "literal-host",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2090,7 +2090,7 @@
       ],
       "category": "literal-host",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2110,7 +2110,7 @@
       ],
       "category": "literal-host",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2130,7 +2130,7 @@
       ],
       "category": "literal-host",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2149,7 +2149,7 @@
       ],
       "category": "env-dump",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2169,7 +2169,7 @@
       ],
       "category": "env-dump",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [
         "TM-AGENT-002"
       ],
@@ -2188,7 +2188,7 @@
       ],
       "category": "loopback",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy"
@@ -2206,7 +2206,7 @@
       ],
       "category": "env-filtered",
       "wrapped": false,
-      "source": "policy-corpus (apps/server/src/policy-corpus.ts)",
+      "source": "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)",
       "threatIds": [],
       "middleware": [
         "command-policy",

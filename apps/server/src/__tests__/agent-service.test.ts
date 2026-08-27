@@ -2,12 +2,12 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentService } from "./agent-service.js";
-import { PolicyViolationError } from "./errors.js";
-import { loadConfig } from "./config.js";
-import { JsonStore } from "./store.js";
-import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
-import { WorkspaceManager } from "./workspace.js";
+import { AgentService } from "../core/agent-service.js";
+import { PolicyViolationError } from "../core/errors.js";
+import { loadConfig } from "../core/config.js";
+import { JsonStore } from "../core/store.js";
+import type { AgentRunner, RunnerRequest, RunnerResult } from "../core/types.js";
+import { WorkspaceManager } from "../core/workspace.js";
 
 class FakeRunner implements AgentRunner {
   async run(request: RunnerRequest): Promise<RunnerResult> {
@@ -249,7 +249,7 @@ describe("policy denial is recorded and recoverable", () => {
  */
 class RunawayRunner implements AgentRunner {
   async run(): Promise<RunnerResult> {
-    const { BudgetExceededError } = await import("./errors.js");
+    const { BudgetExceededError } = await import("../core/errors.js");
     throw new BudgetExceededError(50, 51);
   }
   async cancel(): Promise<boolean> {
@@ -280,7 +280,7 @@ describe("runaway execution budget", () => {
  */
 class MonitorThenFailRunner implements AgentRunner {
   async run(): Promise<RunnerResult> {
-    const { BudgetExceededError } = await import("./errors.js");
+    const { BudgetExceededError } = await import("../core/errors.js");
     const error = new BudgetExceededError(50, 51);
     (error as { observations?: unknown }).observations = [
       {

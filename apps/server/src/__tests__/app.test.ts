@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createApp } from "./app.js";
-import { loadConfig } from "./config.js";
-import type { AgentService } from "./agent-service.js";
+import { createApp } from "../core/app.js";
+import { loadConfig } from "../core/config.js";
+import type { AgentService } from "../core/agent-service.js";
 
 const service = {
   listAgents: () => [],

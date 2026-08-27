@@ -2,12 +2,12 @@ import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentService } from "./agent-service.js";
-import { loadConfig } from "./config.js";
-import { PolicyViolationError } from "./errors.js";
-import { JsonStore } from "./store.js";
-import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
-import { WorkspaceManager } from "./workspace.js";
+import { AgentService } from "../core/agent-service.js";
+import { loadConfig } from "../core/config.js";
+import { PolicyViolationError } from "../core/errors.js";
+import { JsonStore } from "../core/store.js";
+import type { AgentRunner, RunnerRequest, RunnerResult } from "../core/types.js";
+import { WorkspaceManager } from "../core/workspace.js";
 
 /**
  * A runner that denies a non-allowlisted host until that host is granted for the

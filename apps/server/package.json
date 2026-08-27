@@ -10,9 +10,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "start": "node dist/index.js",
-    "eval:policy": "tsx src/policy-eval-cli.ts",
-    "threat-model": "tsx src/threat-model-cli.ts",
-    "bench:security": "tsx src/security-benchmark-cli.ts"
+    "eval:policy": "tsx src/evaluation/policy-eval-cli.ts",
+    "threat-model": "tsx src/threat/threat-model-cli.ts",
+    "bench:security": "tsx src/evaluation/security-benchmark-cli.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",

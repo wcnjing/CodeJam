@@ -22,7 +22,7 @@
  *    hidden.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom } from "../middleware/command-policy.js";
 import {
   EVASION_CATEGORIES,
   POLICY_CORPUS,

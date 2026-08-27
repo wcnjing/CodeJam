@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runBenchmark } from "./security-benchmark.js";
+import { runBenchmark } from "../evaluation/security-benchmark.js";
 
 /**
  * @covers TM-AGENT-002 TM-AGENT-003

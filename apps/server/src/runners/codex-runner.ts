@@ -1,15 +1,15 @@
 import { execFile } from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import type { AppConfig } from "./config.js";
-import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
-import { policyContextFrom, scanCommands, type DetectedViolation } from "./command-policy.js";
+import type { AppConfig } from "../core/config.js";
+import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "../core/errors.js";
+import { policyContextFrom, scanCommands, type DetectedViolation } from "../middleware/command-policy.js";
 import type {
   AgentRunner,
   RunUsage,
   RunnerRequest,
   RunnerResult,
-} from "./types.js";
+} from "../core/types.js";
 
 const execFileAsync = promisify(execFile);
 

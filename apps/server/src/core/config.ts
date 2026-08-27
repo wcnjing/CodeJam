@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { REVIEWABLE_RULES } from "./command-policy.js";
+import { REVIEWABLE_RULES } from "../middleware/command-policy.js";
 
 const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),

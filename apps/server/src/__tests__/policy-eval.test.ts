@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { evaluatePolicy } from "./policy-eval.js";
-import { POLICY_CORPUS } from "./policy-corpus.js";
+import { evaluatePolicy } from "../evaluation/policy-eval.js";
+import { POLICY_CORPUS } from "../evaluation/policy-corpus.js";
 
 /**
  * Quality gates for the command policy engine.

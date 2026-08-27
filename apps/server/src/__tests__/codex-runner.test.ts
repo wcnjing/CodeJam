@@ -3,7 +3,7 @@ import {
   buildCodexArgs,
   emptyParsedEvents,
   parseCodexEventLine,
-} from "./codex-runner.js";
+} from "../runners/codex-runner.js";
 
 describe("Codex runner protocol", () => {
   it("builds a new-session invocation", () => {

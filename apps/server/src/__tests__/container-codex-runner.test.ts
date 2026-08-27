@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "./config.js";
+import { loadConfig } from "../core/config.js";
 import {
   buildContainerRunArgs,
   containerName,
-} from "./container-codex-runner.js";
+} from "../runners/container-codex-runner.js";
 
 describe("Container Codex runner", () => {
   it("builds an isolated Docker/Podman-compatible invocation", () => {

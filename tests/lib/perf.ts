@@ -13,8 +13,8 @@
  * adds microseconds per command, which is the honest operational claim.
  */
 
-import { evaluateCommand, guardedEvaluate, redactCommand, scanCommands } from "../../apps/server/src/command-policy.js";
-import { loadConfig } from "../../apps/server/src/config.js";
+import { evaluateCommand, guardedEvaluate, redactCommand, scanCommands } from "../../apps/server/src/middleware/command-policy.js";
+import { loadConfig } from "../../apps/server/src/core/config.js";
 import { ALL_PROFILE, DEFAULT_ENV, wrapped } from "./middleware.js";
 import type { PerfReport, PerfSample, TestCase } from "./types.js";
 

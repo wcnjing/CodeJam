@@ -2,7 +2,7 @@
 
 Answers the four questions of the Threat Modeling Manifesto for this platform:
 what we are working on, what can go wrong, what we do about it, and whether we
-did a good enough job. The register is **code** (`apps/server/src/threat-model.ts`)
+did a good enough job. The register is **code** (`apps/server/src/threat/threat-model.ts`)
 and **CI-enforced** (`threat-model.test.ts`): a `mitigated` claim fails the build
 unless a real test tagged `@covers <id>` verifies it. Run `npm run threat-model`
 for the live scorecard.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCommand, guardedEvaluate, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, guardedEvaluate, policyContextFrom } from "../middleware/command-policy.js";
 
 const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
 

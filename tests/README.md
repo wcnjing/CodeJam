@@ -95,7 +95,7 @@ closed vocabulary in `tests/lib/tags.ts`: `egress`, `obfuscation`, `encoding`,
 Sources:
 
 - **past-examples.json** — the project's labeled corpus
-  (`apps/server/src/policy-corpus.ts`: direct egress, secret reads, reverse
+  (`apps/server/src/evaluation/policy-corpus.ts`: direct egress, secret reads, reverse
   shells, interpreter egress, evasion, alternate channels, live-observed
   `/bin/bash -lc` wrapped forms, red-team probes, review literals) plus all 56
   named probes from `apps/server/redteam.ts`. This is the "past examples" the

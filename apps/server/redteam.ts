@@ -1,4 +1,4 @@
-import { evaluateCommand, policyContextFrom } from "./src/command-policy.js";
+import { evaluateCommand, policyContextFrom } from "./src/middleware/command-policy.js";
 const ctx = policyContextFrom("https://ark.ap-southeast.bytepluses.com/api/v3");
 const W = (c: string) => `/bin/bash -lc ${JSON.stringify(c)}`;
 

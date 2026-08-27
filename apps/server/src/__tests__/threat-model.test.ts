@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { risk, THREAT_REGISTER } from "./threat-model.js";
+import { risk, THREAT_REGISTER } from "../threat/threat-model.js";
 
 /**
  * Makes the threat register self-enforcing.

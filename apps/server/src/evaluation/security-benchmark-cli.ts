@@ -1,4 +1,4 @@
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom } from "../middleware/command-policy.js";
 import { POLICY_CORPUS } from "./policy-corpus.js";
 import { runBenchmark } from "./security-benchmark.js";
 

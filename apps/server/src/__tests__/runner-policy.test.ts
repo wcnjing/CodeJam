@@ -2,9 +2,9 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { CodexRunner } from "./codex-runner.js";
-import { loadConfig } from "./config.js";
-import { PolicyViolationError } from "./errors.js";
+import { CodexRunner } from "../runners/codex-runner.js";
+import { loadConfig } from "../core/config.js";
+import { PolicyViolationError } from "../core/errors.js";
 
 /**
  * End-to-end tests for policy enforcement inside the Runtime boundary.
