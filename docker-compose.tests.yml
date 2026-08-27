@@ -23,6 +23,11 @@ services:
         NODE_IMAGE: ${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}
     image: sentinel-pentest:local
     init: true
+    # Run as the host user so the bind-mounted ./tests/scores stays writable
+    # (cap_drop: ALL removes CAP_DAC_OVERRIDE, so root cannot write a mount it
+    # does not own). Set USER_UID/USER_GID if your uid/gid are not 1000:
+    #   USER_UID=$(id -u) USER_GID=$(id -g) docker compose -f docker-compose.tests.yml ...
+    user: "${USER_UID:-1000}:${USER_GID:-1000}"
     security_opt:
       - no-new-privileges:true
     cap_drop:

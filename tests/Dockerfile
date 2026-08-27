@@ -34,6 +34,13 @@ COPY --from=build /app/tsconfig.base.json ./tsconfig.base.json
 COPY --from=build /app/apps ./apps
 COPY --from=build /app/tests ./tests
 
+# Host-side files may arrive with restrictive modes (600 from agent tools) and
+# the compose file runs this container as the host user (normally 1000), so
+# make everything world-readable and the scores mount point owner-writable.
+RUN chmod -R a+rX /app \
+    && mkdir -p /app/tests/scores \
+    && chown -R 1000:1000 /app/tests/scores
+
 # Default: full suite (baseline + per-middleware + regression + perf).
 # Override the command to run a subset, e.g.:
 #   docker compose -f docker-compose.tests.yml run --rm pentest \
