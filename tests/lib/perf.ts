@@ -1,0 +1,170 @@
+/**
+ * Performance and operational-cost harness.
+ *
+ * Measures each middleware layer the way an operator would care about:
+ *   - per-decision latency (µs) for the command policy
+ *   - end-to-end cost of the whole stack per command
+ *   - redaction cost and leak-check coverage
+ *   - scanCommands throughput on a stream (the runner's hot path)
+ *   - config load cost (startup path)
+ *   - scaling with command length (short / mid / long)
+ *
+ * All timings use process.hrtime.bigint and exclude model time — the policy
+ * adds microseconds per command, which is the honest operational claim.
+ */
+
+import { evaluateCommand, guardedEvaluate, redactCommand, scanCommands } from "../../apps/server/src/command-policy.js";
+import { loadConfig } from "../../apps/server/src/config.js";
+import { ALL_PROFILE, DEFAULT_ENV, wrapped } from "./middleware.js";
+import type { PerfReport, PerfSample, TestCase } from "./types.js";
+
+interface Timing {
+  samples: number[];
+  mean: number;
+  p50: number;
+  p95: number;
+  ops: number;
+}
+
+function percentile(sorted: number[], q: number): number {
+  if (sorted.length === 0) return 0;
+  return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))]!;
+}
+
+function summarize(samples: number[], elapsedNs: number): Timing {
+  const sorted = [...samples].sort((a, b) => a - b);
+  const mean = samples.reduce((s, x) => s + x, 0) / samples.length;
+  return {
+    samples,
+    mean,
+    p50: percentile(sorted, 0.5),
+    p95: percentile(sorted, 0.95),
+    ops: samples.length === 0 ? 0 : 1e9 / (elapsedNs / samples.length),
+  };
+}
+
+export interface PerfOptions {
+  cases: readonly TestCase[];
+  iterations?: number;
+}
+
+function bucketOf(command: string): string {
+  if (command.length <= 80) return "short (<=80 chars)";
+  if (command.length <= 200) return "mid (81-200 chars)";
+  return "long (>200 chars)";
+}
+
+export function runPerf(options: PerfOptions): PerfReport {
+  const cases = options.cases;
+  const iterations = options.iterations ?? 200;
+  const samples: PerfSample[] = [];
+
+  const measure = (
+    profileId: string,
+    profileName: string,
+    metric: string,
+    fn: (case_: TestCase) => unknown,
+    byLength = false,
+  ): void => {
+    const raw: number[] = [];
+    const byLengthSamples: Record<string, number[]> = {};
+    const start = process.hrtime.bigint();
+    for (let i = 0; i < iterations; i += 1) {
+      for (const case_ of cases) {
+        const t0 = process.hrtime.bigint();
+        fn(case_);
+        const elapsed = Number(process.hrtime.bigint() - t0) / 1000; // µs
+        raw.push(elapsed);
+        if (byLength) {
+          const b = bucketOf(case_.command);
+          (byLengthSamples[b] ??= []).push(elapsed);
+        }
+      }
+    }
+    const elapsedNs = Number(process.hrtime.bigint() - start);
+    const timing = summarize(raw, elapsedNs);
+    const lengthBuckets = byLength
+      ? Object.fromEntries(
+          Object.entries(byLengthSamples).map(([b, arr]) => [
+            b,
+            { samples: arr.length, meanMicroseconds: arr.reduce((s, x) => s + x, 0) / arr.length },
+          ]),
+        )
+      : undefined;
+    samples.push({
+      profileId,
+      profileName,
+      metric,
+      samples: raw.length,
+      meanMicroseconds: timing.mean,
+      p50Microseconds: timing.p50,
+      p95Microseconds: timing.p95,
+      opsPerSecond: timing.ops,
+      byLength: lengthBuckets,
+    });
+  };
+
+  // 1. Command policy — plain evaluateCommand.
+  measure("command-policy", "Command policy", "evaluateCommand per case", (c) =>
+    evaluateCommand(c.wrapped ? wrapped(c.command) : c.command, DEFAULT_ENV.policyContext),
+    true,
+  );
+  // 2. Command policy — guarded (fail-closed wrapper, the runner's actual call).
+  measure("command-policy", "Command policy", "guardedEvaluate per case", (c) =>
+    guardedEvaluate(c.wrapped ? wrapped(c.command) : c.command, DEFAULT_ENV.policyContext),
+  );
+  // 3. Redaction.
+  measure("redaction", "Evidence redaction", "redactCommand per case", (c) =>
+    redactCommand(c.wrapped ? wrapped(c.command) : c.command, DEFAULT_ENV.secretValues),
+  );
+  // 4. Whole stack (policy + approval classification + redaction) — the
+  //    regression profile is the closest model of the production path.
+  measure("all", "Whole stack", "full chain per case", (c) => ALL_PROFILE.evaluate(c, DEFAULT_ENV));
+
+  // 5. scanCommands throughput on a synthetic stream of the catalog.
+  {
+    const stream: string[] = [];
+    for (let i = 0; i < 50; i += 1) {
+      for (const c of cases) stream.push(c.wrapped ? wrapped(c.command) : c.command);
+    }
+    const runs = 20;
+    const wallStart = process.hrtime.bigint();
+    for (let r = 0; r < runs; r += 1) {
+      scanCommands(stream, 0, DEFAULT_ENV.policyContext);
+    }
+    const elapsed = Number(process.hrtime.bigint() - wallStart);
+    const perCommand = elapsed / 1000 / (stream.length * runs);
+    samples.push({
+      profileId: "command-policy",
+      profileName: "Command policy",
+      metric: "scanCommands per command (streamed batch)",
+      samples: stream.length * runs,
+      meanMicroseconds: perCommand,
+      p50Microseconds: perCommand,
+      p95Microseconds: perCommand,
+      opsPerSecond: 1e9 / (elapsed / (stream.length * runs)),
+    });
+  }
+
+  // 6. Config load (startup path, one-time cost).
+  {
+    const start = process.hrtime.bigint();
+    for (let i = 0; i < 200; i += 1) {
+      loadConfig({ NODE_ENV: "test", ARK_API_KEY: "k", ARK_MODEL: "ep-test" });
+    }
+    const elapsed = Number(process.hrtime.bigint() - start);
+    const per = elapsed / 1000 / 200;
+    samples.push({
+      profileId: "config",
+      profileName: "Config invariants",
+      metric: "loadConfig (startup)",
+      samples: 200,
+      meanMicroseconds: per,
+      p50Microseconds: per,
+      p95Microseconds: per,
+      opsPerSecond: 1e9 / (elapsed / 200),
+    });
+  }
+
+  return { generatedAt: new Date().toISOString(), samples };
+}

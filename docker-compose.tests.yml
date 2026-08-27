@@ -1,0 +1,41 @@
+# Separate Docker Compose for the PENTEST SUITE (tests/).
+#
+# The application's own docker-compose.yml runs the Sentinel platform; this
+# file is deliberately independent — it builds only the test harness and runs
+# it in a disposable container, so the suite never touches the platform
+# containers or their data volumes.
+#
+#   docker compose -f docker-compose.tests.yml up --build     # full suite
+#   docker compose -f docker-compose.tests.yml run --rm pentest \
+#     npx tsx tests/runner.ts --suite baseline                # one suite
+#   docker compose -f docker-compose.tests.yml run --rm pentest \
+#     npx tsx tests/runner.ts --perf                          # perf only
+#
+# Scores are written into ./tests/scores/ on the host via the bind mount, so
+# `scores/` stays version-controllable (AGENTS.md requirement).
+
+services:
+  pentest:
+    build:
+      context: .
+      dockerfile: tests/Dockerfile
+      args:
+        NODE_IMAGE: ${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}
+    image: sentinel-pentest:local
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: 2g
+    cpus: 2
+    environment:
+      NODE_ENV: test
+      CI: "1"
+      # The suite drives the REAL CodexRunner with fake codex binaries in
+      # budget/monitor behavioral tests; they are plain node scripts, no
+      # container engine needed, but keep the timeout generous.
+      CODEX_TIMEOUT_MS: "120000"
+    volumes:
+      - ./tests/scores:/app/tests/scores
