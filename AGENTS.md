@@ -12,29 +12,54 @@
   - save the scores in the folder `scores`
 - ensure to test the middleware individually and as a whole (regression tests) for the test cases
 
-  - ensure the test cases are tagged and categories, testing
+  - ensure the test cases are tagged and categorized, testing
 
     - obfuscation
-    - ... (common ways to bypass)
+    - encoding
+    - indirection
+    - quoting
+    - alternate-channel
+    - dns
+    - staging
+    - allowlist-abuse
+    - env-dump
+    - secret-read
+    - reverse-shell
+    - interpreter
+    - proxy
+    - untrusted-fetch
+    - benign / near-miss (false-positive checks)
+
+    The full closed tag vocabulary lives in `tests/lib/tags.ts` (also
+    `egress`, `path`, `tunnel`, `wrapper`, `fail-closed`, `reviewability`,
+    `budget`, `redaction`, `monitor`).
 
 - also test the performance and operational cost of each middleware
+
+# multi model usage
+
+use deepseek flash on high reasoning as the default model for coding, planning tasks should go to deepseek pro while highigher reasoning tasks should go to Sol
 
 # structure
 
 `tests/` code for the pentesting suite and the only folder you have editing permissions for
 
-`server/` backend code
+`server/` backend code — the Fastify control plane and the middleware itself
+(command policy, runners, agent-service, approval); in this repo the sources
+live under `apps/server/`
 
-`deploy/`
+`deploy/` Terraform deployment for Volcengine ECS
 
-`docs/` more specific documentation and context on the project
+`docs/` more specific documentation and context on the project (policy
+evaluation, threat model, kill-switch plan)
 
-`scripts/` helper scripts
+`scripts/` helper scripts (local POC startup, mock collector, injection
+planter, deploy helpers)
 
 
 # notes
 
-- ensure that middleware are not user facing but server side and not possible for a user to temper with, edit or delete the middlewarel
+- ensure that middleware are not user facing but server side and not possible for a user to tamper with, edit or delete the middleware
 - do not attempt to fix the program, just create the tests and bypass suite
 
 ---
