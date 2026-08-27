@@ -4,10 +4,23 @@ import { fileURLToPath } from "node:url";
 import { risk, THREAT_REGISTER } from "./threat-model.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// Tests live in src/__tests__/ since the source reorganisation; scan them for
+// @covers tags. Fall back to this CLI's own directory when they are absent
+// (e.g. a built dist, which excludes tests).
+function testsDirectory(): string {
+  const candidate = path.join(here, "..", "__tests__");
+  try {
+    readdirSync(candidate);
+    return candidate;
+  } catch {
+    return here;
+  }
+}
+const testsDir = testsDirectory();
 const covered = new Set<string>();
-for (const file of readdirSync(here)) {
+for (const file of readdirSync(testsDir)) {
   if (!file.endsWith(".test.ts")) continue;
-  const text = readFileSync(path.join(here, file), "utf8");
+  const text = readFileSync(path.join(testsDir, file), "utf8");
   for (const m of text.matchAll(/@covers\s+((?:TM-[A-Z]+-\d+\s*)+)/g)) {
     for (const id of m[1]!.trim().split(/\s+/)) covered.add(id);
   }

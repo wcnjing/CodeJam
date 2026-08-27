@@ -161,7 +161,10 @@ export async function createApp(
   });
 
   if (config.nodeEnv === "production") {
-    const webRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
+    // app.ts lives in src/core/, so its built output sits one level deeper
+    // than before the source reorganisation (dist/core/app.js). The web build
+    // is served from apps/web/dist, three levels up.
+    const webRoot = fileURLToPath(new URL("../../../web/dist", import.meta.url));
     await app.register(fastifyStatic, {
       root: webRoot,
       prefix: "/",
