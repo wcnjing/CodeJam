@@ -1,40 +1,9 @@
 # Lightweight Agent Middleware
 
-# goals
-
-- create a suite of tools to test and try to bypass the middlewares that were created
-- find and curate a list of test cases from past examples
-
-## tests
-
-- test the baseline, get a baseline score for the provided code
-
-  - save the scores in the folder `scores`
-- ensure to test the middleware individually and as a whole (regression tests) for the test cases
-
-  - ensure the test cases are tagged and categorized, testing
-
-    - obfuscation
-    - encoding
-    - indirection
-    - quoting
-    - alternate-channel
-    - dns
-    - staging
-    - allowlist-abuse
-    - env-dump
-    - secret-read
-    - reverse-shell
-    - interpreter
-    - proxy
-    - untrusted-fetch
-    - benign / near-miss (false-positive checks)
-
-    The full closed tag vocabulary lives in `tests/lib/tags.ts`
-    (also `egress`, `path`, `tunnel`, `wrapper`, `fail-closed`,
-    `reviewability`, `budget`, `redaction`, `monitor`).
-
-- also test the performance and operational cost of each middleware
+# Goals
+- implement middleware that is well polished, able to detect attack vectors and even edge cases
+- you do not need to touch the ui 
+- ensure that middleware are not user facing but server side and not possible for a user to tamper with, edit or delete the middleware
 
 # multi model usage
 
@@ -56,11 +25,6 @@ evaluation, threat model, kill-switch plan)
 `scripts/` helper scripts (local POC startup, mock collector, injection
 planter, deploy helpers)
 
-
-# notes
-
-- ensure that middleware are not user facing but server side and not possible for a user to tamper with, edit or delete the middleware
-- do not attempt to fix the program, just create the tests and bypass suite
 
 ---
 
