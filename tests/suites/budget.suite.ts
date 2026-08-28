@@ -16,11 +16,11 @@
 import { CodexRunner } from "../../apps/server/src/runners/codex-runner.js";
 import { loadConfig } from "../../apps/server/src/core/config.js";
 import { BudgetExceededError } from "../../apps/server/src/core/errors.js";
-import { BUDGET_PROFILE, DEFAULT_ENV } from "../../apps/server/src/pentest/profiles.js";
-import { runProfile } from "../../apps/server/src/pentest/harness.js";
-import { loadCatalog } from "../../apps/server/src/pentest/catalog.js";
+import { BUDGET_PROFILE, DEFAULT_ENV } from "../lib/wiring.js";
+import { runProfile } from "../lib/harness.js";
+import { loadCatalog } from "../lib/catalog.js";
 import { FakeCodex, makeWorkspace } from "../lib/fake-codex.js";
-import type { CaseVerdict } from "../../apps/server/src/pentest/types.js";
+import type { CaseVerdict } from "../lib/types.js";
 import type { SuiteModule } from "./suite.js";
 
 async function runnerWith(bin: string, workspace: string, maxCommands: number, enforcement: "enforce" | "monitor") {

@@ -8,7 +8,8 @@ import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { buildEvaluationSummary } from "../evaluation/evaluation-summary.js";
-import { runPentestSummary } from "../pentest/summary.js";
+import { runPentestSummary } from "@sentinel/pentest";
+import { pentestDeps } from "./pentest-deps.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -158,10 +159,11 @@ export async function createApp(
 
   // The pentest suite ("library of tests") as an on-demand measurement: every
   // middleware profile over the tagged bypass catalog plus operational cost.
-  // ?refresh=1 bypasses the short cache.
+  // ?refresh=1 bypasses the short cache. Runs inside this process against the
+  // real middleware (pentestDeps) — no model, no external test app.
   app.get("/api/pentest", async (request) => {
     const refresh = (request.query as { refresh?: string }).refresh === "1";
-    return runPentestSummary(refresh);
+    return runPentestSummary({ deps: pentestDeps, refresh });
   });
 
   app.get("/api/runs/:id", async (request) => {

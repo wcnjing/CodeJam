@@ -1,5 +1,5 @@
 /**
- * Performance and operational-cost harness.
+ * Performance and operational-cost harness — provider-agnostic.
  *
  * Measures each middleware layer the way an operator would care about:
  *   - per-decision latency (µs) for the command policy
@@ -11,11 +11,17 @@
  *
  * All timings use process.hrtime.bigint and exclude model time — the policy
  * adds microseconds per command, which is the honest operational claim.
+ * The middleware surface is injected (`deps`), so this library never imports
+ * the platform.
  */
 
-import { evaluateCommand, guardedEvaluate, redactCommand, scanCommands } from "../middleware/command-policy.js";
-import { loadConfig } from "../core/config.js";
-import { ALL_PROFILE, DEFAULT_ENV, wrapped } from "./profiles.js";
+import {
+  defaultEnv,
+  wrapped,
+  type EvalEnv,
+  type MiddlewareProfile,
+  type PentestDeps,
+} from "./profiles.js";
 import type { PerfReport, PerfSample, TestCase } from "./types.js";
 
 interface Timing {
@@ -46,6 +52,10 @@ function summarize(samples: number[], elapsedNs: number): Timing {
 export interface PerfOptions {
   cases: readonly TestCase[];
   iterations?: number;
+  deps: PentestDeps;
+  /** The whole-stack ("all") profile, for the end-to-end chain measure. */
+  allProfile: MiddlewareProfile;
+  env?: EvalEnv;
 }
 
 function bucketOf(command: string): string {
@@ -57,6 +67,8 @@ function bucketOf(command: string): string {
 export function runPerf(options: PerfOptions): PerfReport {
   const cases = options.cases;
   const iterations = options.iterations ?? 200;
+  const deps = options.deps;
+  const env = options.env ?? defaultEnv(deps);
   const samples: PerfSample[] = [];
 
   const measure = (
@@ -106,20 +118,20 @@ export function runPerf(options: PerfOptions): PerfReport {
 
   // 1. Command policy — plain evaluateCommand.
   measure("command-policy", "Command policy", "evaluateCommand per case", (c) =>
-    evaluateCommand(c.wrapped ? wrapped(c.command) : c.command, DEFAULT_ENV.policyContext),
+    deps.evaluateCommand(c.wrapped ? wrapped(c.command) : c.command, env.policyContext),
     true,
   );
   // 2. Command policy — guarded (fail-closed wrapper, the runner's actual call).
   measure("command-policy", "Command policy", "guardedEvaluate per case", (c) =>
-    guardedEvaluate(c.wrapped ? wrapped(c.command) : c.command, DEFAULT_ENV.policyContext),
+    deps.guardedEvaluate(c.wrapped ? wrapped(c.command) : c.command, env.policyContext),
   );
   // 3. Redaction.
   measure("redaction", "Evidence redaction", "redactCommand per case", (c) =>
-    redactCommand(c.wrapped ? wrapped(c.command) : c.command, DEFAULT_ENV.secretValues),
+    deps.redactCommand(c.wrapped ? wrapped(c.command) : c.command, env.secretValues),
   );
   // 4. Whole stack (policy + approval classification + redaction) — the
   //    regression profile is the closest model of the production path.
-  measure("all", "Whole stack", "full chain per case", (c) => ALL_PROFILE.evaluate(c, DEFAULT_ENV));
+  measure("all", "Whole stack", "full chain per case", (c) => options.allProfile.evaluate(c, env));
 
   // 5. scanCommands throughput on a synthetic stream of the catalog.
   {
@@ -130,7 +142,7 @@ export function runPerf(options: PerfOptions): PerfReport {
     const runs = 20;
     const wallStart = process.hrtime.bigint();
     for (let r = 0; r < runs; r += 1) {
-      scanCommands(stream, 0, DEFAULT_ENV.policyContext);
+      deps.scanCommands(stream, 0, env.policyContext);
     }
     const elapsed = Number(process.hrtime.bigint() - wallStart);
     const perCommand = elapsed / 1000 / (stream.length * runs);
@@ -150,7 +162,7 @@ export function runPerf(options: PerfOptions): PerfReport {
   {
     const start = process.hrtime.bigint();
     for (let i = 0; i < 200; i += 1) {
-      loadConfig({ NODE_ENV: "test", ARK_API_KEY: "k", ARK_MODEL: "ep-test" });
+      deps.loadConfig({ NODE_ENV: "test", ARK_API_KEY: "k", ARK_MODEL: "ep-test" });
     }
     const elapsed = Number(process.hrtime.bigint() - start);
     const per = elapsed / 1000 / 200;

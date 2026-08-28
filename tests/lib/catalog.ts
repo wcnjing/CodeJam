@@ -7,6 +7,7 @@
  * fails the run loudly instead of silently skewing a score.
  */
 
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,18 @@ import { assertKnownTags } from "./tags.js";
 import type { TestCase } from "./types.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const CASES_DIR = path.resolve(HERE, "cases");
+
+/**
+ * Cases dir. In the source layout (dev/CLI) the catalog sits at tests/cases;
+ * in the built package the build copies it next to the compiled output
+ * (tests/dist/cases). Prefer the built copy, fall back to the source.
+ */
+function resolveCasesDir(): string {
+  const built = path.resolve(HERE, "cases");
+  return existsSync(built) ? built : path.resolve(HERE, "..", "cases");
+}
+
+export const CASES_DIR = resolveCasesDir();
 
 export interface CaseFile {
   source: string;

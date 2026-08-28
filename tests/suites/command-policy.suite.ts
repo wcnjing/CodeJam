@@ -3,9 +3,9 @@
  * guardedEvaluate), the middleware that actually classifies commands.
  */
 
-import { COMMAND_POLICY_PROFILE, DEFAULT_ENV } from "../../apps/server/src/pentest/profiles.js";
-import { runProfile } from "../../apps/server/src/pentest/harness.js";
-import { loadCatalog } from "../../apps/server/src/pentest/catalog.js";
+import { COMMAND_POLICY_PROFILE, DEFAULT_ENV } from "../lib/wiring.js";
+import { runProfile } from "../lib/harness.js";
+import { loadCatalog } from "../lib/catalog.js";
 import type { SuiteModule } from "./suite.js";
 
 export const COMMAND_POLICY_SUITE: SuiteModule = {

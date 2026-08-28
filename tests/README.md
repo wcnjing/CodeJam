@@ -14,10 +14,12 @@ invariants), per `AGENTS.md`:
 The suite is deliberately read-only against the platform: it imports the
 server's middleware functions and drives the real `CodexRunner` with fake
 `codex` binaries, but never modifies the platform's own code. The pentest
-*library* (case catalog, middleware profiles, harness, perf) lives in the
-server package at `apps/server/src/pentest/` so it can also be served live to
-the web UI (Security Evaluation → "Pentest suite"); `tests/` holds the CLI,
-the behavioral suites and the scores.
+*library* (case catalog, provider-agnostic middleware profiles, harness, perf,
+summary) lives HERE in `tests/` as the `@sentinel/pentest` workspace package;
+the web application imports it (`apps/server` depends on `@sentinel/pentest`,
+wires the real middleware in via `apps/server/src/core/pentest-deps.ts`, and
+serves it at `GET /api/pentest` rendered on the Security Evaluation page).
+`tests/` also holds the CLI, the behavioral suites and the scores.
 
 **No model involvement.** The suite tests the middleware directly, locally:
 the command policy is regex matching over command text, redaction is a string
@@ -29,23 +31,27 @@ is used, and no request leaves the machine.
 ## Layout
 
 ```
-apps/server/src/pentest/   # the library: catalog + profiles + harness + perf + summary
+tests/                       # @sentinel/pentest workspace package + CLI/CI harness
+  lib/                       # the library: catalog, tags, types, profiles,
+                             #   harness, perf, summary (+ wiring, report, fake-codex)
+    wiring.ts                # CLI-side binding of the real middleware into the library
+    index.ts                 # package entry (built to tests/dist by tsconfig.lib.json)
   cases/
-    past-examples.json      # curated from policy-corpus.ts + redteam.ts (170 cases)
-    generated-advanced.json # deepseek-pro escalated red-team cases (70 cases)
-tests/
+    past-examples.json       # curated from policy-corpus.ts + redteam.ts (170 cases)
+    generated-advanced.json  # deepseek-pro escalated red-team cases (70 cases)
   docs/
-    regression-matrix.md    # Sol escalated: per-tag layer matrix + gap analysis
-    threat-coverage.json    # Sol escalated: tag -> threat/control coverage map
-  lib/report.ts             # CLI rendering + score persistence
-  lib/fake-codex.ts         # fake codex binary for the behavioral suites
+    regression-matrix.md     # Sol escalated: per-tag layer matrix + gap analysis
+    threat-coverage.json     # Sol escalated: tag -> threat/control coverage map
   scripts/
-    import-past-examples.ts # regenerate the catalog from the corpus
-  suites/                   # one suite per middleware layer + baseline + regression + perf
-  scores/                   # JSON scores per suite + summary.json (committed)
-  runner.ts                 # CLI entry point
-  Dockerfile                # disposable test image
-docker-compose.tests.yml    # separate compose for the suite (repo root)
+    import-past-examples.ts  # regenerate the catalog from the corpus
+    copy-cases.mjs           # copies cases next to the built package (dist/cases)
+  suites/                    # one suite per middleware layer + baseline + regression + perf
+  scores/                    # JSON scores per suite + summary.json (committed)
+  runner.ts                  # CLI entry point
+  tsconfig.lib.json          # builds the library -> tests/dist (consumed by the app)
+  Dockerfile                 # disposable test image
+apps/server/src/core/pentest-deps.ts  # app-side binding of the real middleware
+docker-compose.tests.yml     # separate compose for the suite (repo root)
 ```
 
 The same library is exposed in-app: `GET /api/pentest` computes the full

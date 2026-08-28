@@ -30,7 +30,7 @@
     - untrusted-fetch
     - benign / near-miss (false-positive checks)
 
-    The full closed tag vocabulary lives in `apps/server/src/pentest/tags.ts`
+    The full closed tag vocabulary lives in `tests/lib/tags.ts`
     (also `egress`, `path`, `tunnel`, `wrapper`, `fail-closed`,
     `reviewability`, `budget`, `redaction`, `monitor`).
 
@@ -66,38 +66,37 @@ planter, deploy helpers)
 
 # pentest suite (implemented)
 
-The bypass suite is complete. The pentest **library** (case catalog, middleware
-profiles, harness, perf, summary) lives in `apps/server/src/pentest/` so it can
-run as the CLI, in CI, and live in the web UI (Security Evaluation →
-"Pentest suite", backed by `GET /api/pentest`). `tests/` holds the CLI, the
-behavioral suites (real `CodexRunner` with fake `codex` binaries) and the
-scores.
-
-**No model involvement.** The tests run locally on the middleware itself: the
-command policy is regex matching, redaction a string transform, and the
-approval/budget/config layers are invariant checks — all pure functions over
-command text. The budget/monitor behavioral suites drive the real `CodexRunner`
-with a fake `codex` script. No LLM is queried, no API key is used, and nothing
-leaves the machine.
+The bypass suite is complete. The pentest **library** lives in `tests/` as the
+`@sentinel/pentest` workspace package (tagged case catalog, provider-agnostic
+middleware profiles, harness, perf, summary). It runs three ways:
+- as the **CLI/CI suite** (`tests/runner.ts`, docker-compose.tests.yml) with
+  the behavioral tests that spawn the real `CodexRunner` (fake codex script);
+- **in the web app**: the server imports `@sentinel/pentest`, wires the real
+  middleware in (`apps/server/src/core/pentest-deps.ts`), and serves the
+  summary at `GET /api/pentest`, rendered on the Security Evaluation page;
+- the library is provider-agnostic — the middleware surface under test is
+  injected (`PentestDeps`), so the same library tests whatever implementation
+  it is handed.
 
 ## layout
 
 ```
-apps/server/src/pentest/    # the library: catalog + profiles + harness + perf + summary
-  cases/
-    past-examples.json        # curated from policy-corpus.ts + redteam.ts (past examples)
-    generated-advanced.json   # escalated red-team cases (deepseek pro)
-tests/
+tests/                       # @sentinel/pentest workspace package + CLI/CI harness
+  lib/                       # the library: catalog, tags, types, profiles,
+                             #   harness, perf, summary (+ wiring, report, fake-codex)
+  cases/                     # past-examples.json + generated-advanced.json (231 commands)
   docs/
     regression-matrix.md      # per-tag x middleware-layer matrix (Sol)
     threat-coverage.json      # tag -> threat/control coverage map (Sol)
-  lib/                        # report (rendering/scores) + fake-codex (behavioral)
-  scripts/import-past-examples.ts  # re-curate the catalog after corpus changes
+  scripts/                    # import-past-examples.ts (curates the catalog),
+                              #   copy-cases.mjs (build step)
   suites/                     # baseline, command-policy, redaction, budget,
                               #   approval, monitor, config, regression, perf
   scores/                     # JSON scores per suite + summary.json (committed)
   runner.ts                   # CLI entry point
+  tsconfig.lib.json           # builds the library -> tests/dist (consumed by the app)
   Dockerfile                  # disposable test image
+apps/server/src/core/pentest-deps.ts   # app-side wiring of the real middleware into the library
 docker-compose.tests.yml      # separate compose for the suite (repo root)
 ```
 
@@ -159,7 +158,7 @@ leak / no runaway / invariants hold, not that an attack was detected. See
 ## escalation policy (working instruction)
 
 - **deepseek pro** (`deepseek-v4-pro`) — tougher reasoning: adversarial
-  bypass-case generation → `apps/server/src/pentest/cases/generated-advanced.json`.
+  bypass-case generation → `tests/cases/generated-advanced.json`.
 - **Sol** (`openai/gpt-5.6-sol`) — extremely difficult cross-field reasoning:
   whole-stack regression matrix + threat-coverage map →
   `tests/docs/regression-matrix.md`, `tests/docs/threat-coverage.json`.
@@ -167,9 +166,10 @@ leak / no runaway / invariants hold, not that an attack was detected. See
 ## hardlines
 
 - restricted to the `test-suite` branch
-- the pentest suite never modifies the platform's behaviour — it imports the
-  real middleware and drives the real `CodexRunner`; apps/ edits are limited to
-  hosting the pentest library (`apps/server/src/pentest/`) and rendering it on
-  the Security Evaluation page, done under explicit user permission
+- the pentest suite never modifies the platform's behaviour — the library in
+  `tests/` tests whatever middleware it is handed; apps/ edits are limited to
+  wiring the real middleware into the library
+  (`apps/server/src/core/pentest-deps.ts`) and rendering the suite on the
+  Security Evaluation page, done under explicit user permission
 - middleware stays server-side; the suite reaches it through real code paths,
   never through a user-facing toggle

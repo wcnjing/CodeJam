@@ -1,17 +1,20 @@
 {
-  "name": "@sentinel/pentest-suite",
+  "name": "@sentinel/pentest",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Pentest suite for the Sentinel agent middleware: baseline, per-middleware, regression, bypass and performance testing.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "description": "Pentest library for the Sentinel agent middleware: tagged bypass catalog, per-layer profiles, harness, perf and summary. Provider-agnostic — the middleware surface is injected by the host (server app / CLI wiring).",
   "scripts": {
+    "build": "tsc -p tsconfig.lib.json && node scripts/copy-cases.mjs",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit && tsc -p tsconfig.json --noEmit",
     "import:past": "tsx scripts/import-past-examples.ts",
     "run": "tsx runner.ts",
     "baseline": "tsx runner.ts --suite baseline",
     "middleware": "tsx runner.ts --suite command-policy,redaction,budget,approval,monitor,config",
     "regression": "tsx runner.ts --suite regression",
     "perf": "tsx runner.ts --perf",
-    "all": "tsx runner.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "all": "tsx runner.ts"
   }
 }

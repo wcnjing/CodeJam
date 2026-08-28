@@ -3,7 +3,7 @@
  * persists into tests/scores/.
  */
 
-import type { SuiteResult } from "../../apps/server/src/pentest/types.js";
+import type { SuiteResult } from "../lib/types.js";
 
 export interface SuiteModule {
   id: string;

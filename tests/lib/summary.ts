@@ -1,30 +1,27 @@
 /**
  * Pentest summary — the "library of tests" as a single on-demand measurement,
- * served to the web UI's Security Evaluation page.
+ * served to the web UI's Security Evaluation page and available to the CLI.
  *
  * Runs every middleware profile (baseline, command policy, redaction, budget,
  * approval, monitor, config, whole stack) over the tagged bypass catalog and
  * measures operational cost, then returns a structured summary the frontend
- * renders. Unlike the CLI suite (tests/), this deliberately does NOT spawn the
+ * renders. Unlike the full CLI suite, this deliberately does NOT spawn the
  * real CodexRunner or run the project's own test gate — those stay in
  * CI/CLI-land; here only the pure decision-layer passes run, fast enough for a
  * request handler. Results are cached briefly so page reloads do not recompute.
+ *
+ * The middleware surface is injected (`deps`): the server app hands in the
+ * real functions for /api/pentest; the CLI wiring does the same locally.
  */
 
 import { loadCatalog } from "./catalog.js";
 import { gitRevision, runProfile } from "./harness.js";
 import { runPerf } from "./perf.js";
 import {
-  ALL_PROFILE,
-  APPROVAL_PROFILE,
-  BUDGET_PROFILE,
-  COMMAND_POLICY_PROFILE,
-  CONFIG_PROFILE,
-  DEFAULT_ENV,
-  MONITOR_PROFILE,
-  NONE_PROFILE,
-  REDACTION_PROFILE,
+  createProfiles,
+  defaultEnv,
   type MiddlewareProfile,
+  type PentestDeps,
 } from "./profiles.js";
 import type { BucketScore, PerfReport, SuiteResult, SuiteTotals, TestCase } from "./types.js";
 
@@ -58,16 +55,10 @@ export interface PentestSummary {
   limitations: string[];
 }
 
-const PROFILES: readonly MiddlewareProfile[] = [
-  NONE_PROFILE,
-  COMMAND_POLICY_PROFILE,
-  REDACTION_PROFILE,
-  BUDGET_PROFILE,
-  APPROVAL_PROFILE,
-  MONITOR_PROFILE,
-  CONFIG_PROFILE,
-  ALL_PROFILE,
-];
+export interface PentestOptions {
+  deps: PentestDeps;
+  refresh?: boolean;
+}
 
 /** perf iterations for the UI path — enough to be stable, fast enough to wait on. */
 const UI_PERF_ITERATIONS = 100;
@@ -75,13 +66,16 @@ const CACHE_TTL_MS = 30_000;
 
 let cached: { at: number; value: PentestSummary } | null = null;
 
-export async function runPentestSummary(refresh = false): Promise<PentestSummary> {
+export async function runPentestSummary(options: PentestOptions): Promise<PentestSummary> {
+  const { deps, refresh = false } = options;
   if (!refresh && cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.value;
   }
   const cases = await loadCatalog();
-  const results: SuiteResult[] = PROFILES.map((profile) =>
-    runProfile({ profile, cases, env: DEFAULT_ENV }),
+  const env = defaultEnv(deps);
+  const profiles: readonly MiddlewareProfile[] = createProfiles(deps);
+  const results: SuiteResult[] = profiles.map((profile) =>
+    runProfile({ profile, cases, env }),
   );
   const suites: PentestSuiteSummary[] = results.map((result) => ({
     suite: suiteName(result.profileId),
@@ -112,7 +106,7 @@ export async function runPentestSummary(refresh = false): Promise<PentestSummary
     revision: gitRevision(),
     catalogSize: cases.length,
     suites,
-    perf: runPerf({ cases, iterations: UI_PERF_ITERATIONS }),
+    perf: runPerf({ cases, iterations: UI_PERF_ITERATIONS, deps, allProfile: profiles[7]! }),
     residuals: { escapes, falsePositives },
     limitations: [
       "Computed locally against the middleware's pure functions over command text — no model is called, no API key is used, and no request leaves the machine.",

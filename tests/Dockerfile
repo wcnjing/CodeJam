@@ -13,16 +13,17 @@ FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
 # Dependencies first: the workspace root + server package manifest pin the lock.
+# tests/ is itself the @sentinel/pentest workspace package, so it must be
+# present before npm ci (workspace linking + the root "prepare" build).
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
+COPY tests ./tests
 RUN npm ci
 
 # Sources: server (read-only reference for the harness) + the suite itself.
 COPY apps ./apps
-COPY tests ./tests
-
-FROM ${NODE_IMAGE} AS runtime
+COPY tests ./testsFROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=test
