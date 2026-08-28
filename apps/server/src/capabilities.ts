@@ -28,14 +28,15 @@ import {
 } from "./shell-parse.js";
 
 /** What an action would do, independent of the syntax that requested it. */
-export type Capability = "NETWORK_EGRESS" | "SECRET_READ";
+export type Capability = "NETWORK_EGRESS" | "SECRET_READ" | "FILE_WRITE";
 
 /** How the capability was established, kept for evidence and for rule tuning. */
 export type CapabilityEvidence =
   | "network-tool"      // a recognised binary in command position
   | "interpreter"       // a language runtime's networking API
   | "destination-only"  // a destination with no recognised tool: hidden binary
-  | "protected-material"; // a path or dereference naming protected material
+  | "protected-material" // a path or dereference naming protected material
+  | "file-write";        // a write-shaped target (redirect, cp/mv/tee/rm/mkdir)
 
 /**
  * One capability an action requests, against one resource.
@@ -59,6 +60,13 @@ export interface PolicyContext {
    * it back into storage, the API, or the browser.
    */
   secretValues?: string[];
+  /**
+   * The run's workspace root, for resolving FILE_WRITE targets as inside or
+   * outside the sandbox. Required, not optional: a missing workspace root must
+   * not silently make every write "unverifiable, so allow it" — every absolute
+   * write target is untrusted unless it resolves under a known root.
+   */
+  workspaceRoot: string;
 }
 
 // Tools that reach the network only for particular subcommands. Treating all of
@@ -270,6 +278,54 @@ export function extractHosts(command: string): string[] {
 
   return [...hosts];
 }
+// Tools whose write target(s) can be inspected in argument position. cp/mv take
+// a source and a destination — only the destination is written to, so those two
+// are handled separately from tee/rm/mkdir, which write/touch every argument.
+const WRITE_DESTINATION_TOOLS = new Set(["cp", "mv"]);
+const WRITE_EVERY_ARGUMENT_TOOLS = new Set(["tee", "rm", "mkdir"]);
+
+function writeTargetsFromInvocation(tool: string, args: string[]): string[] {
+  const positional = args.filter((argument) => !argument.startsWith("-"));
+  if (WRITE_DESTINATION_TOOLS.has(tool)) {
+    return positional.length > 0 ? [positional[positional.length - 1]!] : [];
+  }
+  if (WRITE_EVERY_ARGUMENT_TOOLS.has(tool)) {
+    return positional;
+  }
+  return [];
+}
+
+/** Every write-shaped target in a command: shell redirects plus write-tool arguments. */
+function writeTargets(command: string): string[] {
+  const targets: string[] = [];
+  for (const match of command.matchAll(/>>?\s*([^\s;&|<>]+)/g)) {
+    if (match[1]) targets.push(match[1]);
+  }
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    targets.push(...writeTargetsFromInvocation(invocation.tool, invocation.args));
+  }
+  return targets;
+}
+
+/**
+ * Whether a write target resolves inside the workspace. A relative path is
+ * trusted unless a `..` segment escapes upward — the container's cwd IS the
+ * workspace root, so any `..` leaves it. An absolute path is trusted only when
+ * it is the workspace root or under it; with no configured root, nothing
+ * absolute can be verified, so nothing absolute is trusted.
+ */
+function isInsideWorkspace(target: string, workspaceRoot: string): boolean {
+  const cleaned = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
+  if (cleaned.startsWith("/")) {
+    if (!workspaceRoot) return false;
+    const root = workspaceRoot.replace(/\/+$/, "");
+    return cleaned === root || cleaned.startsWith(root + "/");
+  }
+  return !cleaned.split("/").includes("..");
+}
+
 /**
  * The capabilities a command would exercise, resolved against the run's context.
  *
@@ -321,6 +377,17 @@ export function extractCapabilities(
       resource: secret,
       trusted: false,
       via: "protected-material",
+    });
+  }
+
+  for (const target of writeTargets(command)) {
+    const resource = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
+    if (!resource) continue;
+    requests.push({
+      capability: "FILE_WRITE",
+      resource,
+      trusted: isInsideWorkspace(resource, context.workspaceRoot),
+      via: "file-write",
     });
   }
 
