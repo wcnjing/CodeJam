@@ -4,6 +4,7 @@ import type {
   ApprovalRequest,
   EvaluationSummary,
   Message,
+  PentestSummary,
   PolicyDecision,
   SystemInfo,
 } from "./types";
@@ -87,6 +88,8 @@ export const api = {
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
   evaluation: () => request<EvaluationSummary>("/api/evaluation"),
+  pentest: (refresh = false) =>
+    request<PentestSummary>("/api/pentest" + (refresh ? "?refresh=1" : "")),
   policyEvents: (id: string) =>
     request<{ policyEvents: PolicyDecision[] }>("/api/agents/" + id + "/policy-events"),
   approvals: (id: string) =>

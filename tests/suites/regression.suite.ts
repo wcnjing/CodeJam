@@ -13,10 +13,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ALL_PROFILE, DEFAULT_ENV } from "../lib/middleware.js";
-import { runProfile } from "../lib/harness.js";
-import { loadCatalog } from "../lib/catalog.js";
-import type { CaseVerdict } from "../lib/types.js";
+import { ALL_PROFILE, DEFAULT_ENV } from "../../apps/server/src/pentest/profiles.js";
+import { runProfile } from "../../apps/server/src/pentest/harness.js";
+import { loadCatalog } from "../../apps/server/src/pentest/catalog.js";
+import type { CaseVerdict } from "../../apps/server/src/pentest/types.js";
 import type { SuiteModule } from "./suite.js";
 
 const execFileAsync = promisify(execFile);

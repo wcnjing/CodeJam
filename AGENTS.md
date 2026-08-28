@@ -30,9 +30,9 @@
     - untrusted-fetch
     - benign / near-miss (false-positive checks)
 
-    The full closed tag vocabulary lives in `tests/lib/tags.ts` (also
-    `egress`, `path`, `tunnel`, `wrapper`, `fail-closed`, `reviewability`,
-    `budget`, `redaction`, `monitor`).
+    The full closed tag vocabulary lives in `apps/server/src/pentest/tags.ts`
+    (also `egress`, `path`, `tunnel`, `wrapper`, `fail-closed`,
+    `reviewability`, `budget`, `redaction`, `monitor`).
 
 - also test the performance and operational cost of each middleware
 
@@ -66,23 +66,26 @@ planter, deploy helpers)
 
 # pentest suite (implemented)
 
-The bypass suite in `tests/` is complete. It is a black-box harness: it imports
-the real middleware (`evaluateCommand`, `guardedEvaluate`, `redactCommand`,
-`scanCommands`) and drives the real `CodexRunner` with fake `codex` binaries,
-so it never modifies `apps/`, `server/`, `deploy/`, `docs/` or `scripts/`.
+The bypass suite is complete. The pentest **library** (case catalog, middleware
+profiles, harness, perf, summary) lives in `apps/server/src/pentest/` so it can
+run as the CLI, in CI, and live in the web UI (Security Evaluation →
+"Pentest suite", backed by `GET /api/pentest`). `tests/` holds the CLI, the
+behavioral suites (real `CodexRunner` with fake `codex` binaries) and the
+scores.
 
 ## layout
 
 ```
-tests/
+apps/server/src/pentest/    # the library: catalog + profiles + harness + perf + summary
   cases/
     past-examples.json        # curated from policy-corpus.ts + redteam.ts (past examples)
     generated-advanced.json   # escalated red-team cases (deepseek pro)
+tests/
   docs/
     regression-matrix.md      # per-tag x middleware-layer matrix (Sol)
     threat-coverage.json      # tag -> threat/control coverage map (Sol)
-  lib/                        # harness, middleware profiles, perf, catalog, report
-  scripts/import-past-examples.ts  # re-curate past-examples.json after corpus changes
+  lib/                        # report (rendering/scores) + fake-codex (behavioral)
+  scripts/import-past-examples.ts  # re-curate the catalog after corpus changes
   suites/                     # baseline, command-policy, redaction, budget,
                               #   approval, monitor, config, regression, perf
   scores/                     # JSON scores per suite + summary.json (committed)
@@ -100,11 +103,16 @@ npx tsx tests/runner.ts --perf              # operational cost only
 npx tsx tests/scripts/import-past-examples.ts   # re-curate after corpus changes
 
 docker compose -f docker-compose.tests.yml up --build    # containerized
+
+# in-app: Security Evaluation page shows the suite (GET /api/pentest)
 ```
 
 Scores are written to `tests/scores/<suite>.json` + `tests/scores/summary.json`.
 A suite exits non-zero when protected-layer verdicts fail expectations (CI can
 gate on it); the baseline suite is a measurement and does not fail the run.
+The in-app path runs the pure decision-layer passes (fast, cached 30 s); the
+step-budget behavioral tests and the project's own test gate run only in the
+CLI/CI suite.
 
 ## middleware layers under test
 
@@ -144,7 +152,7 @@ leak / no runaway / invariants hold, not that an attack was detected. See
 ## escalation policy (working instruction)
 
 - **deepseek pro** (`deepseek-v4-pro`) — tougher reasoning: adversarial
-  bypass-case generation → `tests/cases/generated-advanced.json`.
+  bypass-case generation → `apps/server/src/pentest/cases/generated-advanced.json`.
 - **Sol** (`openai/gpt-5.6-sol`) — extremely difficult cross-field reasoning:
   whole-stack regression matrix + threat-coverage map →
   `tests/docs/regression-matrix.md`, `tests/docs/threat-coverage.json`.
@@ -152,7 +160,9 @@ leak / no runaway / invariants hold, not that an attack was detected. See
 ## hardlines
 
 - restricted to the `test-suite` branch
-- no write access to frontend or backend code — suite code lives only in
-  `tests/` (plus the separate `docker-compose.tests.yml`)
+- the pentest suite never modifies the platform's behaviour — it imports the
+  real middleware and drives the real `CodexRunner`; apps/ edits are limited to
+  hosting the pentest library (`apps/server/src/pentest/`) and rendering it on
+  the Security Evaluation page, done under explicit user permission
 - middleware stays server-side; the suite reaches it through real code paths,
   never through a user-facing toggle

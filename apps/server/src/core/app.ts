@@ -8,6 +8,7 @@ import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { buildEvaluationSummary } from "../evaluation/evaluation-summary.js";
+import { runPentestSummary } from "../pentest/summary.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -154,6 +155,14 @@ export async function createApp(
   });
 
   app.get("/api/evaluation", async () => buildEvaluationSummary());
+
+  // The pentest suite ("library of tests") as an on-demand measurement: every
+  // middleware profile over the tagged bypass catalog plus operational cost.
+  // ?refresh=1 bypasses the short cache.
+  app.get("/api/pentest", async (request) => {
+    const refresh = (request.query as { refresh?: string }).refresh === "1";
+    return runPentestSummary(refresh);
+  });
 
   app.get("/api/runs/:id", async (request) => {
     const { id } = runIdParams.parse(request.params);

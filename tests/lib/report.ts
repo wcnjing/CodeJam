@@ -9,7 +9,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PerfReport, SuiteResult } from "./types.js";
+import type { PerfReport, SuiteResult } from "../../apps/server/src/pentest/types.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const SCORES_DIR = path.resolve(HERE, "..", "scores");

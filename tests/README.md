@@ -13,28 +13,39 @@ invariants), per `AGENTS.md`:
 
 The suite is deliberately read-only against the platform: it imports the
 server's middleware functions and drives the real `CodexRunner` with fake
-`codex` binaries, but never modifies `apps/`, `server/`, `deploy/`, `docs/` or
-`scripts/`. All suite code lives under `tests/`.
+`codex` binaries, but never modifies the platform's own code. The pentest
+*library* (case catalog, middleware profiles, harness, perf) lives in the
+server package at `apps/server/src/pentest/` so it can also be served live to
+the web UI (Security Evaluation → "Pentest suite"); `tests/` holds the CLI,
+the behavioral suites and the scores.
 
 ## Layout
 
 ```
-tests/
+apps/server/src/pentest/   # the library: catalog + profiles + harness + perf + summary
   cases/
     past-examples.json      # curated from policy-corpus.ts + redteam.ts (170 cases)
     generated-advanced.json # deepseek-pro escalated red-team cases (70 cases)
+tests/
   docs/
     regression-matrix.md    # Sol escalated: per-tag layer matrix + gap analysis
     threat-coverage.json    # Sol escalated: tag -> threat/control coverage map
-  lib/                      # harness, middleware profiles, perf, report, catalog
+  lib/report.ts             # CLI rendering + score persistence
+  lib/fake-codex.ts         # fake codex binary for the behavioral suites
   scripts/
-    import-past-examples.ts # regenerate past-examples.json from the corpus
+    import-past-examples.ts # regenerate the catalog from the corpus
   suites/                   # one suite per middleware layer + baseline + regression + perf
   scores/                   # JSON scores per suite + summary.json (committed)
   runner.ts                 # CLI entry point
   Dockerfile                # disposable test image
 docker-compose.tests.yml    # separate compose for the suite (repo root)
 ```
+
+The same library is exposed in-app: `GET /api/pentest` computes the full
+summary on demand (with a 30 s cache; `?refresh=1` to bypass) and the Security
+Evaluation page renders it. The UI path runs the pure decision-layer passes;
+the step-budget behavioral tests (real `CodexRunner`) and the project's own
+test gate run only in the CLI/CI suite.
 
 ## Run
 

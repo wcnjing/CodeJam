@@ -21,9 +21,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { POLICY_CORPUS, type CorpusEntry } from "../../apps/server/src/evaluation/policy-corpus.js";
-import { CASES_DIR } from "../lib/catalog.js";
-import { TAG_VOCABULARY } from "../lib/tags.js";
-import type { TestCase } from "../lib/types.js";
+import { CASES_DIR } from "../../apps/server/src/pentest/catalog.js";
+import { TAG_VOCABULARY } from "../../apps/server/src/pentest/tags.js";
+import type { TestCase } from "../../apps/server/src/pentest/types.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 

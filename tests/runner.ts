@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   }
 
   console.log("Sentinel middleware pentest suite");
-  console.log("cases: loading catalog from tests/cases/*.json");
+  console.log("cases: loading catalog from apps/server/src/pentest/cases/*.json");
   console.log("suites: " + toRun.map((s) => s.id).join(", "));
 
   for (const suite of toRun) {

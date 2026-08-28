@@ -5,10 +5,10 @@
  * microseconds per decision, throughput of the scan path, and redaction cost.
  */
 
-import { runPerf } from "../lib/perf.js";
-import { loadCatalog } from "../lib/catalog.js";
+import { runPerf } from "../../apps/server/src/pentest/perf.js";
+import { loadCatalog } from "../../apps/server/src/pentest/catalog.js";
 import { renderPerf } from "../lib/report.js";
-import type { PerfReport } from "../lib/types.js";
+import type { PerfReport } from "../../apps/server/src/pentest/types.js";
 
 export interface PerfSuiteResult {
   report: PerfReport;

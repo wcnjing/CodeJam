@@ -100,6 +100,56 @@ export interface EvaluationSummary {
   escapes: { id: string; family: string }[];
 }
 
+/** Pentest suite (bypass library) — one on-demand measurement of every layer. */
+export interface PentestSuiteSummary {
+  suite: string;
+  profileId: string;
+  profileName: string;
+  totals: {
+    cases: number;
+    passed: number;
+    failed: number;
+    malicious: number;
+    benign: number;
+    maliciousBlocked: number;
+    maliciousEscaped: number;
+    benignBlocked: number;
+    attackBlockRate: number;
+    escapeRate: number;
+    falsePositiveRate: number;
+  };
+  byTag: Record<string, { total: number; passed: number; rate: number }>;
+}
+
+export interface PentestPerfSample {
+  profileId: string;
+  profileName: string;
+  metric: string;
+  samples: number;
+  meanMicroseconds: number;
+  p50Microseconds: number;
+  p95Microseconds: number;
+  opsPerSecond: number;
+  byLength?: Record<string, { samples: number; meanMicroseconds: number }>;
+}
+
+export interface PentestResidual {
+  caseId: string;
+  command: string;
+  tags: string[];
+  category: string;
+}
+
+export interface PentestSummary {
+  generatedAt: string;
+  revision: string;
+  catalogSize: number;
+  suites: PentestSuiteSummary[];
+  perf: { generatedAt: string; samples: PentestPerfSample[] };
+  residuals: { escapes: PentestResidual[]; falsePositives: PentestResidual[] };
+  limitations: string[];
+}
+
 export interface SystemInfo {
   arkConfigured: boolean;
   arkBaseUrl: string;
