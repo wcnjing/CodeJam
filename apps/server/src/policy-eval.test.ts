@@ -52,6 +52,7 @@ describe("command policy quality gates", () => {
     // If a rule stops firing across the whole corpus it is dead code or broken.
     expect(Object.keys(result.ruleCounts).sort()).toEqual([
       "network-egress-denied",
+      "network-egress-denied-implicit",
       "protected-secret-access",
       "secret-exfiltration",
     ]);

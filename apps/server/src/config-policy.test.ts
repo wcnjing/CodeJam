@@ -26,7 +26,10 @@ describe("POLICY_REVIEW_RULES invariant", () => {
   });
 
   it("defaults to egress-only", () => {
-    expect(loadConfig(base).policyReviewRules).toEqual(["network-egress-denied"]);
+    expect(loadConfig(base).policyReviewRules).toEqual([
+      "network-egress-denied",
+      "network-egress-denied-implicit",
+    ]);
   });
 });
 

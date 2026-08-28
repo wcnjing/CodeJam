@@ -43,7 +43,10 @@ export interface PolicyViolation {
  * rejected if it names anything outside it (see config.ts).
  */
 
-export const REVIEWABLE_RULES: readonly string[] = ["network-egress-denied"];
+export const REVIEWABLE_RULES: readonly string[] = [
+  "network-egress-denied",
+  "network-egress-denied-implicit",
+];
 
 /** True only for rules a human is permitted to approve. */
 
@@ -96,7 +99,7 @@ const POLICY_RULES: CapabilityRule[] = [
     hosts: (f) => f.untrusted,
   },
   {
-    id: "network-egress-denied",
+    id: "network-egress-denied-implicit",
     statement:
       "A destination with no recognised network tool is still NETWORK_EGRESS: " +
       "an obfuscated command can hide its binary but not where it connects.",
@@ -182,13 +185,36 @@ export function allowedHostsFrom(arkBaseUrl: string): string[] {
 const REDACTED = "***REDACTED***";
 
 // Credentials embedded in a URL authority, e.g. postgres://user:pw@host.
+//
+// The user/password segments are length-bounded (real credentials are far
+// shorter) so a `\b` restart inside a long adversarial non-whitespace run
+// costs O(1) instead of re-scanning to the end of the string — the same
+// quadratic-blowup shape HIGH_ENTROPY_RUN had, on the same evidence-building
+// path, just needing no real "://" or "@" in the input to trigger it.
 
-const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@"']+:)[^\s@"']+(@)/gi;
+const URL_CREDENTIALS = /(\b[a-z][a-z0-9+.-]{0,15}:\/\/[^\s:/@"']{1,255}:)[^\s@"']{1,255}(@)/gi;
 
 // Long opaque strings: API keys, tokens, base64 blobs. Deliberately conservative
 // so ordinary arguments, paths and hashes-in-filenames are left readable.
+//
+// A single greedy run of the allowed charset, checked in one linear pass —
+// not the lookahead-per-`\b`-restart-point form this replaced, which let a
+// long non-whitespace argument (no real secret needed) force a quadratic scan
+// on the exact path that builds security evidence for a denial.
 
-const HIGH_ENTROPY = /\b(?=[A-Za-z0-9_+/=-]{28,})(?=[^\s]*[A-Za-z])(?=[^\s]*\d)[A-Za-z0-9_+/=-]{28,}\b/g;
+const HIGH_ENTROPY_RUN = /[A-Za-z0-9_+/=-]+/g;
+
+function isHighEntropyRun(run: string): boolean {
+  if (run.length < 28) return false;
+  let hasLetter = false;
+  let hasDigit = false;
+  for (let i = 0; i < run.length && !(hasLetter && hasDigit); i += 1) {
+    const code = run.charCodeAt(i);
+    if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) hasLetter = true;
+    else if (code >= 48 && code <= 57) hasDigit = true;
+  }
+  return hasLetter && hasDigit;
+}
 
 /**
  * Removes secret material from a command before it is recorded as evidence.
@@ -209,7 +235,7 @@ export function redactCommand(command: string, secretValues: readonly string[] =
     }
   }
   redacted = redacted.replace(URL_CREDENTIALS, "$1" + REDACTED + "$2");
-  redacted = redacted.replace(HIGH_ENTROPY, REDACTED);
+  redacted = redacted.replace(HIGH_ENTROPY_RUN, (run) => (isHighEntropyRun(run) ? REDACTED : run));
   return redacted;
 }
 

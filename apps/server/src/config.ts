@@ -50,7 +50,7 @@ const envSchema = z.object({
   // Rules whose denials pause for human approval instead of hard-blocking.
   // Deliberately defaults to egress only: secret-access rules are never
   // reviewable, so no human can approve exfiltrating a protected secret.
-  POLICY_REVIEW_RULES: z.string().default("network-egress-denied"),
+  POLICY_REVIEW_RULES: z.string().default("network-egress-denied,network-egress-denied-implicit"),
   // Step budget: max shell commands one run may execute before it is killed as
   // runaway. Enforced by the platform, not the agent, and always on.
   POLICY_MAX_COMMANDS: z.coerce.number().int().positive().default(50),

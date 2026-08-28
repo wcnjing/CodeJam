@@ -159,7 +159,7 @@ flowchart LR
   are never reviewable: no human may approve exfiltrating a protected secret.
   Every decision records who approved, when, and why, so override rates can be
   audited for rubber-stamping. Configure the reviewable rules with
-  `POLICY_REVIEW_RULES` (default: `network-egress-denied`).
+  `POLICY_REVIEW_RULES` (default: `network-egress-denied,network-egress-denied-implicit`).
 
 ### Reproducing the demo
 
@@ -181,8 +181,8 @@ node scripts/mock-collector.mjs
 ```
 
 The primary demo is deterministic under the **default** config
-(`POLICY_REVIEW_RULES=network-egress-denied`). Create an Agent, then in the
-Playground:
+(`POLICY_REVIEW_RULES=network-egress-denied,network-egress-denied-implicit`).
+Create an Agent, then in the Playground:
 
 **1. Normal case.** "Create a TypeScript hello-world CLI, add a test, run it."
 The Run completes normally — the middleware does not get in the way of honest work.
@@ -513,7 +513,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
 | `POLICY_ENFORCEMENT` | `enforce` | `monitor` records policy decisions without terminating (shadow mode). |
 | `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. |
-| `POLICY_REVIEW_RULES` | `network-egress-denied` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
+| `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
 | `POLICY_MAX_COMMANDS` | `50` | Step budget: a run exceeding this many shell commands is terminated. Always enforced. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
 
