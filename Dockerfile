@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
-# tests/ is the @sentinel/pentest workspace package the server depends on;
+# tests/ is the @sentinel/evaluation workspace package the server depends on;
 # it must be present before npm ci so the workspace links and the root
 # "prepare" build (which compiles the pentest library) can run.
 COPY tests ./tests
@@ -40,7 +40,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist
-# The @sentinel/pentest workspace package is linked into node_modules via a
+# The @sentinel/evaluation workspace package is linked into node_modules via a
 # relative symlink to ../../tests; the built library (tests/dist) must be
 # present in the runtime image for /api/pentest.
 COPY --from=build /app/tests ./tests

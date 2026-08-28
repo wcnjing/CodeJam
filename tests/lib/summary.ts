@@ -21,11 +21,11 @@ import {
   createProfiles,
   defaultEnv,
   type MiddlewareProfile,
-  type PentestDeps,
+  type EvaluationDeps,
 } from "./profiles.js";
 import type { BucketScore, PerfReport, SuiteResult, SuiteTotals, TestCase } from "./types.js";
 
-export interface PentestSuiteSummary {
+export interface EvaluationSuiteSummary {
   suite: string;
   profileId: string;
   profileName: string;
@@ -33,30 +33,30 @@ export interface PentestSuiteSummary {
   byTag: Record<string, BucketScore>;
 }
 
-export interface PentestResidual {
+export interface EvaluationResidual {
   caseId: string;
   command: string;
   tags: string[];
   category: string;
 }
 
-export interface PentestSummary {
+export interface EvaluationRunSummary {
   generatedAt: string;
   revision: string;
   catalogSize: number;
-  suites: PentestSuiteSummary[];
+  suites: EvaluationSuiteSummary[];
   perf: PerfReport;
   residuals: {
     /** Malicious commands the whole stack would allow — the escape list. */
-    escapes: PentestResidual[];
+    escapes: EvaluationResidual[];
     /** Benign commands the whole stack would block — the false positives. */
-    falsePositives: PentestResidual[];
+    falsePositives: EvaluationResidual[];
   };
   limitations: string[];
 }
 
-export interface PentestOptions {
-  deps: PentestDeps;
+export interface EvaluationOptions {
+  deps: EvaluationDeps;
   refresh?: boolean;
 }
 
@@ -64,9 +64,9 @@ export interface PentestOptions {
 const UI_PERF_ITERATIONS = 100;
 const CACHE_TTL_MS = 30_000;
 
-let cached: { at: number; value: PentestSummary } | null = null;
+let cached: { at: number; value: EvaluationRunSummary } | null = null;
 
-export async function runPentestSummary(options: PentestOptions): Promise<PentestSummary> {
+export async function runEvaluationSummary(options: EvaluationOptions): Promise<EvaluationRunSummary> {
   const { deps, refresh = false } = options;
   if (!refresh && cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.value;
@@ -77,7 +77,7 @@ export async function runPentestSummary(options: PentestOptions): Promise<Pentes
   const results: SuiteResult[] = profiles.map((profile) =>
     runProfile({ profile, cases, env }),
   );
-  const suites: PentestSuiteSummary[] = results.map((result) => ({
+  const suites: EvaluationSuiteSummary[] = results.map((result) => ({
     suite: suiteName(result.profileId),
     profileId: result.profileId,
     profileName: result.profileName,
@@ -87,7 +87,7 @@ export async function runPentestSummary(options: PentestOptions): Promise<Pentes
 
   const whole = results.find((r) => r.profileId === "all")!;
   const index = new Map(cases.map((c) => [c.id, c]));
-  const residual = (caseId: string): PentestResidual | null => {
+  const residual = (caseId: string): EvaluationResidual | null => {
     const entry = index.get(caseId);
     if (!entry) return null;
     return { caseId, command: entry.command, tags: entry.tags, category: entry.category };
@@ -95,13 +95,13 @@ export async function runPentestSummary(options: PentestOptions): Promise<Pentes
   const escapes = whole.verdicts
     .filter((v) => !v.matchesExpected)
     .map((v) => residual(v.caseId))
-    .filter((r): r is PentestResidual => r !== null && index.get(r.caseId)!.label === "malicious");
+    .filter((r): r is EvaluationResidual => r !== null && index.get(r.caseId)!.label === "malicious");
   const falsePositives = whole.verdicts
     .filter((v) => !v.matchesExpected)
     .map((v) => residual(v.caseId))
-    .filter((r): r is PentestResidual => r !== null && index.get(r.caseId)!.label === "benign");
+    .filter((r): r is EvaluationResidual => r !== null && index.get(r.caseId)!.label === "benign");
 
-  const value: PentestSummary = {
+  const value: EvaluationRunSummary = {
     generatedAt: new Date().toISOString(),
     revision: gitRevision(),
     catalogSize: cases.length,

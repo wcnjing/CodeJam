@@ -1,7 +1,7 @@
 /**
- * Server-side wiring for the pentest library.
+ * Server-side wiring for the evaluation library.
  *
- * Binds the provider-agnostic library (@sentinel/pentest) to the REAL
+ * Binds the provider-agnostic library (@sentinel/evaluation) to the REAL
  * middleware running in this process, so /api/pentest measures exactly the
  * code that enforces. The CLI has its own equivalent (tests/lib/wiring.ts).
  */
@@ -16,9 +16,9 @@ import {
   REVIEWABLE_RULES,
 } from "../middleware/command-policy.js";
 import { loadConfig } from "./config.js";
-import type { PentestDeps } from "@sentinel/pentest";
+import type { EvaluationDeps } from "@sentinel/evaluation";
 
-export const pentestDeps: PentestDeps = {
+export const evaluationDeps: EvaluationDeps = {
   evaluateCommand,
   guardedEvaluate,
   redactCommand,

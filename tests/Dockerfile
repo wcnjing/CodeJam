@@ -13,7 +13,7 @@ FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
 # Dependencies first: the workspace root + server package manifest pin the lock.
-# tests/ is itself the @sentinel/pentest workspace package, so it must be
+# tests/ is itself the @sentinel/evaluation workspace package, so it must be
 # present before npm ci (workspace linking + the root "prepare" build).
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/package.json

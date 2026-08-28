@@ -67,21 +67,21 @@ planter, deploy helpers)
 # pentest suite (implemented)
 
 The bypass suite is complete. The pentest **library** lives in `tests/` as the
-`@sentinel/pentest` workspace package (tagged case catalog, provider-agnostic
+`@sentinel/evaluation` workspace package (tagged case catalog, provider-agnostic
 middleware profiles, harness, perf, summary). It runs three ways:
 - as the **CLI/CI suite** (`tests/runner.ts`, docker-compose.tests.yml) with
   the behavioral tests that spawn the real `CodexRunner` (fake codex script);
-- **in the web app**: the server imports `@sentinel/pentest`, wires the real
-  middleware in (`apps/server/src/core/pentest-deps.ts`), and serves the
+- **in the web app**: the server imports `@sentinel/evaluation`, wires the real
+  middleware in (`apps/server/src/core/evaluation-deps.ts`), and serves the
   summary at `GET /api/pentest`, rendered on the Security Evaluation page;
 - the library is provider-agnostic — the middleware surface under test is
-  injected (`PentestDeps`), so the same library tests whatever implementation
+  injected (`EvaluationDeps`), so the same library tests whatever implementation
   it is handed.
 
 ## layout
 
 ```
-tests/                       # @sentinel/pentest workspace package + CLI/CI harness
+tests/                       # @sentinel/evaluation workspace package + CLI/CI harness
   lib/                       # the library: catalog, tags, types, profiles,
                              #   harness, perf, summary (+ wiring, report, fake-codex)
   cases/                     # past-examples.json + generated-advanced.json (231 commands)
@@ -96,7 +96,7 @@ tests/                       # @sentinel/pentest workspace package + CLI/CI harn
   runner.ts                   # CLI entry point
   tsconfig.lib.json           # builds the library -> tests/dist (consumed by the app)
   Dockerfile                  # disposable test image
-apps/server/src/core/pentest-deps.ts   # app-side wiring of the real middleware into the library
+apps/server/src/core/evaluation-deps.ts   # app-side wiring of the real middleware into the library
 docker-compose.tests.yml      # separate compose for the suite (repo root)
 ```
 
@@ -169,7 +169,7 @@ leak / no runaway / invariants hold, not that an attack was detected. See
 - the pentest suite never modifies the platform's behaviour — the library in
   `tests/` tests whatever middleware it is handed; apps/ edits are limited to
   wiring the real middleware into the library
-  (`apps/server/src/core/pentest-deps.ts`) and rendering the suite on the
+  (`apps/server/src/core/evaluation-deps.ts`) and rendering the suite on the
   Security Evaluation page, done under explicit user permission
 - middleware stays server-side; the suite reaches it through real code paths,
   never through a user-facing toggle

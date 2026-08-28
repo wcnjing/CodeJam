@@ -16,7 +16,7 @@
  *   6. config        — REVIEWABLE_RULES invariant, fail-closed evaluation
  *
  * This library NEVER imports the platform. The middleware surface under test
- * is injected as `PentestDeps` by the host — the server app (for /api/pentest)
+ * is injected as `EvaluationDeps` by the host — the server app (for /api/pentest)
  * or the CLI wiring (tests/lib/wiring.ts) — so the same library runs anywhere
  * against whatever implementation it is handed.
  */
@@ -45,7 +45,7 @@ export interface DetectedViolationLike extends PolicyViolationLike {
  * The middleware functions the profiles exercise. Injected by the host so the
  * library stays external and tests whatever implementation it is handed.
  */
-export interface PentestDeps {
+export interface EvaluationDeps {
   evaluateCommand: (
     command: string,
     context: PolicyContextLike,
@@ -108,7 +108,7 @@ export interface MiddlewareProfile {
 }
 
 /** Default evaluation environment, built from the injected middleware. */
-export function defaultEnv(deps: PentestDeps): EvalEnv {
+export function defaultEnv(deps: EvaluationDeps): EvalEnv {
   return {
     // Same default context the platform uses for the Ark host.
     policyContext: deps.policyContextFrom("https://ark.cn-beijing.volces.com/api/v3"),
@@ -144,7 +144,7 @@ const ALLOW_OUTCOME = {
  * Build the full profile set (in a fixed order) from the injected middleware.
  * Order: none, command-policy, redaction, budget, approval, monitor, config, all.
  */
-export function createProfiles(deps: PentestDeps): readonly MiddlewareProfile[] {
+export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile[] {
   /** 1. No middleware: the baseline. Everything is allowed. */
   const NONE_PROFILE: MiddlewareProfile = {
     id: "none",
@@ -354,7 +354,7 @@ export function createProfiles(deps: PentestDeps): readonly MiddlewareProfile[] 
   ];
 }
 
-export function profileById(deps: PentestDeps, id: string): MiddlewareProfile {
+export function profileById(deps: EvaluationDeps, id: string): MiddlewareProfile {
   const profile = createProfiles(deps).find((p) => p.id === id);
   if (!profile) throw new Error("Unknown middleware profile: " + id);
   return profile;

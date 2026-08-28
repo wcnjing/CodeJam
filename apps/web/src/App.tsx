@@ -6,7 +6,7 @@ import type {
   ApprovalRequest,
   EvaluationSummary,
   Message,
-  PentestSummary,
+  EvaluationRunSummary,
   PolicyDecision,
   SystemInfo,
 } from "./types";
@@ -52,7 +52,7 @@ function EvaluationView({
   onReload,
 }: {
   summary: EvaluationSummary | null;
-  pentest: PentestSummary | null;
+  pentest: EvaluationRunSummary | null;
   onReload: () => void;
 }) {
   if (!summary) {
@@ -211,7 +211,7 @@ function EvaluationView({
  * layer individually and as a whole, plus measured operational cost. Backed by
  * /api/pentest, computed on demand from the code actually running.
  */
-function PentestView({ pentest }: { pentest: PentestSummary | null }) {
+function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
   if (!pentest) {
     return (
       <section className="pentest">
@@ -380,7 +380,7 @@ export default function App() {
   const [approvalReason, setApprovalReason] = useState("");
   const [view, setView] = useState<"agents" | "evaluation">("agents");
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
-  const [pentest, setPentest] = useState<PentestSummary | null>(null);
+  const [pentest, setPentest] = useState<EvaluationRunSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);

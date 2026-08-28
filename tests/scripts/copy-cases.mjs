@@ -18,7 +18,7 @@ const target = path.join(here, "..", "dist", "cases");
 
 if (existsSync(source)) {
   cpSync(source, target, { recursive: true });
-  console.log("copied pentest cases -> " + path.relative(process.cwd(), target));
+  console.log("copied evaluation cases -> " + path.relative(process.cwd(), target));
 } else {
   console.warn("no pentest cases at " + source);
 }

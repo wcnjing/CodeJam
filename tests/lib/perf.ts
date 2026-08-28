@@ -20,7 +20,7 @@ import {
   wrapped,
   type EvalEnv,
   type MiddlewareProfile,
-  type PentestDeps,
+  type EvaluationDeps,
 } from "./profiles.js";
 import type { PerfReport, PerfSample, TestCase } from "./types.js";
 
@@ -52,7 +52,7 @@ function summarize(samples: number[], elapsedNs: number): Timing {
 export interface PerfOptions {
   cases: readonly TestCase[];
   iterations?: number;
-  deps: PentestDeps;
+  deps: EvaluationDeps;
   /** The whole-stack ("all") profile, for the end-to-end chain measure. */
   allProfile: MiddlewareProfile;
   env?: EvalEnv;

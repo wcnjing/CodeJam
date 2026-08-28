@@ -15,8 +15,8 @@ The suite is deliberately read-only against the platform: it imports the
 server's middleware functions and drives the real `CodexRunner` with fake
 `codex` binaries, but never modifies the platform's own code. The pentest
 *library* (case catalog, provider-agnostic middleware profiles, harness, perf,
-summary) lives HERE in `tests/` as the `@sentinel/pentest` workspace package;
-the web application imports it (`apps/server` depends on `@sentinel/pentest`,
+summary) lives HERE in `tests/` as the `@sentinel/evaluation` workspace package;
+the web application imports it (`apps/server` depends on `@sentinel/evaluation`,
 wires the real middleware in via `apps/server/src/core/pentest-deps.ts`, and
 serves it at `GET /api/pentest` rendered on the Security Evaluation page).
 `tests/` also holds the CLI, the behavioral suites and the scores.
@@ -31,7 +31,7 @@ is used, and no request leaves the machine.
 ## Layout
 
 ```
-tests/                       # @sentinel/pentest workspace package + CLI/CI harness
+tests/                       # @sentinel/evaluation workspace package + CLI/CI harness
   lib/                       # the library: catalog, tags, types, profiles,
                              #   harness, perf, summary (+ wiring, report, fake-codex)
     wiring.ts                # CLI-side binding of the real middleware into the library

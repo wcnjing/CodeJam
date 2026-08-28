@@ -8,7 +8,7 @@
 import { runPerf } from "../lib/perf.js";
 import { loadCatalog } from "../lib/catalog.js";
 import { renderPerf } from "../lib/report.js";
-import { ALL_PROFILE, DEFAULT_ENV, PENTEST_DEPS } from "../lib/wiring.js";
+import { ALL_PROFILE, DEFAULT_ENV, EVALUATION_DEPS } from "../lib/wiring.js";
 import type { PerfReport } from "../lib/types.js";
 
 export interface PerfSuiteResult {
@@ -21,7 +21,7 @@ export async function runPerfSuite(): Promise<PerfSuiteResult> {
   const report = runPerf({
     cases,
     iterations: 300,
-    deps: PENTEST_DEPS,
+    deps: EVALUATION_DEPS,
     allProfile: ALL_PROFILE,
     env: DEFAULT_ENV,
   });

@@ -1,5 +1,5 @@
 /**
- * CLI wiring — binds the provider-agnostic pentest library to the REAL
+ * CLI wiring — binds the provider-agnostic evaluation library to the REAL
  * middleware (the code under test) and to the platform's config/corpus.
  *
  * This is the only tests/-side module that imports the server sources; the
@@ -20,11 +20,11 @@ import { loadConfig } from "../../apps/server/src/core/config.js";
 import {
   createProfiles,
   defaultEnv,
-  type PentestDeps,
+  type EvaluationDeps,
 } from "./profiles.js";
 
 /** The real middleware surface, injected into the library. */
-export const PENTEST_DEPS: PentestDeps = {
+export const EVALUATION_DEPS: EvaluationDeps = {
   evaluateCommand,
   guardedEvaluate,
   redactCommand,
@@ -36,7 +36,7 @@ export const PENTEST_DEPS: PentestDeps = {
 };
 
 /** The full profile set wired to the real middleware (order: none, command-policy, redaction, budget, approval, monitor, config, all). */
-const WIRED = createProfiles(PENTEST_DEPS);
+const WIRED = createProfiles(EVALUATION_DEPS);
 export const NONE_PROFILE = WIRED[0]!;
 export const COMMAND_POLICY_PROFILE = WIRED[1]!;
 export const REDACTION_PROFILE = WIRED[2]!;
@@ -47,7 +47,7 @@ export const CONFIG_PROFILE = WIRED[6]!;
 export const ALL_PROFILE = WIRED[7]!;
 
 /** Default evaluation environment wired to the real middleware. */
-export const DEFAULT_ENV = defaultEnv(PENTEST_DEPS);
+export const DEFAULT_ENV = defaultEnv(EVALUATION_DEPS);
 
 // Convenience re-export for CLI helpers.
 export { wrapped } from "./profiles.js";
