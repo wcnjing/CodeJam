@@ -1613,3 +1613,24 @@ textarea:focus {
   font-size: 12px;
   line-height: 1.6;
 }
+
+.pentest-local-banner {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--green);
+  border-radius: 8px;
+  background: #f2f7f1;
+  padding: 10px 12px;
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.pentest-local-banner strong {
+  color: var(--green);
+}
+.pentest-local-banner code {
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 1px 5px;
+  font-size: 11px;
+}

@@ -227,6 +227,14 @@ function PentestView({ pentest }: { pentest: PentestSummary | null }) {
     <section className="pentest">
       <div className="eval-panel">
         <span className="eyebrow">Pentest suite — the bypass library</span>
+        <div className="pentest-local-banner">
+          <strong>Runs locally on the middleware itself — no model involved.</strong>
+          Every figure here is computed directly against the running middleware code (command
+          policy, redaction, step budget, approval, config invariants) as pure functions over
+          command text: no model is queried, no API key is used, and no request leaves this
+          machine. The CLI additionally drives the real <code>CodexRunner</code> with a fake{" "}
+          <code>codex</code> script for budget/monitor — still never a real model.
+        </div>
         <p className="pentest-intro">
           {pentest.catalogSize} unique tagged commands (obfuscation, encoding, indirection,
           quoting, alternate channels, allowlist abuse, env dumps, …) run through every

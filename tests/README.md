@@ -19,6 +19,13 @@ server package at `apps/server/src/pentest/` so it can also be served live to
 the web UI (Security Evaluation → "Pentest suite"); `tests/` holds the CLI,
 the behavioral suites and the scores.
 
+**No model involvement.** The suite tests the middleware directly, locally:
+the command policy is regex matching over command text, redaction is a string
+transform, and the approval/budget/config layers are invariant checks — all
+pure functions. The budget/monitor behavioral suites drive the real
+`CodexRunner` with a fake `codex` script. No LLM is ever queried, no API key
+is used, and no request leaves the machine.
+
 ## Layout
 
 ```

@@ -73,6 +73,13 @@ run as the CLI, in CI, and live in the web UI (Security Evaluation →
 behavioral suites (real `CodexRunner` with fake `codex` binaries) and the
 scores.
 
+**No model involvement.** The tests run locally on the middleware itself: the
+command policy is regex matching, redaction a string transform, and the
+approval/budget/config layers are invariant checks — all pure functions over
+command text. The budget/monitor behavioral suites drive the real `CodexRunner`
+with a fake `codex` script. No LLM is queried, no API key is used, and nothing
+leaves the machine.
+
 ## layout
 
 ```
