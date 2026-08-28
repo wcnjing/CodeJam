@@ -21,6 +21,83 @@ import {
 
 export type { PolicyContext, Capability, CapabilityRequest };
 
+/** Who issued the command — the run/agent identity, not the human approver. */
+export interface Actor {
+  agentId: string;
+  threadId: string | null;
+}
+
+/** One capability request, reshaped as the resource half of a decision tuple. */
+export interface Resource {
+  kind: "host" | "secret" | "path";
+  value: string;
+  trusted: boolean;
+  via: CapabilityRequest["via"];
+}
+
+/** Everything a decision needs beyond the action+resource: run-scoped facts. */
+export interface DecisionContext extends PolicyContext {
+  /** A URL that is being written as text rather than fetched. Per-command, not per-resource. */
+  textualOnly: boolean;
+}
+
+export type Decision =
+  | { effect: "ALLOW" }
+  | {
+      effect: "DENY";
+      rule: string;
+      detail: string;
+      reviewable: boolean;
+      hosts?: string[];
+    };
+
+/**
+ * A policy scoped to exactly one capability, reading as a statement about the
+ * tuple: "this action on this resource, in this context, is denied because...".
+ *
+ * `detail`/`hosts` take every resource that matched `when` in one command, not
+ * just the one passed to `decide()` — real orchestration (Task 3) aggregates
+ * across all of a command's resources for the matching policy before building
+ * the final violation, so "Command contacts non-allowlisted host(s): a, b, c"
+ * keeps listing every host, not just the first.
+ */
+export interface Policy {
+  id: string;
+  statement: string;
+  action: Capability;
+  reviewable: boolean;
+  when: (resource: Resource, context: DecisionContext, actor: Actor) => boolean;
+  detail: (resources: Resource[], context: DecisionContext) => string;
+  /** Present only when a human could grant a scoped exception (the egress rules). */
+  hosts?: (resources: Resource[]) => string[];
+}
+
+/**
+ * Decide one action on one resource. Pure: no extraction, no aggregation across
+ * a command's other resources — see `Policy`'s doc comment for where the
+ * aggregation happens.
+ */
+export function decide(
+  actor: Actor,
+  action: Capability,
+  resource: Resource,
+  context: DecisionContext,
+  policies: Policy[],
+): Decision {
+  for (const policy of policies) {
+    if (policy.action !== action) continue;
+    if (!policy.when(resource, context, actor)) continue;
+    return {
+      effect: "DENY",
+      rule: policy.id,
+      detail: policy.detail([resource], context),
+      reviewable: policy.reviewable,
+      ...(policy.hosts ? { hosts: policy.hosts([resource]) } : {}),
+    };
+  }
+  return { effect: "ALLOW" };
+}
+
 export interface PolicyViolation {
   rule: string;
   detail: string;

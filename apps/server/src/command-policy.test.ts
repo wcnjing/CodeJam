@@ -1,7 +1,78 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCommand, guardedEvaluate, policyContextFrom } from "./command-policy.js";
+import {
+  decide,
+  evaluateCommand,
+  guardedEvaluate,
+  policyContextFrom,
+  type Actor,
+  type Decision,
+  type DecisionContext,
+  type Policy,
+  type Resource,
+} from "./command-policy.js";
 
 const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
+
+describe("decide()", () => {
+  const actor: Actor = { agentId: "agent-1", threadId: null };
+  const decisionContext: DecisionContext = {
+    allowedHosts: [],
+    secretValues: [],
+    workspaceRoot: "/workspace",
+    textualOnly: false,
+  };
+  const untrustedHost: Resource = {
+    kind: "host",
+    value: "evil.example",
+    trusted: false,
+    via: "network-tool",
+  };
+  const trustedHost: Resource = { ...untrustedHost, trusted: true };
+  const denyUntrustedHost: Policy = {
+    id: "deny-untrusted-host",
+    statement: "NETWORK_EGRESS is denied to an untrusted host.",
+    action: "NETWORK_EGRESS",
+    reviewable: true,
+    when: (resource) => !resource.trusted,
+    detail: (resources) => "untrusted: " + resources.map((r) => r.value).join(", "),
+  };
+
+  it("returns a DENY decision when a policy for the action matches", () => {
+    const decision: Decision = decide(actor, "NETWORK_EGRESS", untrustedHost, decisionContext, [
+      denyUntrustedHost,
+    ]);
+    expect(decision).toEqual({
+      effect: "DENY",
+      rule: "deny-untrusted-host",
+      detail: "untrusted: evil.example",
+      reviewable: true,
+    });
+  });
+
+  it("returns ALLOW when no policy for the action matches", () => {
+    const decision = decide(actor, "NETWORK_EGRESS", trustedHost, decisionContext, [
+      denyUntrustedHost,
+    ]);
+    expect(decision).toEqual({ effect: "ALLOW" });
+  });
+
+  it("only evaluates policies scoped to the requested action", () => {
+    const secretPolicy: Policy = {
+      id: "deny-secret",
+      statement: "SECRET_READ is always denied.",
+      action: "SECRET_READ",
+      reviewable: false,
+      when: () => true,
+      detail: () => "secret read",
+    };
+    // untrustedHost is a NETWORK_EGRESS resource; secretPolicy only governs
+    // SECRET_READ, so it must not fire even though its `when` always returns true.
+    const decision = decide(actor, "NETWORK_EGRESS", untrustedHost, decisionContext, [
+      secretPolicy,
+    ]);
+    expect(decision).toEqual({ effect: "ALLOW" });
+  });
+});
 
 // @covers TM-AGENT-002 TM-AGENT-003
 describe("command policy", () => {
