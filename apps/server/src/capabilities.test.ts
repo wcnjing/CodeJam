@@ -163,4 +163,15 @@ describe("FILE_WRITE capability extraction", () => {
       expect(writes.every((c) => c.trusted), command).toBe(true);
     }
   });
+
+  it("trusts an absolute path that resolves under a real, non-empty workspaceRoot", () => {
+    const workspaceContext = { ...context, workspaceRoot: "/home/agent/workspace" };
+    const caps = extractCapabilities("echo hi > /home/agent/workspace/out.txt", workspaceContext);
+    expect(caps).toContainEqual({
+      capability: "FILE_WRITE",
+      resource: "/home/agent/workspace/out.txt",
+      trusted: true,
+      via: "file-write",
+    });
+  });
 });
