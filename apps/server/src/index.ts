@@ -9,7 +9,10 @@ import { WorkspaceManager } from "./workspace.js";
 const config = loadConfig();
 await writeCodexConfig(config);
 
-const store = new JsonStore(path.join(config.dataDirectory, "launchpad.json"));
+const store = new JsonStore(
+  path.join(config.dataDirectory, "launchpad.json"),
+  config.auditRetentionDays,
+);
 const workspaces = new WorkspaceManager(config.workspaceRoot);
 const runner = createRunner(config);
 const service = new AgentService(config, store, workspaces, runner);

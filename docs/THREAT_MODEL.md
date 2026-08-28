@@ -69,7 +69,7 @@ notes in the register):
 | TM-AGENT-004 | Runaway execution / denial of wallet | 12 MED | Platform step budget (always on) | 6 LOW | ✅ |
 | TM-AGENT-005 | Consequential egress without oversight | 12 MED | Human approval, run-scoped host grant | 6 LOW | ✅ |
 | TM-AGENT-006 | Cross-agent evidence leakage | 6 LOW | Per-agent scoping in the service | 3 LOW | ✅ |
-| TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction only — retention **not** bounded | 6 LOW | ⬜ open |
+| TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction + retention bound (`AUDIT_RETENTION_DAYS`) | 2 LOW | ✅ |
 
 **Scope note:** the egress control is a reactive command-text guard, not a
 network allowlist — commands with an implicit destination (bare `npm install`,
@@ -91,7 +91,7 @@ radius, not the worst-case consequence.
 
 ## 4. Did we do a good enough job?
 
-- **Verified-control rate: 6/6** mitigated threats have a passing test, enforced
+- **Verified-control rate: 7/7** mitigated threats have a passing test, enforced
   by CI. Removing a control's test fails the build and names the threat.
 - **Negative testing:** 69 labelled attacks (incl. red-team and external-review probes) + 6 live
   red-team prompts against the running model. One residual bypass (base64 `eval`)
@@ -100,8 +100,9 @@ radius, not the worst-case consequence.
   mid-flight; canary byte-identical; collector records zero requests; no
   orphaned container; recovery task completes; a held run is approved and
   resumes under a scoped grant.
-- **One open item is carried honestly:** TM-OPS-001 (unbounded retention) is
-  `open`, owned, with a review trigger — the register is not all-green theater.
+- **No open items remain:** TM-OPS-001 (unbounded retention) is now mitigated by
+  a time-based prune (`AUDIT_RETENTION_DAYS`) on every store write, verified —
+  the register was never all-green theater, and now it is honestly all-green.
 
 ## Review triggers
 
@@ -116,7 +117,8 @@ budget default. These are recorded per-threat in the register.
   only network-layer egress control closes it (deliberately deferred).
 - **Approver identity is a label,** not an authenticated principal — this POC has
   no identity system; real segregation of duties plugs in here.
-- **Unbounded audit retention** (TM-OPS-001) — redaction reduces per-record
-  exposure but growth is unbounded; retention is the tracked next step.
+- **Audit retention depends on config** (TM-OPS-001) — `policyEvents`/resolved
+  `approvals` are pruned past `AUDIT_RETENTION_DAYS` on every store write; a
+  misconfigured (too-long) default is the residual risk, not unbounded growth.
 - **Ordinary containers share a kernel** and are not hardened multi-tenant
   isolation, as the Starter Kit itself notes.

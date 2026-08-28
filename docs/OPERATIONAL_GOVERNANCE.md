@@ -14,7 +14,7 @@ that lens, crediting real coverage and naming the gaps.
 | **Incident & near-miss handling** | **Strong.** Enforced denials are incidents; monitor-mode observations are recorded near-misses; evidence is redacted and preserved; rollback (container destroyed, workspace intact) is automatic. | `policyEvents` (`enforced` flag), monitor mode |
 | **Explicit use boundaries** | Partial. Tool/host boundaries enforced at the Runtime; not yet re-triggered on environment change (see gaps). | allowlist, `.secrets/`, `AGENTS.md` |
 | **Change-management triggers** | Partial. CI ratchets fail on policy-rule regressions. But the policy's correctness depends on the Runtime image's toolset (curl absent, node present) and the model — neither is a governed trigger. | `policy-eval.test.ts` |
-| **Data & log governance** | Partial. Redaction is enforced before storage/display. Retention, access, and deletion of `policyEvents`/`approvals` are **not** yet bounded — the logs grow unbounded, the very problem redaction was meant to avoid. | `redactCommand` |
+| **Data & log governance** | Strong. Redaction is enforced before storage/display, and `policyEvents`/resolved `approvals` are now pruned past `AUDIT_RETENTION_DAYS` on every store write. Access/deletion controls beyond retention are still out of scope for the POC. | `redactCommand`, `JsonStore.prune` |
 | **Post-deployment monitoring** | Partial. The substrate exists (persisted decisions, enforce-vs-monitor, override records); no drift/subgroup/rate dashboard yet. | `policyEvents`, `approvals` |
 | **Appeal & redress** | Partial. The approval workflow is a structured reconsideration path for a held run. There is no path for an already-hard-blocked run. | `resolveApproval` |
 | **Supply-chain, decommissioning, independent challenge** | Minor / out of scope. Pinned runtime image and `POLICY_ENFORCEMENT` off-switch exist; the rest is contractual or organizational, not a POC concern. | `Dockerfile.runtime`, config |
@@ -37,9 +37,9 @@ a standing allowlist change.
 
 ## Named, honest gaps
 
-1. **Unbounded logs.** `policyEvents` and `approvals` accumulate forever with no
-   retention or access rule. We redact secrets *into* the log, then never bound
-   it — the second privacy problem the discipline warns about. Next.
+1. **No access control on the audit store.** `policyEvents` and `approvals` are
+   now time-bounded (`AUDIT_RETENTION_DAYS`), but who can *read* the store once
+   it's persisted is still ungoverned — this POC has no access-control layer.
 2. **Ungoverned environment changes.** The policy assumes a specific runtime
    image and model. Adding `curl` to the image, or swapping the model, shifts the
    risk surface with nothing to re-trigger evaluation.

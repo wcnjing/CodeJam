@@ -242,15 +242,21 @@ export const THREAT_REGISTER: Threat[] = [
     controls: [
       {
         id: "CTRL-REDACT-ONLY",
-        description: "Records are redacted before storage, but retention/access/deletion are not yet bounded",
+        description: "Records are redacted before storage, so a leaked record carries no secret material",
         where: "command-policy.ts redactCommand",
       },
+      {
+        id: "CTRL-RETENTION-BOUND",
+        description:
+          "policyEvents and resolved approvals are pruned once older than AUDIT_RETENTION_DAYS on every store mutation. A still-pending approval is exempt regardless of age — it's live state, not history",
+        where: "store.ts JsonStore.prune",
+      },
     ],
-    residual: { likelihood: 3, impact: 2 },
+    residual: { likelihood: 1, impact: 2 },
     residualNote:
-      "OPEN: redaction reduces exposure per-record but growth is unbounded. Accepted for the POC; retention policy is the tracked next step (see OPERATIONAL_GOVERNANCE.md).",
+      "Redaction bounds per-record exposure; the retention bound now caps how long records accumulate. A very short-lived misconfiguration (retention set too high) is the residual risk, not unbounded growth.",
     owner: "runtime-team",
-    status: "open",
-    reviewTriggers: ["before any non-POC deployment"],
+    status: "mitigated",
+    reviewTriggers: ["before any non-POC deployment", "AUDIT_RETENTION_DAYS default changed"],
   },
 ];

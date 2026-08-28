@@ -304,7 +304,8 @@ Recorded honestly, because each one is a real gap:
   has bridge networking. True default-deny egress needs network-layer
   enforcement, deliberately deferred — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
 - **Single process.** Policy decisions live in the same single-writer JSON store
-  as everything else, with no retention bound (tracked as TM-OPS-001).
+  as everything else, now pruned past `AUDIT_RETENTION_DAYS` (TM-OPS-001,
+  mitigated) — access control on the store itself remains out of scope.
 
 ## Screenshots
 
