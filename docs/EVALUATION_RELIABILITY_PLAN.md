@@ -177,8 +177,8 @@ these rather than rebuild them.
 - **The measurement is aimed at the cheap layer.** All three timers measure
   `evaluateCommand()` in isolation — single-digit microseconds. The dominant
   per-decision cost in the *running* system is the store write that records the
-  decision: 10–15 ms once a few thousand events have accumulated, three orders
-  of magnitude larger and measured on two platforms (§2.3). Metrics that report
+  decision: 13–17 ms once a few thousand events have accumulated, three orders
+  of magnitude larger and CI-measured on three environments (§2.3). Metrics that report
   only the µs figure describe the cheap half of the price.
 
 ### 2.3 Overhead measurement
@@ -237,29 +237,48 @@ Recording a denial goes through `store.mutate()` in `agent-service.ts`, which
 pushes a `PolicyDecision` onto `database.policyEvents`. So the cost of writing
 one policy event is **O(total policy events already stored)**.
 
-Cost of appending one policy event, by number of events already in the store,
-measured on **both** environments from §0 (`mutate()` p50 unless noted):
+Cost of appending one policy event, by number already in the store. **Measured in
+CI on clean runners** by `npm run bench:store`, on every push — these are no
+longer laptop figures. `mutate()` p50:
 
-| Events already stored | POSIX p50 | Windows p50 | Win/POSIX | POSIX p95 | POSIX `snapshot()` |
-| --- | --- | --- | --- | --- | --- |
-| 0 | 0.20 ms | 0.59 ms | 3.0× | 0.56 ms | 0.00 ms |
-| 100 | 0.39 ms | 1.08 ms | 2.8× | 0.75 ms | — |
-| 1000 | 2.38 ms | 3.54 ms | 1.5× | 4.25 ms | 1.07 ms |
-| 5000 | 10.44 ms | 14.90 ms | 1.4× | 16.80 ms | 5.13 ms |
+| Events stored | CI ubuntu, Node 22 | CI ubuntu, Node 24 | CI windows, Node 24 |
+| --- | --- | --- | --- |
+| 0 | 0.36 ms | 0.38 ms | 1.01 ms |
+| 100 | 0.61 ms | 0.72 ms | 1.28 ms |
+| 1000 | 2.98 ms | 3.28 ms | 4.15 ms |
+| 5000 | **14.31 ms** | **13.46 ms** | **16.47 ms** |
 
-**Carry this as a range, not a point.** The two platforms diverge unevenly, and
-the shape of the divergence is itself informative:
+`snapshot()` p50 at the same counts, showing the identical shape because it does
+the same whole-`Database` clone:
 
-- The **fixed** cost — open, write, rename — is about **3× more expensive on
-  Windows** (0.20 ms → 0.59 ms at an empty store). That is filesystem syscall
-  overhead, and it dominates only while the store is small.
-- The **linear** term — `structuredClone` plus full `JSON.stringify` — is much
-  closer: **~2.0 µs per stored event on POSIX vs ~2.9 µs on Windows** (1.4×),
-  and it is clean linear on both from 0 to 5000. This is the term that matters,
-  and it is a property of `JsonStore`, not of one machine: two independent
-  platforms, two Node majors, same curve.
-- `snapshot()` shows the same shape on Windows (0.03 / 0.10 / 0.87 / 5.52 ms at
-  0 / 100 / 1000 / 5000).
+| Events stored | CI ubuntu, Node 22 | CI ubuntu, Node 24 | CI windows, Node 24 |
+| --- | --- | --- | --- |
+| 0 | 0.04 ms | 0.06 ms | 0.04 ms |
+| 1000 | 1.31 ms | 1.44 ms | 1.75 ms |
+| 5000 | 6.01 ms | 6.29 ms | 8.34 ms |
+
+**Carry this as a range, not a point.** The least-squares decomposition the
+harness prints separates the two terms, because they behave differently:
+
+| Environment | fixed cost | marginal µs/event | r² |
+| --- | --- | --- | --- |
+| CI ubuntu, Node 22 | 0.30 ms | 2.80 | 0.9999 |
+| CI ubuntu, Node 24 | 0.50 ms | 2.60 | 0.9996 |
+| CI windows, Node 24 | 1.01 ms | 3.09 | 1.0000 |
+| local Linux (Node 22.22) | ~0.20 ms | ~2.0 | — |
+| local Windows (Node 24.16) | 0.45 ms | 2.25 | 0.9998 |
+
+- The **fixed** cost — open, write, rename — spans **0.20–1.01 ms**, a ~5×
+  spread, and is worst on Windows. Filesystem syscall overhead; it dominates only
+  while the store is small.
+- The **linear** term — `structuredClone` plus full `JSON.stringify` — spans
+  **2.0–3.1 µs per stored event** across five environments: a **1.55×** spread,
+  about a third of the fixed term's. *(An earlier revision of this document said
+  1.4× from two data points; five environments widen it slightly.)* This is the
+  term that matters, and the reason a gate belongs on it.
+- **The linearity is not an assumption.** r² is 0.9996–1.0000 on three
+  independent CI environments. Growth in stored evidence is exactly linear in
+  cost — measured, on hardware nobody on this team owns.
 
 #### Decision: store-write gates are set on the slope, not the absolute
 
@@ -267,15 +286,16 @@ This is settled, not an open caveat. The regression gate for store-write cost
 (tasks 1.5 and 1.6) is split by where it runs:
 
 - **Everywhere — local and CI.** Assert that the **marginal cost per stored
-  event** stays under a bound. Measured 2.0 µs/event on POSIX and 2.9 µs/event on
-  Windows: a 1.4× spread, portable enough to gate on without a per-platform
-  threshold table.
+  event** stays under a bound. Measured 2.0–3.1 µs/event across five environments:
+  a 1.55× spread, portable enough to gate on without a per-platform threshold
+  table.
 - **CI only — `ubuntu-latest`, pinned platform.** *Additionally* assert absolute
   p50/p95 at fixed event counts. Local runs treat the absolutes as **advisory**
   and never fail on them.
 
-**Rationale.** A threshold tuned to 10.44 ms at 5000 events goes red on a Windows
-dev box with nothing regressed — it would train the team to ignore the gate. The
+**Rationale.** A threshold tuned to one machine's absolute — say 13.5 ms at 5000
+events, the fastest CI figure — goes red on the Windows runner (16.5 ms) with
+nothing regressed — it would train the team to ignore the gate. The
 slope is also the property we actually care about: the claim under test is that
 `JsonStore` scales **linearly with stored evidence**, and the slope is the direct
 measurement of that. It is roughly 2× more portable than the fixed cost, which is
@@ -286,10 +306,11 @@ platform is pinned.
 This decision depends on the fixed-vs-marginal decomposition above; keep both
 terms reported separately or the gate loses its basis.
 
-For contrast, one `evaluateCommand()` call is ~4 µs p50 on POSIX. At 5000 stored
-events the write that *records* a decision costs roughly **2,600×** the decision
-itself — three orders of magnitude, and the Windows pair lands in the same
-bracket. The README's "~2 µs added per-command decision latency" is the cheap
+For contrast, CI measures one `evaluateCommand()` call at **4.13–4.44 µs p50** in
+the same job. So at 5000 stored events, the write that *records* a decision costs
+**3,225×** (ubuntu N22), **3,261×** (ubuntu N24) or **3,922×** (windows) the
+decision itself — each ratio computed from a single machine's own pair, not
+mixed across platforms. The README's "~2 µs added per-command decision latency" is the cheap
 half of the middleware's price, not the price.
 
 Three consequences that land squarely in my lane:
