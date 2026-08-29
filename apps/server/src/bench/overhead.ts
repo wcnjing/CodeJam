@@ -148,7 +148,14 @@ async function fakeCodex(events: unknown[], markerPath?: string): Promise<string
     // Stamped immediately after the denied command is emitted, so the teardown
     // window is measured from when the Agent ASKED, not from when we spawned.
     lines.push("import { writeFileSync } from 'node:fs';");
+    // Created first, so the file always exists by the time the parent looks.
+    // The policy cannot react before the stdout write below, so this ordering
+    // costs nothing in accuracy and removes the existence race outright.
+    lines.push("writeFileSync(" + JSON.stringify(markerPath) + ", 'pending');");
     lines.push(emit);
+    // Overwritten with the real emission time. If the Runtime is killed between
+    // the two, the marker stays 'pending' and the sample is dropped as
+    // unmeasurable -- never silently counted as zero.
     lines.push("writeFileSync(" + JSON.stringify(markerPath) + ", String(Date.now()));");
     // Linger: if enforcement is real the process is killed long before this.
     lines.push("setTimeout(() => process.exit(0), 30000);");
@@ -244,7 +251,10 @@ export async function measureRunWallClock(
 // ---------------------------------------------------------------- 3. teardown
 
 export interface TeardownWindow {
+  /** Samples where the window could actually be measured. */
   samples: number;
+  /** Runs where the Runtime died before the marker landed - window unmeasurable. */
+  unmeasurable: number;
   p50Milliseconds: number;
   maxMilliseconds: number;
   observations: number[];
@@ -299,7 +309,13 @@ export async function spawnDeniedRun(command: string, label = "denied"): Promise
     else throw error;
   }
   const deadAt = Date.now();
-  const emittedAt = Number(readFileSync(markerPath, "utf8").trim());
+  let emittedAt = Number.NaN;
+  try {
+    const marker = readFileSync(markerPath, "utf8").trim();
+    if (marker !== "pending") emittedAt = Number(marker);
+  } catch {
+    // Marker never written at all. Treated as unmeasurable, like 'pending'.
+  }
   return {
     blocked,
     teardownMilliseconds: Number.isFinite(emittedAt) ? deadAt - emittedAt : null,
@@ -308,13 +324,16 @@ export async function spawnDeniedRun(command: string, label = "denied"): Promise
 
 export async function measureTeardown(samples = 5): Promise<TeardownWindow> {
   const observations: number[] = [];
+  let unmeasurable = 0;
   for (let index = 0; index < samples; index += 1) {
     const result = await spawnDeniedRun(MALICIOUS, "teardown-" + index);
     if (result.teardownMilliseconds !== null) observations.push(result.teardownMilliseconds);
+    else unmeasurable += 1;
   }
   observations.sort((left, right) => left - right);
   return {
     samples: observations.length,
+    unmeasurable,
     p50Milliseconds: observations[Math.floor(observations.length / 2)] ?? 0,
     maxMilliseconds: observations[observations.length - 1] ?? 0,
     observations,

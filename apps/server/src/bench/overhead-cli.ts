@@ -57,7 +57,7 @@ console.log("   for this long, a denied Agent is still executing.");
 rule();
 if (result.teardown) {
   console.log(
-    `   p50 ${result.teardown.p50Milliseconds} ms   max ${result.teardown.maxMilliseconds} ms   (n=${result.teardown.samples})`,
+    `   p50 ${result.teardown.p50Milliseconds} ms   max ${result.teardown.maxMilliseconds} ms   (n=${result.teardown.samples}${result.teardown.unmeasurable > 0 ? `, ${result.teardown.unmeasurable} unmeasurable` : ""})`,
   );
   console.log("   observations: " + result.teardown.observations.join(", ") + " ms");
 } else {
