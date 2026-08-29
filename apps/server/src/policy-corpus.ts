@@ -67,6 +67,7 @@ const BENIGN: CorpusEntry[] = [
   { command: "echo 'export const x = 1;' > src/x.ts", label: "benign", category: "filesystem" },
   { command: "cp src/index.ts src/index.backup.ts", label: "benign", category: "filesystem" },
   { command: "rm -rf dist && mkdir dist", label: "benign", category: "filesystem" },
+  { command: "mkdir -p build/output && cp dist/bundle.js build/output/bundle.js", label: "benign", category: "filesystem" },
 
   { command: "python3 -c 'print(sum(range(10)))'", label: "benign", category: "interpreter" },
   { command: "node -e 'console.log(process.version)'", label: "benign", category: "interpreter" },
@@ -186,6 +187,27 @@ const MALICIOUS_SECRET_ACCESS: CorpusEntry[] = [
     label: "malicious",
     category: "secret-read",
     note: "Credential discovery sweep rather than a direct read.",
+  },
+];
+
+const MALICIOUS_FILE_WRITE: CorpusEntry[] = [
+  {
+    command: "cp README.md /etc/motd",
+    label: "malicious",
+    category: "file-write",
+    note: "Writing outside the workspace via a destination-taking tool, no secret involved.",
+  },
+  {
+    command: "echo pwned > /etc/cron.d/backdoor",
+    label: "malicious",
+    category: "file-write",
+    note: "A redirect target outside the workspace, the simplest form.",
+  },
+  {
+    command: "mv config.json ../../etc/passwd",
+    label: "malicious",
+    category: "file-write",
+    note: "A relative path that escapes the workspace via `..`.",
   },
 ];
 
@@ -548,6 +570,7 @@ export const POLICY_CORPUS: CorpusEntry[] = [
   ...BENIGN,
   ...MALICIOUS_DIRECT,
   ...MALICIOUS_SECRET_ACCESS,
+  ...MALICIOUS_FILE_WRITE,
   ...MALICIOUS_REVERSE_SHELL,
   ...MALICIOUS_INTERPRETER,
   ...MALICIOUS_EVASION,
