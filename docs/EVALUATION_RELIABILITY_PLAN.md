@@ -556,6 +556,49 @@ failures, since the same team owns both.
 - No pre-demo smoke script that proves the whole path works before presenting.
 - No port-conflict / stale-container check (3000, 5173, mock-collector port).
 
+#### The replay provider: exactly what is real
+
+`RUNTIME_PROVIDER=replay` exists so the governance loop can be shown without a
+model, a key, a container engine or a network. That is also precisely the kind of
+thing a sceptical reviewer should distrust, so the component list is stated here
+rather than left to be inferred from a demo.
+
+| Component | Replay | Live |
+| --- | --- | --- |
+| Model output | **FAKED** — recorded fixture lines | Codex CLI stdout |
+| Event parser | REAL — `parseCodexEventLine` | same function |
+| Policy engine | REAL — `scanCommands` over `policyContextFrom` | same functions |
+| Run-scoped grant (`extraAllowedHosts`) | REAL | same |
+| Enforcement decision, step budget | REAL (loop re-implemented, see below) | same |
+| Monitor-mode observation carrying | REAL | same |
+| Run status mapping, store write, audit trail | REAL — `AgentService`, untouched | same |
+| Approval record, continuation run | REAL — untouched | same |
+| Container spawn, teardown, containment | **ABSENT** — nothing is spawned | real |
+
+**One component is re-implemented, not reused.** The ~25-line stream
+orchestration loop — accumulate commands, scan the unscanned ones, arm the kill
+on the first denial, check the budget — lives inside a closure in
+`codex-runner.ts` and cannot be imported. It is written out again in
+`replay-runner.ts`. That is the only place replay could drift from production, so
+`replay-runner.test.ts` carries a parity test: the same recorded bytes fed to the
+real `CodexRunner` through a stand-in binary and to `ReplayRunner` through the
+fixture must reach the same outcome. It spawns, so it is POSIX-only, and it runs
+in CI on ubuntu.
+
+**What replay does not prove, stated so it is never presented as if it did.**
+A replayed denial proves the decision, the evidence and the approval loop. It
+proves nothing about containment, because there is no process to kill.
+Containment is measured elsewhere and separately: `bench:generate`'s token tier
+terminates the real Runtime for 24/24 generated attacks, and `bench:overhead`
+measures the teardown window at p50 2–3 ms. Both spawn for real, both run on
+ubuntu CI. The smoke check prints this caveat at the end of every replay run.
+
+**Fixture provenance.** The three shipped fixtures are labelled SYNTHESIZED, not
+recorded — no live model was available to record from. Each carries a `source`
+field saying so and describing how to capture a genuine stream, and a test
+asserts every fixture declares provenance. A fixture that does not say where it
+came from cannot be distinguished from one invented to make the demo pass.
+
 ## 3. Dependency on Person 1 — the correctness label space, not the lane
 
 **The contract I would be measuring today:**
@@ -718,8 +761,8 @@ that inference into a measurement.
 | --- | --- | --- |
 | 2.1 | Full-loop E2E test over HTTP: create agent → run → denial → held → approve → scoped grant → continuation → recovery | **Nothing.** Asserts run status + approval records — `agent-service.ts` vocabulary, which survives a policy-engine rewrite |
 | 2.2 | `/api/evaluation` payload contract test | Person 3 agreeing the field set |
-| 2.3 | Deterministic offline demo mode (recorded/scripted runner, no live model) | **Team decision — see §6** |
-| 2.4 | **DONE** — `npm run demo:check` (`scripts/demo-smoke.mjs`) | Nine checks against a live server, exits non-zero on any failure, ~2s. Health, container engine, collector, agent, benign run, egress run held, approve → continuation, **canary byte-identical against the literal `workspace.ts` seeds**, and **collector request count zero** — the last two being the claim the demo actually makes. Distinguishes "the model declined" from "the policy failed", so a model that will not cooperate does not read as a broken control. The two run-driven checks are POSIX-only — see the `EINVAL` finding in §2.4 |
+| 2.3 | **DONE** — `RUNTIME_PROVIDER=replay` (`replay-runner.ts` + 3 fixtures) | Fakes the model and nothing else; see the component table in §2.6. Parity-tested against the live `CodexRunner` on the same bytes (ubuntu CI). Shared-file footprint: `runner-factory.ts` +8 lines, `config.ts` +1 enum member, `web/types.ts` union mirror |
+| 2.4 | **DONE** — `npm run demo:check`, and `demo:check:replay` for zero setup | Nine checks against a live server, exits non-zero on any failure, ~2s. Health, container engine, collector, agent, benign run, egress run held, approve → continuation, **canary byte-identical against the literal `workspace.ts` seeds**, and **collector request count zero** — the last two being the claim the demo actually makes. Distinguishes "the model declined" from "the policy failed", so a model that will not cooperate does not read as a broken control. The two run-driven checks are POSIX-only — see the `EINVAL` finding in §2.4 |
 | 2.5 | Final overhead + metrics numbers for the writeup, against the final policy engine | Person 1 landing |
 
 **0.6 and 2.3 are different things and both are wanted.** 0.6 is a *front door*:
