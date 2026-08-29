@@ -8,7 +8,7 @@
  * prints the human-readable report used in the writeup.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
 import {
   EVASION_CATEGORIES,
   POLICY_CORPUS,
@@ -57,12 +57,13 @@ export interface EvaluationResult {
   meanMicroseconds: number;
 }
 
+const EVAL_ACTOR: Actor = { agentId: "eval", threadId: null };
 const DEFAULT_CONTEXT = {
-  ...policyContextFrom("https://ark.cn-beijing.volces.com/api/v3"),
+  ...policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace"),
 };
 
 function isBlocked(entry: CorpusEntry, context = DEFAULT_CONTEXT): string | null {
-  const violation = evaluateCommand(entry.command, context);
+  const violation = evaluateCommand(EVAL_ACTOR, entry.command, context);
   return violation ? violation.rule : null;
 }
 
@@ -172,7 +173,7 @@ export function evaluatePolicy(
 function measureThroughput(corpus: CorpusEntry[], iterations = 200): number {
   const started = process.hrtime.bigint();
   for (let index = 0; index < iterations; index += 1) {
-    for (const entry of corpus) evaluateCommand(entry.command, DEFAULT_CONTEXT);
+    for (const entry of corpus) evaluateCommand(EVAL_ACTOR, entry.command, DEFAULT_CONTEXT);
   }
   const elapsedNs = Number(process.hrtime.bigint() - started);
   return elapsedNs / 1000 / (iterations * corpus.length);

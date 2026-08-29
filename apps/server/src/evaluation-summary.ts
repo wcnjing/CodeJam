@@ -5,7 +5,7 @@
  * report, it is a measurement of the code that is actually running.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
 import { POLICY_CORPUS } from "./policy-corpus.js";
 import { evaluatePolicy } from "./policy-eval.js";
 import { runBenchmark, type Family } from "./security-benchmark.js";
@@ -41,13 +41,15 @@ export interface EvaluationSummary {
   escapes: { id: string; family: Family }[];
 }
 
+const EVALUATION_SUMMARY_ACTOR: Actor = { agentId: "eval", threadId: null };
+
 function latency(): { p50: number; p95: number; mean: number } {
-  const ctx = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
+  const ctx = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace");
   const samples: number[] = [];
   for (let round = 0; round < 30; round += 1) {
     for (const entry of POLICY_CORPUS) {
       const t0 = process.hrtime.bigint();
-      evaluateCommand(entry.command, ctx);
+      evaluateCommand(EVALUATION_SUMMARY_ACTOR, entry.command, ctx);
       samples.push(Number(process.hrtime.bigint() - t0) / 1000);
     }
   }
