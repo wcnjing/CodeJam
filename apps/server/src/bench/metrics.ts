@@ -107,6 +107,11 @@ export function timeSweep(fn: () => void, options: SweepOptions = {}): SweepResu
     samples.push(elapsedNanoseconds / 1000 / batchSize);
   }
 
+  return summarise(samples);
+}
+
+/** Shared by the sync and async sweeps so the two can never drift apart. */
+function summarise(samples: readonly number[]): SweepResult {
   const sorted = [...samples].sort((left, right) => left - right);
   const meanMicroseconds = mean(sorted);
   return {
@@ -118,6 +123,35 @@ export function timeSweep(fn: () => void, options: SweepOptions = {}): SweepResu
     max: sorted[sorted.length - 1] ?? 0,
     throughputPerSec: meanMicroseconds === 0 ? 0 : 1_000_000 / meanMicroseconds,
   };
+}
+
+/**
+ * Async counterpart of `timeSweep`, for work that cannot be measured
+ * synchronously — `JsonStore.mutate()` awaits a file write, so its cost is
+ * invisible to the sync sweep.
+ *
+ * Each sample awaits `fn` to completion, so this measures end-to-end latency
+ * including the event-loop turn, which is the number a caller actually pays.
+ */
+export async function timeSweepAsync(
+  fn: () => Promise<unknown>,
+  options: SweepOptions = {},
+): Promise<SweepResult> {
+  const warmupRounds = options.warmupRounds ?? 200;
+  const rounds = options.rounds ?? 1000;
+  const batchSize = Math.max(1, options.batchSize ?? 1);
+
+  for (let index = 0; index < warmupRounds; index += 1) await fn();
+
+  const samples: number[] = [];
+  for (let round = 0; round < rounds; round += 1) {
+    const startedAt = process.hrtime.bigint();
+    for (let call = 0; call < batchSize; call += 1) await fn();
+    const elapsedNanoseconds = Number(process.hrtime.bigint() - startedAt);
+    samples.push(elapsedNanoseconds / 1000 / batchSize);
+  }
+
+  return summarise(samples);
 }
 
 export interface StabilityOptions extends SweepOptions {

@@ -72,6 +72,42 @@ Everything that does not spawn a process passes: policy evaluation, the corpus
 scorecard, the security benchmark, the threat model, the store, the HTTP boundary,
 agent lifecycle, and approvals.
 
+#### The Windows problem is narrower than "the suite is broken"
+
+The first CI run stopped at the failing test step, so it verified `typecheck` and
+`test` and nothing else. Adding `if: always()` to the steps after it settled what
+the rest of the toolchain does on Windows, and the answer is: **it all works.**
+
+| Windows step | Result |
+| --- | --- |
+| `npm ci`, `npm run typecheck` | pass |
+| `npm run test` | **12 of 106 fail** — the spawn and `/tmp` assumptions |
+| `npm run build` | pass (vite 1.03s, then `tsc`) |
+| `eval:policy`, `bench:security`, `threat-model` | pass |
+| `npm run bench:store` | pass |
+| `npm run demo:offline` | pass — "All three harnesses completed" |
+
+So a Windows contributor can install, typecheck, build, run every evaluation
+harness and open the zero-config front door. What they cannot run is the runtime
+enforcement suite. That is a materially smaller claim than "Windows is broken",
+and it sharpens the §4 ask: the fix really is confined to two of Persons 1–2's
+test files, not to the project's Windows support in general.
+
+#### The security metrics are platform-independent
+
+`bench:security` produced **identical headline numbers on Windows and Linux**:
+98.6% attack block rate, 1.4% predicted escape rate, 0 secret leaks, 6/6 verified
+controls. Not close — the same.
+
+This is worth stating rather than assuming. It is a reproducibility result: the
+policy engine is pure text matching over a fixed corpus with no clock, no
+randomness and no external state, and the numbers demonstrate that rather than
+merely asserting it. It also means the headline figures in the writeup are a
+property of the engine, not of the machine that produced them — which is exactly
+the claim a reviewer should be most sceptical of, and the one CI now answers on
+every push. Note the contrast with the *timing* figures in §2.2 and §2.3, which
+are strongly platform-dependent: correctness reproduces exactly, latency does not.
+
 **Why this matters to my lane specifically.** On Windows, items 4 (clean
 installation), 5 (E2E integration testing) and 6 (demo reliability) are all
 directly compromised: a teammate or judge who clones on Windows sees a failing
@@ -270,8 +306,36 @@ Three consequences that land squarely in my lane:
   growth is not only an audit-surface risk — it is a live performance regression.
 
 A bounded `policyEvents` window, or an append-only event log instead of a
-whole-file rewrite, is therefore the highest-leverage reliability fix I can name,
-and it is measurable today without waiting on anyone.
+whole-file rewrite, is therefore the highest-leverage reliability fix I can name.
+
+It is measurable today without waiting on anyone, and **task 1.6 measures it
+without changing it**. `npm run bench:store` builds its own `JsonStore` in a temp
+directory, so the curve is reproduced from the real class with **zero edits to
+shared files** and no owner sign-off.
+
+#### Fix options: scoped, and deliberately not built
+
+The measurement does not need the fix, and the fix is not mine to land —
+`store.ts` is imported by `agent-service.ts`, `index.ts` and three test files.
+All three options are recorded here so the trade-offs are on the record for
+whoever owns the decision.
+
+| Option | Removes the O(n) term? | Cost |
+| --- | --- | --- |
+| **Cap `policyEvents` with `slice(-N)` in `mutate()`** | **No** — bounds the ceiling only, and `slice` is itself O(n) | Silently discards audit evidence. ~2.4 ms at the cap instead of ~11.7 ms at 5000 |
+| **Config-driven retention** (`POLICY_EVENT_RETENTION`) | No — same mechanism, made explicit | Same evidence loss, but declared rather than hidden. Widens the change into `config.ts` |
+| **Append-only JSONL event log** | **Yes** — one line appended per decision, no clone, no whole-file rewrite | Largest change. `policyEvents` leaves `Database`; `getPolicyEvents` and the store's single-writer model both need rework |
+
+**Recommendation: none of them yet, and specifically not the first two.** For a
+project whose thesis is *trustworthy evidence*, an audit log that silently drops
+records to go faster is a demo liability rather than a fix — a judge who asks
+"where did event 1001 go?" gets a worse answer than one who asks "why is this
+11 ms?". The slice cap also fails on its own terms: it caps the worst case
+without removing the linear growth. The JSONL log is the only option that
+actually removes the term, and it is a design change that wants its own review.
+
+What this lane owes the decision is the number, not the patch. The number is now
+in CI on every push.
 
 ### 2.4 Clean installation
 - **No CI exists.** There is no `.github/` directory. The README says thresholds
@@ -501,7 +565,7 @@ that inference into a measurement.
 | 1.3 | Container-teardown latency measurement (also the containment race window) | Safety number as well as perf |
 | 1.4 | Wire `redteam.ts` into an npm script and into CI | Currently orphaned |
 | 1.5 | Benchmark result baseline file + regression gate with tolerance bands | **Gate on p50 only**; report CV alongside as a smell, never as a threshold (§2.2). Tolerance bands follow §2.3's slope-not-absolute decision |
-| 1.6 | Store-write overhead harness + a bounded-retention proposal for `policyEvents` (§2.3) | The largest measured overhead in the system. Unblocked — it measures `JsonStore`, not the policy engine. Reports marginal µs/event and fixed cost separately, per §2.3's gate decision |
+| 1.6 | **DONE — measure and document only.** `npm run bench:store` (`bench/store-overhead.ts`), reporting the curve, the fixed/marginal decomposition and r² | Constructs its own `JsonStore` in a temp dir: **no edit to `store.ts`, no owner sign-off**. Runs in CI on both platforms, so the curve is no longer a laptop figure. The fix is scoped in §2.3 and deliberately **not built** |
 
 ### Phase 2 — E2E and demo, mostly unblocked
 

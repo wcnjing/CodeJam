@@ -75,6 +75,14 @@ jobs:
       - name: Report — threat model coverage
         run: npm run threat-model
 
+      # Produces the store-write overhead curve on a clean runner. The figures in
+      # docs/EVALUATION_RELIABILITY_PLAN.md §2.3 were taken on contributors'
+      # laptops; this is the same fix CI applied to the test counts. Reporting
+      # only — no gate, because the gate design (§2.3: slope not absolute) waits
+      # on task 1.5.
+      - name: Report — store-write overhead curve
+        run: npm run bench:store
+
       # The front door a reviewer without a key runs first. Its three
       # constituents are exercised above, but the wrapper itself never was --
       # a wrapper whose parts pass while it is never invoked is exactly what CI
@@ -149,6 +157,10 @@ jobs:
       - name: Report — threat model coverage
         if: always()
         run: npm run threat-model
+
+      - name: Report — store-write overhead curve
+        if: always()
+        run: npm run bench:store
 
       # The front door a reviewer without a key runs first. Its three
       # constituents are exercised above, but the wrapper itself never was --

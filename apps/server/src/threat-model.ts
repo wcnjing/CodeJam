@@ -248,7 +248,7 @@ export const THREAT_REGISTER: Threat[] = [
     ],
     residual: { likelihood: 3, impact: 2 },
     residualNote:
-      "OPEN: redaction reduces exposure per-record but growth is unbounded. Accepted for the POC; retention policy is the tracked next step (see OPERATIONAL_GOVERNANCE.md).",
+      "OPEN: redaction reduces exposure per-record but growth is unbounded. Now quantified, not just asserted: `npm run bench:store` measures the cost of recording one decision as O(events already stored) — fixed cost plus ~2.3 us per stored event, r-squared 0.9998, reaching ~11.7 ms at 5000 events against ~2.3 us for the policy decision itself. So unbounded growth is a live performance regression as well as an audit-surface risk. Still OPEN and deliberately so: the candidate fixes are scoped in docs/EVALUATION_RELIABILITY_PLAN.md section 2.3, and the two cheap ones discard audit evidence, which is a governance decision rather than a performance one. Retention policy remains the tracked next step (see OPERATIONAL_GOVERNANCE.md).",
     owner: "runtime-team",
     status: "open",
     reviewTriggers: ["before any non-POC deployment"],
