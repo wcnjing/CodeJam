@@ -1115,15 +1115,6 @@ textarea:focus {
   font-size: 12px;
 }
 
-.policy-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 3px;
-  padding-top: 7px;
-  border-top: 1px solid #f0dfc2;
-}
-
 .policy-rule {
   align-self: flex-start;
   border-radius: 3px;
@@ -1136,8 +1127,7 @@ textarea:focus {
   text-transform: uppercase;
 }
 
-.run-blocked code,
-.policy-list code {
+.run-blocked code {
   display: block;
   overflow-x: auto;
   border-radius: 4px;
@@ -1158,35 +1148,6 @@ textarea:focus {
   font-weight: 600;
 }
 
-.policy-list {
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.policy-list li {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  border: 1px solid var(--line);
-  border-left: 2px solid var(--amber);
-  border-radius: 5px;
-  background: var(--paper);
-  padding: 10px 12px;
-}
-
-.policy-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 10px;
-}
-
 .policy-note,
 .policy-empty {
   color: var(--muted);
@@ -1196,24 +1157,6 @@ textarea:focus {
 
 .policy-empty {
   margin: 0;
-}
-
-.policy-mode {
-  margin-right: auto;
-  border-radius: 3px;
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.policy-mode.enforced {
-  background: #f6e0e0;
-  color: #9e4545;
-}
-
-.policy-mode.monitored {
-  background: #e6e9f5;
-  color: #4a5480;
 }
 
 /* Held for human approval: neither success nor failure — a decision is pending.

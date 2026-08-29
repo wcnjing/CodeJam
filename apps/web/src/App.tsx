@@ -56,6 +56,7 @@ function EvaluationView({
   onReload: () => void;
 }) {
   const [tourStep, setTourStep] = useState<number | null>(null);
+  const steps = useMemo(() => (summary ? buildTourSteps(summary) : []), [summary]);
 
   if (!summary) {
     return (
@@ -65,7 +66,6 @@ function EvaluationView({
     );
   }
   const h = summary.headline;
-  const steps = buildTourSteps(summary);
   const touring = tourStep !== null;
   const currentTarget = touring ? steps[tourStep!].target : null;
   const targetClass = (id: string) =>
@@ -308,6 +308,7 @@ export default function App() {
         ? current
         : (next[0]?.id ?? null),
     );
+    return next;
   }, []);
 
   const refreshMessages = useCallback(async (agentId: string) => {
@@ -349,13 +350,14 @@ export default function App() {
     }
   }, []);
 
-  const openPlayground = useCallback(() => {
+  const openPlayground = useCallback(async () => {
     setView("agents");
-    if (agents.length === 0) {
+    const current = await refreshAgents().catch(() => agents);
+    if (current.length === 0) {
       setForm(emptyForm);
       setShowCreate(true);
     }
-  }, [agents]);
+  }, [agents, refreshAgents]);
 
   const bootstrap = useCallback(async () => {
     await Promise.all([refreshAgents(), api.system().then(setSystem)]);
@@ -773,9 +775,9 @@ export default function App() {
                   onClick={() => setShowPolicy((current) => !current)}
                   disabled={busy}
                 >
-                  Policy
-                  {policyEvents.length > 0 && (
-                    <span className="policy-count">{policyEvents.length}</span>
+                  Timeline
+                  {timelineEvents.length > 0 && (
+                    <span className="policy-count">{timelineEvents.length}</span>
                   )}
                 </button>
                 <button
