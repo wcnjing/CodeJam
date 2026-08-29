@@ -1,5 +1,5 @@
 import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
-import { POLICY_CORPUS } from "./policy-corpus.js";
+import { CORPUS_WRITE_ROOTS, POLICY_CORPUS } from "./policy-corpus.js";
 import { runBenchmark } from "./security-benchmark.js";
 
 const pct = (v: number) => (v * 100).toFixed(1) + "%";
@@ -8,7 +8,7 @@ const CLI_ACTOR: Actor = { agentId: "eval", threadId: null };
 
 // Security overhead: policy evaluation latency, measured apart from model time.
 function policyLatency(): { p50: number; p95: number; mean: number } {
-  const ctx = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace");
+  const ctx = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], CORPUS_WRITE_ROOTS);
   const samples: number[] = [];
   for (let round = 0; round < 50; round += 1) {
     for (const entry of POLICY_CORPUS) {

@@ -440,11 +440,11 @@ export function policyContextFrom(
   arkBaseUrl: string,
   extraHosts: readonly string[] = [],
   secretValues: readonly string[] = [],
-  workspaceRoot = "",
+  writeRoots: readonly string[] = [],
 ): PolicyContext {
   return {
     allowedHosts: [...allowedHostsFrom(arkBaseUrl), ...LOOPBACK_HOSTS, ...extraHosts],
     secretValues: [...secretValues],
-    workspaceRoot,
+    writeRoots: [...writeRoots],
   };
 }

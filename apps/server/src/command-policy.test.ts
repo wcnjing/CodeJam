@@ -12,7 +12,7 @@ import {
   type Resource,
 } from "./command-policy.js";
 
-const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace");
+const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], ["/workspace"]);
 const actor: Actor = { agentId: "test-agent", threadId: null };
 
 describe("decide()", () => {
@@ -20,7 +20,7 @@ describe("decide()", () => {
   const decisionContext: DecisionContext = {
     allowedHosts: [],
     secretValues: [],
-    workspaceRoot: "/workspace",
+    writeRoots: ["/workspace"],
     textualOnly: false,
   };
   const untrustedHost: Resource = {
@@ -477,7 +477,7 @@ describe("command policy", () => {
 
   // @covers TM-AGENT-007
   it("denies a FILE_WRITE outside the workspace, never as a reviewable rule", () => {
-    const outsideWorkspace = { ...context, workspaceRoot: "/workspace" };
+    const outsideWorkspace = { ...context, writeRoots: ["/workspace"] };
     const violation = evaluateCommand(actor, "echo pwned > /etc/cron.d/backdoor", outsideWorkspace);
     expect(violation?.rule).toBe("file-write-outside-workspace");
     expect(violation?.detail).toContain("/etc/cron.d/backdoor");
@@ -538,10 +538,62 @@ describe("command policy", () => {
   });
 
   it("allows a FILE_WRITE inside the workspace", () => {
-    const insideWorkspace = { ...context, workspaceRoot: "/workspace" };
+    const insideWorkspace = { ...context, writeRoots: ["/workspace"] };
     expect(
       evaluateCommand(actor, "echo 'export const x = 1;' > src/x.ts", insideWorkspace),
     ).toBeNull();
+  });
+
+  it("allows container-local scratch writes when the runner declares those roots", () => {
+    // Under container-codex-runner the container is `--rm` with exactly two
+    // bind mounts, so /tmp is container-local and a write there escapes
+    // nothing. The runner says so by declaring the roots.
+    const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+    for (const command of [
+      "git diff > /tmp/patch.diff",
+      "mkdir -p /tmp/out",
+      "npm test | tee /tmp/test.log",
+    ]) {
+      expect(evaluateCommand(actor, command, containerContext), command).toBeNull();
+    }
+  });
+
+  it("denies the same scratch writes when the runner declares only the workspace", () => {
+    // Under the host runner /tmp is the developer's real /tmp — outside the
+    // workspace, and a genuine escape.
+    const hostContext = { ...context, writeRoots: ["/home/dev/project"] };
+    const violation = evaluateCommand(actor, "git diff > /tmp/patch.diff", hostContext);
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("/tmp/patch.diff");
+  });
+
+  it("still denies a write outside every container write root", () => {
+    const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+    const violation = evaluateCommand(
+      actor,
+      "echo pwned > /etc/cron.d/backdoor",
+      containerContext,
+    );
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+  });
+
+  it("still denies staging a protected secret into container-local scratch", () => {
+    // /tmp being a trusted write root must not turn a secret read into an
+    // allowed command: the threat there is the read, not the destination.
+    const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+    const violation = evaluateCommand(
+      actor,
+      "cp .secrets/customer-db-url.txt /tmp/staged.txt",
+      containerContext,
+    );
+    expect(violation).not.toBeNull();
+    expect(violation?.rule).toBe("protected-secret-access");
+  });
+
+  it("fails closed when no write roots are declared at all", () => {
+    const rootless = { ...context, writeRoots: [] };
+    const violation = evaluateCommand(actor, "echo hi > /workspace/out.txt", rootless);
+    expect(violation?.rule).toBe("file-write-outside-workspace");
   });
 });
 

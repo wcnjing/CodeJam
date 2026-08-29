@@ -202,7 +202,10 @@ export class CodexRunner implements AgentRunner {
       this.config.arkBaseUrl,
       [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
       [this.config.arkApiKey],
-      request.workspacePath,
+      // No container here: the Agent runs directly on the developer's machine,
+      // so /tmp is the real host /tmp and genuinely outside the workspace. The
+      // workspace path is the only trusted root.
+      [request.workspacePath],
     );
     let stdout = "";
     let stderr = "";

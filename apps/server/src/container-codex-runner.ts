@@ -169,7 +169,15 @@ export class ContainerCodexRunner implements AgentRunner {
       this.config.arkBaseUrl,
       [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
       [this.config.arkApiKey],
-      "/workspace",
+      // The container runs with `--rm` and exactly two bind mounts
+      // (workspacePath -> /workspace, codexHome -> /codex-home). Everything
+      // else in this filesystem — /tmp and /var/tmp included — is
+      // container-local and destroyed when the container exits, so a write
+      // there escapes nothing and reaches no host path. Declaring the scratch
+      // dirs keeps ordinary work (`git diff > /tmp/patch.diff`) out of a rule
+      // that is hard-denied and terminates the run with no operator appeal.
+      // Anything else absolute (/etc, /usr, /codex-home) stays untrusted.
+      ["/workspace", "/tmp", "/var/tmp"],
     );
     let stdout = "";
     let stderr = "";

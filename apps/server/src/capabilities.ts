@@ -61,12 +61,19 @@ export interface PolicyContext {
    */
   secretValues?: string[];
   /**
-   * The run's workspace root, for resolving FILE_WRITE targets as inside or
-   * outside the sandbox. Required, not optional: a missing workspace root must
-   * not silently make every write "unverifiable, so allow it" — every absolute
-   * write target is untrusted unless it resolves under a known root.
+   * Every directory tree this run may write into, for resolving FILE_WRITE
+   * targets as inside or outside the sandbox. A list rather than a single root
+   * because "inside the sandbox" is a property of the runner, not of the
+   * workspace: the container runner's `/tmp` is container-local scratch that
+   * dies with the container, while the host runner's `/tmp` is the developer's
+   * real one. Each runner declares what it actually knows.
+   *
+   * Required, not optional, and an empty list fails closed: a run with no
+   * declared roots must not silently make every write "unverifiable, so allow
+   * it" — every absolute write target is untrusted unless it resolves under a
+   * declared root.
    */
-  workspaceRoot: string;
+  writeRoots: string[];
 }
 
 // Tools that reach the network only for particular subcommands. Treating all of
@@ -326,18 +333,22 @@ function writeTargets(command: string): string[] {
 }
 
 /**
- * Whether a write target resolves inside the workspace. A relative path is
- * trusted unless a `..` segment escapes upward — the container's cwd IS the
- * workspace root, so any `..` leaves it. An absolute path is trusted only when
- * it is the workspace root or under it; with no configured root, nothing
- * absolute can be verified, so nothing absolute is trusted.
+ * Whether a write target resolves inside one of the run's declared write roots.
+ * A relative path is trusted unless a `..` segment escapes upward — the
+ * container's cwd IS the workspace root, so any `..` leaves it. An absolute
+ * path is trusted only when it is one of the declared roots or under one; with
+ * no declared roots, nothing absolute can be verified, so nothing absolute is
+ * trusted.
  */
-function isInsideWorkspace(target: string, workspaceRoot: string): boolean {
+function isInsideWriteRoots(target: string, writeRoots: readonly string[]): boolean {
   const cleaned = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
   if (cleaned.startsWith("/")) {
-    if (!workspaceRoot) return false;
-    const root = workspaceRoot.replace(/\/+$/, "");
-    return cleaned === root || cleaned.startsWith(root + "/");
+    return writeRoots.some((writeRoot) => {
+      if (!writeRoot) return false;
+      const root = writeRoot.replace(/\/+$/, "");
+      if (!root) return false;
+      return cleaned === root || cleaned.startsWith(root + "/");
+    });
   }
   return !cleaned.split("/").includes("..");
 }
@@ -402,7 +413,7 @@ export function extractCapabilities(
     requests.push({
       capability: "FILE_WRITE",
       resource,
-      trusted: isInsideWorkspace(resource, context.workspaceRoot),
+      trusted: isInsideWriteRoots(resource, context.writeRoots),
       via: "file-write",
     });
   }

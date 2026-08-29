@@ -10,6 +10,7 @@
 
 import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
 import {
+  CORPUS_WRITE_ROOTS,
   EVASION_CATEGORIES,
   POLICY_CORPUS,
   type CorpusEntry,
@@ -59,7 +60,7 @@ export interface EvaluationResult {
 
 const EVAL_ACTOR: Actor = { agentId: "eval", threadId: null };
 const DEFAULT_CONTEXT = {
-  ...policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace"),
+  ...policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], CORPUS_WRITE_ROOTS),
 };
 
 function isBlocked(entry: CorpusEntry, context = DEFAULT_CONTEXT): string | null {

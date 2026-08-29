@@ -25,6 +25,7 @@
 
 import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
 import {
+  CORPUS_WRITE_ROOTS,
   EVASION_CATEGORIES,
   POLICY_CORPUS,
   type CorpusEntry,
@@ -41,7 +42,7 @@ export type Family =
   | "benign";
 
 const BENCHMARK_ACTOR: Actor = { agentId: "eval", threadId: null };
-const CONTEXT = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace");
+const CONTEXT = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], CORPUS_WRITE_ROOTS);
 
 /** Ground-truth family for a corpus category. Independent of the policy rules. */
 function familyOf(entry: CorpusEntry): Family {

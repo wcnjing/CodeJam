@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { extractCapabilities } from "./capabilities.js";
 import { describeCapabilities, policyStatements, policyContextFrom } from "./command-policy.js";
 
-const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace");
+const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], ["/workspace"]);
 
 describe("capability extraction", () => {
   it("reports one NETWORK_EGRESS per destination, resolved against the allowlist", () => {
@@ -210,13 +210,65 @@ describe("FILE_WRITE capability extraction", () => {
     }
   });
 
-  it("trusts an absolute path that resolves under a real, non-empty workspaceRoot", () => {
-    const workspaceContext = { ...context, workspaceRoot: "/home/agent/workspace" };
+  it("trusts an absolute path that resolves under a real, non-empty write root", () => {
+    const workspaceContext = { ...context, writeRoots: ["/home/agent/workspace"] };
     const caps = extractCapabilities("echo hi > /home/agent/workspace/out.txt", workspaceContext);
     expect(caps).toContainEqual({
       capability: "FILE_WRITE",
       resource: "/home/agent/workspace/out.txt",
       trusted: true,
+      via: "file-write",
+    });
+  });
+
+  it("trusts a target under ANY of several write roots", () => {
+    // The container runner mounts only the workspace and codex-home; the rest
+    // of that filesystem, /tmp included, dies with the container. It therefore
+    // declares more than one trusted root, and a write under any of them is
+    // inside the sandbox.
+    const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+    for (const target of ["/workspace/out.txt", "/tmp/patch.diff", "/var/tmp/x/y.log"]) {
+      const caps = extractCapabilities("echo hi > " + target, containerContext);
+      expect(caps, target).toContainEqual({
+        capability: "FILE_WRITE",
+        resource: target,
+        trusted: true,
+        via: "file-write",
+      });
+    }
+  });
+
+  it("still denies a target outside every declared write root", () => {
+    const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+    const caps = extractCapabilities("echo pwned > /etc/cron.d/backdoor", containerContext);
+    expect(caps).toContainEqual({
+      capability: "FILE_WRITE",
+      resource: "/etc/cron.d/backdoor",
+      trusted: false,
+      via: "file-write",
+    });
+  });
+
+  it("fails closed with an empty write-root list: nothing absolute is trusted", () => {
+    const rootless = { ...context, writeRoots: [] };
+    for (const target of ["/workspace/out.txt", "/tmp/patch.diff", "/etc/motd"]) {
+      const caps = extractCapabilities("echo hi > " + target, rootless);
+      expect(caps, target).toContainEqual({
+        capability: "FILE_WRITE",
+        resource: target,
+        trusted: false,
+        via: "file-write",
+      });
+    }
+  });
+
+  it("does not let a write root prefix-match a sibling directory", () => {
+    const rooted = { ...context, writeRoots: ["/tmp"] };
+    const caps = extractCapabilities("echo pwned > /tmpfoo/evil.sh", rooted);
+    expect(caps).toContainEqual({
+      capability: "FILE_WRITE",
+      resource: "/tmpfoo/evil.sh",
+      trusted: false,
       via: "file-write",
     });
   });
