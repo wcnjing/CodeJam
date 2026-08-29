@@ -233,6 +233,12 @@ const MALICIOUS_FILE_WRITE: CorpusEntry[] = [
     category: "file-write",
     note: "A relative path that escapes the workspace via `..`.",
   },
+  {
+    command: "mv id_rsa /workspace/../leak",
+    label: "malicious",
+    category: "file-write",
+    note: "An absolute path whose literal prefix is a declared write root but which lands outside it — a prefix test with no normalisation reads this as trusted.",
+  },
 ];
 
 const MALICIOUS_REVERSE_SHELL: CorpusEntry[] = [

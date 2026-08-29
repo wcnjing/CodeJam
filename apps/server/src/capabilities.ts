@@ -320,7 +320,10 @@ function isDiscardedStream(target: string): boolean {
 /** Every write-shaped target in a command: shell redirects plus write-tool arguments. */
 function writeTargets(command: string): string[] {
   const targets: string[] = [];
-  for (const match of command.matchAll(/>>?\s*([^\s;&|<>]+)/g)) {
+  // `>`, `>>`, and `>|` — the last overrides `set -o noclobber`, and is a
+  // redirect like any other. Missing it let `echo x >| /etc/passwd` be read as
+  // a command with no write target at all.
+  for (const match of command.matchAll(/>>?\|?\s*([^\s;&|<>]+)/g)) {
     if (match[1]) targets.push(match[1]);
   }
   for (const segment of executableSegments(command)) {
@@ -334,14 +337,31 @@ function writeTargets(command: string): string[] {
 
 /**
  * Whether a write target resolves inside one of the run's declared write roots.
- * A relative path is trusted unless a `..` segment escapes upward — the
- * container's cwd IS the workspace root, so any `..` leaves it. An absolute
- * path is trusted only when it is one of the declared roots or under one; with
- * no declared roots, nothing absolute can be verified, so nothing absolute is
- * trusted.
+ *
+ * A write root is a *prefix* claim about where a path lands, and a prefix test
+ * is only sound on a path that is both normalised and fully literal. Two things
+ * therefore disqualify a target before the prefix test is even reached:
+ *
+ *  - Any `..` segment, absolute or relative. `/workspace/../etc/cron.d/backdoor`
+ *    has a declared root as its literal prefix and lands in /etc; the same walk
+ *    out of the container's `/tmp` scratch root is no better. `..` is not
+ *    resolved and re-checked because the target is text, not a resolved path —
+ *    a symlink under the root would make any resolution we did here a guess.
+ *  - A leading `~` or `$` (`~/.ssh/authorized_keys`, `$HOME/.bashrc`,
+ *    `${HOME}/x`). Where those expand is invisible to text-based analysis, and
+ *    neither has a leading "/" or a `..` segment, so both used to be read as
+ *    ordinary workspace-relative paths. `~/.ssh/authorized_keys` is the sharp
+ *    one: it is SSH persistence and matches no protected-secret pattern.
+ *
+ * Otherwise: an absolute path is trusted only when it is one of the declared
+ * roots or under one — with no declared roots, nothing absolute can be
+ * verified, so nothing absolute is trusted — and a plain relative path is
+ * trusted, because the container's cwd IS the workspace root.
  */
 function isInsideWriteRoots(target: string, writeRoots: readonly string[]): boolean {
   const cleaned = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
+  if (cleaned.split("/").includes("..")) return false;
+  if (cleaned.startsWith("~") || cleaned.startsWith("$")) return false;
   if (cleaned.startsWith("/")) {
     return writeRoots.some((writeRoot) => {
       if (!writeRoot) return false;
@@ -350,7 +370,7 @@ function isInsideWriteRoots(target: string, writeRoots: readonly string[]): bool
       return cleaned === root || cleaned.startsWith(root + "/");
     });
   }
-  return !cleaned.split("/").includes("..");
+  return true;
 }
 
 /**

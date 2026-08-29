@@ -597,6 +597,64 @@ describe("command policy", () => {
   });
 });
 
+// @covers TM-AGENT-007
+describe("write-boundary evasion", () => {
+  // A write root is a *prefix* claim about where a path lands, and a prefix
+  // claim is only sound once the path is normalised and fully literal. Every
+  // case here starts inside a declared root (or inside no root at all) as
+  // plain text, and lands outside it once the shell is finished with it.
+  const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+
+  it("denies an absolute path that walks out of a write root with ..", () => {
+    const violation = evaluateCommand(
+      actor,
+      "cp payload /workspace/../etc/cron.d/backdoor",
+      containerContext,
+    );
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("/workspace/../etc/cron.d/backdoor");
+  });
+
+  it("denies the same walk out of the container's scratch roots", () => {
+    // /tmp and /var/tmp are trusted precisely because they are container-local;
+    // `/tmp/..` is not, and adding scratch roots widened the prefix test's
+    // blast radius rather than narrowing it.
+    const violation = evaluateCommand(actor, "cp payload /tmp/../etc/motd", containerContext);
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("/tmp/../etc/motd");
+  });
+
+  it("denies a write to a ~-expanded home path", () => {
+    // The sharpest case: this is SSH persistence, and `authorized_keys` matches
+    // no protected-secret pattern, so nothing else in the policy catches it.
+    // `~/...` has no leading "/" and no ".." segment, so the relative-path
+    // branch used to wave it through as workspace-relative.
+    const violation = evaluateCommand(
+      actor,
+      "echo key >> ~/.ssh/authorized_keys",
+      containerContext,
+    );
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("~/.ssh/authorized_keys");
+  });
+
+  it("denies a write to a $-expanded path", () => {
+    // Where $HOME points is not visible to text-based analysis, so the target
+    // cannot be shown to land inside a root and must not be assumed to.
+    const violation = evaluateCommand(actor, "cp payload $HOME/.bashrc", containerContext);
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("$HOME/.bashrc");
+  });
+
+  it("denies a write through the >| clobber redirect", () => {
+    // `>|` overrides `set -o noclobber`; it is a redirect like any other, and
+    // the target-extraction regex has to see it as one.
+    const violation = evaluateCommand(actor, "echo x >| /etc/passwd", containerContext);
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("/etc/passwd");
+  });
+});
+
 // @covers TM-AGENT-002
 describe("fail-closed policy evaluation", () => {
   it("denies when the evaluator throws instead of allowing through", () => {
