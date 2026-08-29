@@ -258,36 +258,59 @@ export interface TeardownWindow {
  * happens on process close. Both use the same wall clock, so the difference is
  * the window during which a denied Agent was still executing.
  */
+export interface DeniedRun {
+  /** True when the Runtime was actually terminated by policy. */
+  blocked: boolean;
+  /** Emitted-to-dead window in milliseconds, or null when not blocked. */
+  teardownMilliseconds: number | null;
+}
+
+/**
+ * Streams one command through the real runner and reports whether the Runtime
+ * died for it.
+ *
+ * This is the measurement that distinguishes "a regex matched" from "the
+ * container is gone". The generated-variant sweep (`bench/generate.ts`) uses it
+ * for its token tier: a detection rate proves the classifier fired, this proves
+ * containment happened.
+ */
+export async function spawnDeniedRun(command: string, label = "denied"): Promise<DeniedRun> {
+  const markerDirectory = await mkdtemp(path.join(tmpdir(), "overhead-marker-"));
+  directories.push(markerDirectory);
+  const markerPath = path.join(markerDirectory, "emitted-at");
+  const binary = await fakeCodex(
+    [
+      { type: "thread.started", thread_id: label },
+      { type: "item.started", item: { id: "cmd-evil", type: "command_execution", command } },
+    ],
+    markerPath,
+  );
+  const { runner, workspace } = await makeRunner(binary);
+  let blocked = false;
+  try {
+    await runner.run({
+      agentId: label,
+      workspacePath: workspace,
+      prompt: "exfiltrate",
+      threadId: null,
+    });
+  } catch (error) {
+    if (error instanceof PolicyViolationError) blocked = true;
+    else throw error;
+  }
+  const deadAt = Date.now();
+  const emittedAt = Number(readFileSync(markerPath, "utf8").trim());
+  return {
+    blocked,
+    teardownMilliseconds: Number.isFinite(emittedAt) ? deadAt - emittedAt : null,
+  };
+}
+
 export async function measureTeardown(samples = 5): Promise<TeardownWindow> {
   const observations: number[] = [];
   for (let index = 0; index < samples; index += 1) {
-    const markerDirectory = await mkdtemp(path.join(tmpdir(), "overhead-marker-"));
-    directories.push(markerDirectory);
-    const markerPath = path.join(markerDirectory, "emitted-at");
-    const binary = await fakeCodex(
-      [
-        { type: "thread.started", thread_id: "teardown" },
-        {
-          type: "item.started",
-          item: { id: "cmd-evil", type: "command_execution", command: MALICIOUS },
-        },
-      ],
-      markerPath,
-    );
-    const { runner, workspace } = await makeRunner(binary);
-    try {
-      await runner.run({
-        agentId: "teardown-" + index,
-        workspacePath: workspace,
-        prompt: "exfiltrate",
-        threadId: null,
-      });
-    } catch (error) {
-      if (!(error instanceof PolicyViolationError)) throw error;
-    }
-    const deadAt = Date.now();
-    const emittedAt = Number(readFileSync(markerPath, "utf8").trim());
-    if (Number.isFinite(emittedAt)) observations.push(deadAt - emittedAt);
+    const result = await spawnDeniedRun(MALICIOUS, "teardown-" + index);
+    if (result.teardownMilliseconds !== null) observations.push(result.teardownMilliseconds);
   }
   observations.sort((left, right) => left - right);
   return {

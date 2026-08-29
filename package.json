@@ -27,6 +27,7 @@
     "bench:store": "npm run bench:store -w @launchpad/server",
     "bench": "npm run bench -w @launchpad/server",
     "bench:overhead": "npm run bench:overhead -w @launchpad/server",
+    "bench:generate": "npm run bench:generate -w @launchpad/server",
     "redteam": "npm run redteam -w @launchpad/server"
   },
   "devDependencies": {

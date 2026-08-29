@@ -109,6 +109,13 @@ jobs:
       - name: Overhead and containment window
         run: npm run bench:overhead
 
+      # GATE. Bulk tier (thousands of generated variants through evaluateCommand)
+      # runs everywhere; the token tier through the real Runtime runs here, and
+      # is the half that proves the container dies rather than that a regex
+      # matched. Fails on a bypass signature that is not already documented.
+      - name: Generated attack bank (gate)
+        run: npm run bench:generate
+
       - name: Zero-config front door
         run: npm run demo:offline
 
@@ -198,6 +205,12 @@ jobs:
       - name: Benchmark (JSON + human report)
         if: always()
         run: npm run bench
+
+      # Bulk tier only here: the token tier detects that Windows cannot spawn the
+      # stand-in and skips itself with an explanation.
+      - name: Generated attack bank (gate)
+        if: always()
+        run: npm run bench:generate
 
       - name: Zero-config front door
         if: always()

@@ -16,6 +16,7 @@
     "bench:store": "tsx src/bench/store-overhead-cli.ts",
     "bench": "tsx src/bench/bench-cli.ts",
     "bench:overhead": "tsx src/bench/overhead-cli.ts",
+    "bench:generate": "tsx src/bench/generate-cli.ts",
     "redteam": "tsx src/redteam-cli.ts"
   },
   "dependencies": {
