@@ -315,19 +315,21 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         redactedCommand: null,
         detected: null,
       };
-      // Invariant 1: the required reviewable rule must stay reviewable, and
+      // Invariant 1: the required reviewable rules must stay reviewable, and
       // rules that must NEVER be human-approved must not appear in the set.
       // Unknown extra rules are flagged loudly rather than matched against an
       // exact serialized list, so a reviewable-set expansion is surfaced.
-      const requiredReviewable = "network-egress-denied";
+      const requiredReviewable = ["network-egress-denied", "network-egress-denied-implicit"];
       const neverReviewable = [
         "secret-exfiltration",
         "protected-secret-access",
         "policy-error",
         "encoded-exfiltration",
       ];
-      if (!deps.REVIEWABLE_RULES.includes(requiredReviewable)) {
-        problems.push("required reviewable rule missing: " + requiredReviewable);
+      for (const rule of requiredReviewable) {
+        if (!deps.REVIEWABLE_RULES.includes(rule)) {
+          problems.push("required reviewable rule missing: " + rule);
+        }
       }
       for (const rule of neverReviewable) {
         if (deps.REVIEWABLE_RULES.includes(rule)) {
@@ -335,7 +337,7 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         }
       }
       for (const rule of deps.REVIEWABLE_RULES) {
-        if (rule !== requiredReviewable && !neverReviewable.includes(rule)) {
+        if (!requiredReviewable.includes(rule) && !neverReviewable.includes(rule)) {
           problems.push("unexpected reviewable rule: " + rule);
         }
       }

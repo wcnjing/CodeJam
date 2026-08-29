@@ -122,14 +122,14 @@ function toCase(entry: CorpusEntry, id: string, source: string): TestCase {
 
 /**
  * Per-entry provenance: which canonical-corpus entry (with category and
- * holdout flag) or which red-team probe produced this case, so every result
+ * source flag) or which red-team probe produced this case, so every result
  * stays auditable to its origin rather than a shared file-level string.
  */
 function corpusProvenance(index: number, entry: CorpusEntry): string {
   return (
     "policy-corpus#" + index +
     " [" + entry.category + "]" +
-    (entry.holdout ? " (holdout)" : "")
+    (entry.source ? " (" + entry.source + ")" : "")
   );
 }
 

@@ -1,3 +1,5 @@
+import type { CapabilityRequest } from "../middleware/capabilities.js";
+
 export class HttpError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -27,6 +29,8 @@ export class PolicyViolationError extends Error {
     public readonly detail: string,
     /** Hosts a human could grant a scoped exception for, if the rule is reviewable. */
     public readonly hosts: string[] = [],
+    /** Capabilities the command requested, for the operator timeline. */
+    public readonly capabilities: CapabilityRequest[] = [],
   ) {
     super("Blocked by command policy (" + rule + "): " + detail);
     this.name = "PolicyViolationError";

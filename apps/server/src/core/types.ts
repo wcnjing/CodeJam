@@ -1,3 +1,5 @@
+import type { CapabilityRequest } from "../middleware/capabilities.js";
+
 export type AgentStatus = "ready" | "busy" | "stopped" | "error";
 export type RunStatus =
   | "queued"
@@ -65,6 +67,12 @@ export interface PolicyDecision {
    * is trialled against real traffic before it starts denying anything.
    */
   enforced: boolean;
+  /**
+   * Capabilities the command requested, in the vocabulary the policy decides
+   * on. Lets the operator timeline say what was attempted — "NETWORK_EGRESS to
+   * attacker.example" — rather than only which rule matched.
+   */
+  capabilities?: CapabilityRequest[];
   decidedAt: string;
 }
 
@@ -129,6 +137,8 @@ export interface PolicyObservation {
   rule: string;
   command: string;
   detail: string;
+  /** Capabilities the observed command requested, carried into evidence. */
+  capabilities?: CapabilityRequest[];
 }
 
 export interface RunnerRequest {

@@ -19,10 +19,10 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 
 | Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
-| Attacks the policy would allow | 100% | **1.4%** |
-| Secret-channel attacks allowed | 33/33 | **0/33** |
-| Legitimate tasks blocked | 0% | 2.2% |
-| Added per-command decision latency (p95) | — | **~2 µs** |
+| Attacks the policy would allow | 100% | **1.0%** |
+| Secret-channel attacks allowed | 39/39 | **0/39** |
+| Legitimate tasks blocked | 0% | 1.4% |
+| Added per-command decision latency (p95) | — | **~24 µs** |
 
 *Computed live in-app at **Security Evaluation** (`npm run bench:security` for the
 CLI). These are policy **decisions** on a corpus we authored, not observed
@@ -34,7 +34,7 @@ Run it locally with Docker, Colima, or rootless Podman.
 
 > [!WARNING]
 > Single-user proof of concept built on the CodeJam starter kit. The command
-> policy is a **reactive command-text guard, not a network allowlist** (see
+> network policy is a **reactive command-text guard, not a network allowlist** (see
 > Limitations). Do not use production data or credentials. See
 > [SECURITY.md](SECURITY.md).
 
@@ -46,9 +46,10 @@ contains attempted secret exfiltration from inside the Agent Runtime.**
 ### The problem
 
 The Starter Kit hands every Agent Run a container with real shell access, a real
-credential in its environment (`ARK_API_KEY`), and unrestricted outbound
-networking. Nothing observed what commands the Agent ran — the event parser read
-only assistant messages and token usage, discarding everything else. A
+model credential available to Codex, and unrestricted outbound networking.
+Originally, Agent-authored commands inherited that credential as
+`ARK_API_KEY`. Nothing observed what commands the Agent ran — the event parser
+read only assistant messages and token usage, discarding everything else. A
 prompt-injected or malicious task could run:
 
 ```
@@ -72,6 +73,31 @@ and destroys the Runtime container on the first denial.
 > by this layer. True default-deny egress requires network-layer enforcement,
 > which is deliberately deferred (see Limitations). The claims below are scoped
 > to what a command-text guard can actually enforce.
+
+The engine is layered so that a rule is a statement about capabilities, not a
+pattern over shell syntax:
+
+```
+command text
+  -> shell-parse.ts    structured invocations + the destinations they name
+  -> capabilities.ts   what the action would DO: NETWORK_EGRESS, SECRET_READ
+  -> command-policy.ts rules over capabilities, first match decides
+```
+
+Each rule names the invariant it enforces — *"An actor holding SECRET_READ may
+not also exercise NETWORK_EGRESS"* — rather than enumerating the spellings that
+reach it. `curl`, `python -c`, a `/dev/tcp` redirect and an obfuscated binary
+next to a URL are four spellings of one capability, and the rule says so once.
+The decision carries the capability set, so evidence and the operator timeline
+report *what was attempted* (`NETWORK_EGRESS -> attacker.example, via
+network-tool`) rather than which regex matched.
+
+This is an abstraction over the same evidence, not a stronger guarantee than
+parsing can give: capabilities are still *inferred from command text*, so a
+destination built at runtime or a fully encoded command remains invisible. The
+seam exists so that the ceiling is in one identified layer, and so the same
+rules can later govern non-shell actions — an MCP tool call or a database write
+reaches the policy as a capability request too.
 
 ```mermaid
 flowchart LR
@@ -106,6 +132,12 @@ flowchart LR
   `item.started`, before it finishes), so this stops continuation and retries —
   but a fast single command may complete a partial effect before the container
   is torn down. It is containment, not a guarantee that zero bytes left.
+- **Credential boundary:** generated Codex configuration keeps `ARK_API_KEY`
+  available to the model provider but excludes it from spawned shell commands;
+  Codex's default KEY/SECRET/TOKEN exclusions remain enabled. Generic `env`,
+  Node `process.env`, and Python `os.environ` inspection therefore stays usable
+  without disclosing credentials. Explicit Ark-key dereferences and
+  `/proc/.../environ` reads are also denied as defense in depth.
 - **On failure:** a policy denial keeps the Agent `ready`, not `error` — the
   control working is not an operator problem to clear, and the next task runs
   normally.
@@ -127,7 +159,7 @@ flowchart LR
   are never reviewable: no human may approve exfiltrating a protected secret.
   Every decision records who approved, when, and why, so override rates can be
   audited for rubber-stamping. Configure the reviewable rules with
-  `POLICY_REVIEW_RULES` (default: `network-egress-denied`).
+  `POLICY_REVIEW_RULES` (default: `network-egress-denied,network-egress-denied-implicit`).
 
 ### Reproducing the demo
 
@@ -149,8 +181,8 @@ node scripts/mock-collector.mjs
 ```
 
 The primary demo is deterministic under the **default** config
-(`POLICY_REVIEW_RULES=network-egress-denied`). Create an Agent, then in the
-Playground:
+(`POLICY_REVIEW_RULES=network-egress-denied,network-egress-denied-implicit`).
+Create an Agent, then in the Playground:
 
 **1. Normal case.** "Create a TypeScript hello-world CLI, add a test, run it."
 The Run completes normally — the middleware does not get in the way of honest work.
@@ -220,13 +252,14 @@ sidebar — computed on demand from the running policy engine, so the dashboard 
 never drift from what actually enforces. It reports the **policy-predicted escape
 rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
-drops from 100% (no middleware) to 1.4% (one documented base64 residual, named
-not hidden), secret-channel attacks allowed from 33/33 to 0/33, with a p95
-decision latency of ~2 µs.
+drops from 100% (no middleware) to 1.0% (one documented base64 residual, named
+not hidden), secret-channel attacks allowed from 39/39 to 0/39, with a p95
+decision latency of ~24 µs in the latest CLI run.
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
-> a corpus *we authored*, so 1.4% is corpus performance, not an expected
+> an authored corpus plus a retained external-review regression set, so 1.0% is
+> corpus performance, not an expected
 > real-world bypass rate (simple obfuscations still exist — see Limitations). The
 > physical proof that a byte never leaves is the separate **live mock-collector
 > demo** (zero requests), which does exercise a real container.
@@ -277,11 +310,11 @@ Recorded honestly, because each one is a real gap:
 
 ### Security Evaluation — measured live from the running policy engine
 
-Baseline-vs-Sentinel escape rate, secret-leak rate, per-family coverage (with the
+Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage (with the
 one residual named), classifier quality, and policy latency — computed on demand
 from the same engine that enforces, so it can never drift from what actually runs.
 
-![Sentinel Security Evaluation dashboard: 100% to 1.4% policy-predicted escape rate, 0/33 secret leaks, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
+![Sentinel Security Evaluation dashboard: 100% to 1.0% policy-predicted escape rate, 0/39 secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
 ### Human approval — a held run awaiting a decision
 
@@ -480,7 +513,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
 | `POLICY_ENFORCEMENT` | `enforce` | `monitor` records policy decisions without terminating (shadow mode). |
 | `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. |
-| `POLICY_REVIEW_RULES` | `network-egress-denied` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
+| `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
 | `POLICY_MAX_COMMANDS` | `50` | Step budget: a run exceeding this many shell commands is terminated. Always enforced. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
 

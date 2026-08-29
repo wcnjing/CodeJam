@@ -69,3 +69,11 @@ describe("monitor profile semantics", () => {
     expect(outcome.detected).toBe(false);
   });
 });
+
+it("accepts the two egress rules as the reviewable set", () => {
+  const [,,,,,, config] = createProfiles(
+    customDeps({ REVIEWABLE_RULES: ["network-egress-denied", "network-egress-denied-implicit"] }),
+  );
+  const outcome = config!.evaluate(MALICIOUS, env);
+  expect(outcome.detail).toBeNull();
+});

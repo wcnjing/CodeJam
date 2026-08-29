@@ -21,11 +21,13 @@ that lens, crediting real coverage and naming the gaps.
 
 ## The design choice that makes approval safe
 
-Not every denial is reviewable. Only `network-egress-denied` — reaching a host
-outside the allowlist, which is often a legitimate need (a package registry) —
-can be held for a human. `secret-exfiltration` and `protected-secret-access`
-are **always hard-denied and never subject to approval**, so no operator can
-be socially-engineered or fatigued into waving through the theft of a protected
+Not every denial is reviewable. Only the egress rules — `network-egress-denied`
+(a named tool reaching a host outside the allowlist) and
+`network-egress-denied-implicit` (the same destination, with no recognised
+tool naming it) — reach a legitimate need often enough (a package registry) to
+be held for a human. `secret-exfiltration` and `protected-secret-access` are
+**always hard-denied and never subject to approval**, so no operator can be
+socially-engineered or fatigued into waving through the theft of a protected
 secret. The reviewable set is `POLICY_REVIEW_RULES`, defaulting to egress only.
 
 The granted exception is **scoped to the exact hosts named and consumed by a

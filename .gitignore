@@ -1,14 +1,17 @@
 node_modules/
 dist/
 **/dist/**
+
 .env
 .env.production
+
 .data/
 .local/
 data/
 workspaces/
 codex-home/
 coverage/
+
 *.log
 *.tsbuildinfo
 .DS_Store
@@ -17,3 +20,5 @@ deploy/volcengine/*.tfstate*
 deploy/volcengine/terraform.tfvars
 tests/scores/
 AGENTS.md
+.vscode
+.skills

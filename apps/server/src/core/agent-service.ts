@@ -17,6 +17,7 @@ import type {
   ApprovalRequest,
   Message,
   PolicyDecision,
+  PolicyObservation,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
@@ -422,6 +423,7 @@ export class AgentService {
             rule: observation.rule,
             command: observation.command,
             detail: observation.detail,
+            ...(observation.capabilities ? { capabilities: observation.capabilities } : {}),
             enforced: false,
             decidedAt: completedAt,
           });
@@ -484,6 +486,7 @@ export class AgentService {
               rule: error.rule,
               command: error.command,
               detail: error.detail,
+              ...(error.capabilities.length > 0 ? { capabilities: error.capabilities } : {}),
               enforced: true,
               decidedAt: completedAt,
             });
@@ -513,7 +516,7 @@ export class AgentService {
         // where the blocking violation is already recorded above as enforced.
         if (this.config.policyEnforcement === "monitor") {
           const observed =
-            (error as { observations?: { rule: string; command: string; detail: string }[] })
+            (error as { observations?: PolicyObservation[] })
               .observations ?? [];
           for (const obs of observed) {
             database.policyEvents.push({
@@ -523,6 +526,7 @@ export class AgentService {
               rule: obs.rule,
               command: obs.command,
               detail: obs.detail,
+              ...(obs.capabilities ? { capabilities: obs.capabilities } : {}),
               enforced: false,
               decidedAt: completedAt,
             });

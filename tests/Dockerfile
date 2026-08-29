@@ -23,7 +23,8 @@ RUN npm ci
 
 # Sources: server (read-only reference for the harness) + the suite itself.
 COPY apps ./apps
-COPY tests ./testsFROM ${NODE_IMAGE} AS runtime
+COPY tests ./tests
+FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=test

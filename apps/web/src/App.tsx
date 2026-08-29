@@ -107,9 +107,9 @@ function EvaluationView({
           <span className="eval-tile-value">
             {summary.secrets.leaks}/{summary.secrets.attacks}
           </span>
-          <span className="eval-tile-label">Secret leaks</span>
+          <span className="eval-tile-label">Secret-channel attacks allowed</span>
           <span className="eval-tile-sub">
-            baseline leaked {summary.secrets.baselineLeaks}/{summary.secrets.attacks}
+            baseline policy allowed {summary.secrets.baselineLeaks}/{summary.secrets.attacks}
           </span>
         </div>
         <div className="eval-tile">
@@ -153,7 +153,7 @@ function EvaluationView({
         </div>
 
         <div className="eval-panel">
-          <span className="eyebrow">Classifier quality (blind-set honest)</span>
+          <span className="eyebrow">Classifier quality (reviewer challenge set)</span>
           <ul className="eval-metrics">
             <li>
               <span>Core detection</span>
@@ -164,8 +164,32 @@ function EvaluationView({
               <strong>{pct(summary.policy.evasionRecall)}</strong>
             </li>
             <li>
-              <span>Blind-set recall</span>
-              <strong>{pct(summary.policy.blindsetRecall)}</strong>
+              <span>
+                External-review recall
+                <em className="eval-metric-note">
+                  {summary.policy.externalReviewAttacks} attacks written without
+                  reading the rules
+                </em>
+              </span>
+              <strong>{pct(summary.policy.externalReviewRecall)}</strong>
+            </li>
+            <li>
+              <span>
+                External-review false positives
+                <em className="eval-metric-note">
+                  {summary.policy.externalReviewBenign} legitimate reviewer cases
+                </em>
+              </span>
+              <strong>{pct(summary.policy.externalReviewFalsePositiveRate)}</strong>
+            </li>
+            <li>
+              <span>
+                Internal red-team regressions
+                <em className="eval-metric-note">
+                  authored while reading the rules; retained, not independent
+                </em>
+              </span>
+              <strong>{summary.policy.internalRedTeam}</strong>
             </li>
             <li>
               <span>Precision</span>
@@ -917,6 +941,28 @@ export default function App() {
                         </div>
                         <code>{event.command}</code>
                         <span className="policy-note">{event.detail}</span>
+                        {event.capabilities && event.capabilities.length > 0 && (
+                          <ul className="policy-capabilities">
+                            {event.capabilities.map((request, index) => (
+                              <li key={index}>
+                                <span className="capability-name">
+                                  {request.capability}
+                                </span>
+                                {request.resource && (
+                                  <span
+                                    className={
+                                      "capability-resource " +
+                                      (request.trusted ? "trusted" : "untrusted")
+                                    }
+                                  >
+                                    {request.resource}
+                                  </span>
+                                )}
+                                <span className="capability-via">via {request.via}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>

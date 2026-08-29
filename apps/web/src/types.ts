@@ -46,6 +46,15 @@ export interface AgentRun {
   createdAt: string;
 }
 
+/** What an action would do, in the vocabulary the policy decides on. */
+export interface CapabilityRequest {
+  capability: "NETWORK_EGRESS" | "SECRET_READ";
+  /** A hostname, or the label of the protected material. */
+  resource: string;
+  trusted: boolean;
+  via: "network-tool" | "interpreter" | "destination-only" | "protected-material";
+}
+
 export interface PolicyDecision {
   id: string;
   agentId: string;
@@ -55,6 +64,8 @@ export interface PolicyDecision {
   detail: string;
   /** False when the policy only observed the command (monitor mode). */
   enforced: boolean;
+  /** Capabilities the command requested, for the operator timeline. */
+  capabilities?: CapabilityRequest[];
   decidedAt: string;
 }
 
@@ -91,7 +102,13 @@ export interface EvaluationSummary {
   policy: {
     coreRecall: number;
     evasionRecall: number;
-    blindsetRecall: number;
+    externalReviewRecall: number;
+    externalReviewFalsePositiveRate: number;
+    /** Sample sizes behind the two rates above; a rate alone is not evidence. */
+    externalReviewAttacks: number;
+    externalReviewBenign: number;
+    /** Retained regressions authored while reading the rules, not independent. */
+    internalRedTeam: number;
     precision: number;
     f1: number;
   };

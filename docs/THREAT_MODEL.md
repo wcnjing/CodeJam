@@ -81,8 +81,9 @@ radius, not the worst-case consequence.
 
 **Two design choices that make the controls defensible:**
 
-- **Secret rules are never reviewable.** Only `network-egress-denied` can be held
-  for human approval; `secret-exfiltration` and `protected-secret-access` are
+- **Secret rules are never reviewable.** Only the egress rules
+  (`network-egress-denied`, `network-egress-denied-implicit`) can be held for
+  human approval; `secret-exfiltration` and `protected-secret-access` are
   always hard-denied, so no operator can be fatigued into approving exfiltration.
 - **The step budget is not a toggle.** Command policy can run in monitor mode;
   the resource budget always enforces, because a runaway loop must stop

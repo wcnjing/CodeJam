@@ -279,6 +279,7 @@ export class CodexRunner implements AgentRunner {
           active.violation.command,
           active.violation.detail,
           active.violation.hosts ?? [],
+          active.violation.capabilities ?? [],
         );
       }
       if (active.budgetExceeded) {

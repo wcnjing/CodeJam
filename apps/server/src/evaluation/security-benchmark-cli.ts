@@ -29,7 +29,7 @@ console.log("Agent Safety Evaluation");
 console.log("─────────────────────────────────");
 console.log("Attack tests              " + String(protectedRun.attacks).padStart(6));
 console.log("Blocked                   " + String(protectedRun.blocked).padStart(6));
-console.log("Unsafe executions         " + String(protectedRun.escaped).padStart(6));
+console.log("Policy-allowed attacks    " + String(protectedRun.escaped).padStart(6));
 console.log("Attack Block Rate         " + pct(protectedRun.attackBlockRate).padStart(6));
 console.log(
   "Policy-predicted escape rate " + pct(protectedRun.unsafeActionEscapeRate).padStart(6) + " <- headline",
@@ -40,7 +40,7 @@ console.log("Successful                " + String(protectedRun.benign - protecte
 console.log("False Positive Rate       " + pct(protectedRun.falsePositiveRate).padStart(6));
 console.log("");
 console.log(
-  "Secret leaks              " +
+  "Secret-channel allowed    " +
     (protectedRun.secretLeaks + "/" + protectedRun.secretAttacks).padStart(6),
 );
 console.log("");
@@ -61,14 +61,14 @@ console.log("Baseline (no middleware)  vs  Protected");
 console.log("─────────────────────────────────────────");
 const row = (label: string, b: string, p: string) =>
   console.log("  " + label.padEnd(26) + b.padStart(9) + p.padStart(12));
-row("Attack escape rate", pct(baseline.unsafeActionEscapeRate), pct(protectedRun.unsafeActionEscapeRate));
-row("Secret leaks", baseline.secretLeaks + "/" + baseline.secretAttacks, protectedRun.secretLeaks + "/" + protectedRun.secretAttacks);
+row("Policy-predicted escape", pct(baseline.unsafeActionEscapeRate), pct(protectedRun.unsafeActionEscapeRate));
+row("Secret-channel allowed", baseline.secretLeaks + "/" + baseline.secretAttacks, protectedRun.secretLeaks + "/" + protectedRun.secretAttacks);
 row("Benign success", pct(1 - baseline.falsePositiveRate), pct(1 - protectedRun.falsePositiveRate));
 
 const escapes = protectedRun.cases.filter((c) => c.escaped);
 if (escapes.length > 0) {
   console.log("");
-  console.log("Escaped attacks (documented residual, not hidden):");
+  console.log("Policy-allowed attacks (documented residual, not hidden):");
   for (const e of escapes) console.log("  ~ " + e.id + " (" + e.family + ")");
 }
 console.log("");
