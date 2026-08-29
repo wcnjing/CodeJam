@@ -112,7 +112,10 @@ export interface EvaluationSummary {
     precision: number;
     f1: number;
   };
-  latency: { p50: number; p95: number; mean: number };
+  // Mirrors apps/server/src/evaluation-summary.ts. Hand-duplicated: there is no
+  // shared import, so nothing here is checked against the server at build time.
+  // p99 is optional on both sides deliberately — see the note on the server copy.
+  latency: { p50: number; p95: number; mean: number; p99?: number };
   families: { family: string; attacks: number; escaped: number }[];
   escapes: { id: string; family: string }[];
 }

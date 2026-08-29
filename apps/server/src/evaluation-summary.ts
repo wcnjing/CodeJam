@@ -5,7 +5,8 @@
  * report, it is a measurement of the code that is actually running.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { timeSweep } from "./bench/metrics.js";
+import { policyWorkload } from "./bench/policy-workload.js";
 import { POLICY_CORPUS } from "./policy-corpus.js";
 import { evaluatePolicy } from "./policy-eval.js";
 import { runBenchmark, type Family } from "./security-benchmark.js";
@@ -36,28 +37,24 @@ export interface EvaluationSummary {
     precision: number;
     f1: number;
   };
-  latency: { p50: number; p95: number; mean: number };
+  /**
+   * Per-command policy evaluation cost, in microseconds.
+   *
+   * `p99` is OPTIONAL and must stay that way. `apps/web/src/types.ts` hand-copies
+   * this interface with no shared import and no build-time link between them, so
+   * a required field added here breaks the dashboard at runtime with a green
+   * build. The two copies have already drifted once: the server types `families`
+   * and `escapes` with the `Family` union where the web side widened both to
+   * `string`. `app.test.ts` pins the payload shape for that reason.
+   */
+  latency: { p50: number; p95: number; mean: number; p99?: number };
   families: { family: Family; attacks: number; escaped: number }[];
   escapes: { id: string; family: Family }[];
 }
 
-function latency(): { p50: number; p95: number; mean: number } {
-  const ctx = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
-  const samples: number[] = [];
-  for (let round = 0; round < 30; round += 1) {
-    for (const entry of POLICY_CORPUS) {
-      const t0 = process.hrtime.bigint();
-      evaluateCommand(entry.command, ctx);
-      samples.push(Number(process.hrtime.bigint() - t0) / 1000);
-    }
-  }
-  samples.sort((a, b) => a - b);
-  const at = (q: number) => samples[Math.floor(q * samples.length)] ?? 0;
-  return {
-    p50: at(0.5),
-    p95: at(0.95),
-    mean: samples.reduce((s, x) => s + x, 0) / samples.length,
-  };
+function latency(): { p50: number; p95: number; mean: number; p99: number } {
+  const sweep = timeSweep(policyWorkload(), { warmupRounds: 200, rounds: 2000 });
+  return { p50: sweep.p50, p95: sweep.p95, mean: sweep.mean, p99: sweep.p99 };
 }
 
 export function buildEvaluationSummary(): EvaluationSummary {

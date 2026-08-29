@@ -8,7 +8,9 @@
  * prints the human-readable report used in the writeup.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { timeSweep } from "./bench/metrics.js";
+import { BENCHMARK_CONTEXT, policyWorkload } from "./bench/policy-workload.js";
+import { evaluateCommand } from "./command-policy.js";
 import {
   EVASION_CATEGORIES,
   POLICY_CORPUS,
@@ -57,9 +59,7 @@ export interface EvaluationResult {
   meanMicroseconds: number;
 }
 
-const DEFAULT_CONTEXT = {
-  ...policyContextFrom("https://ark.cn-beijing.volces.com/api/v3"),
-};
+const DEFAULT_CONTEXT = BENCHMARK_CONTEXT;
 
 function isBlocked(entry: CorpusEntry, context = DEFAULT_CONTEXT): string | null {
   const violation = evaluateCommand(entry.command, context);
@@ -168,14 +168,26 @@ export function evaluatePolicy(
   };
 }
 
-/** Mean per-command evaluation cost, to show the control adds negligible overhead. */
-function measureThroughput(corpus: CorpusEntry[], iterations = 200): number {
-  const started = process.hrtime.bigint();
-  for (let index = 0; index < iterations; index += 1) {
-    for (const entry of corpus) evaluateCommand(entry.command, DEFAULT_CONTEXT);
-  }
-  const elapsedNs = Number(process.hrtime.bigint() - started);
-  return elapsedNs / 1000 / (iterations * corpus.length);
+/**
+ * Mean per-command evaluation cost, to show the control adds negligible overhead.
+ *
+ * Batched at one full corpus pass per sample. That keeps the figure directly
+ * comparable to the hand-rolled timer this replaced — which took a single hrtime
+ * pair around every call and so never paid per-call timer overhead — while still
+ * producing a distribution rather than a single number. See `bench/metrics.ts`
+ * for why per-call timing of a ~2 µs function needs care on a 100 ns clock.
+ */
+function measureThroughput(corpus: CorpusEntry[]): number {
+  if (corpus.length === 0) return 0;
+  const workload = policyWorkload(
+    corpus.map((entry) => entry.command),
+    DEFAULT_CONTEXT,
+  );
+  return timeSweep(workload, {
+    warmupRounds: corpus.length * 2,
+    rounds: 20,
+    batchSize: corpus.length,
+  }).mean;
 }
 
 function percent(value: number): string {
