@@ -154,14 +154,22 @@ const COMBINATION_POLICIES: CombinationPolicy[] = [
 ];
 
 /**
- * Per-capability policies. Order is significant: the first policy with any
- * matching resource decides the whole command, so a hard denial must be
- * ordered ahead of a reviewable one it could otherwise be shadowed by.
- * `file-write-outside-workspace` therefore leads: a command that both writes
- * outside the sandbox and contacts a non-allowlisted host must NOT report the
- * reviewable egress rule, because an approved command is rerun verbatim
- * without re-evaluation — the operator would be waving through a sandbox
- * escape they were never shown.
+ * Per-capability policies. Order is significant in two different ways.
+ *
+ * Between groups it is a security boundary: the first policy with any matching
+ * resource decides the whole command, and an approved command is rerun verbatim
+ * with no re-evaluation, so a reviewable rule ordered ahead of a hard denial
+ * would let an operator wave through an action they were never shown. EVERY
+ * non-reviewable rule must therefore precede EVERY reviewable one — the
+ * `protected-secret-access` and `file-write-outside-workspace` pair ahead of
+ * both egress rules. A test pins this.
+ *
+ * Within the non-reviewable group it is only about attribution, and
+ * `protected-secret-access` leads: when a command both reads protected material
+ * and writes it somewhere outside the sandbox, the finding is the credential,
+ * not the destination. Either rule denies, so nothing is let through by getting
+ * this wrong — the operator is just told about a filesystem mishap when what
+ * happened was a credential read.
  *
  * `network-egress-denied` / `network-egress-denied-implicit` stay mutually
  * exclusive per resource via `via` — a resource with `via ===
@@ -169,6 +177,14 @@ const COMBINATION_POLICIES: CombinationPolicy[] = [
  * rule, which is what keeps an obfuscated destination reporting the correct id.
  */
 const POLICY_RULES: Policy[] = [
+  {
+    id: "protected-secret-access",
+    statement: "SECRET_READ on protected material is denied on its own.",
+    action: "SECRET_READ",
+    reviewable: false,
+    when: () => true,
+    detail: (resources) => "Command reads " + resources[0]?.value + ".",
+  },
   {
     id: "file-write-outside-workspace",
     statement: "FILE_WRITE is permitted only inside the run's workspace.",
@@ -205,14 +221,6 @@ const POLICY_RULES: Policy[] = [
       resources.map((r) => r.value).join(", ") +
       ".",
     hosts: (resources) => resources.map((r) => r.value),
-  },
-  {
-    id: "protected-secret-access",
-    statement: "SECRET_READ on protected material is denied on its own.",
-    action: "SECRET_READ",
-    reviewable: false,
-    when: () => true,
-    detail: (resources) => "Command reads " + resources[0]?.value + ".",
   },
 ];
 

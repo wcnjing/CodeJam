@@ -5,6 +5,7 @@ import {
   guardedEvaluate,
   isReviewableRule,
   policyContextFrom,
+  policyStatements,
   type Actor,
   type Decision,
   type DecisionContext,
@@ -588,6 +589,34 @@ describe("command policy", () => {
     );
     expect(violation).not.toBeNull();
     expect(violation?.rule).toBe("protected-secret-access");
+  });
+
+  it("names the secret, not the destination, when a command stages one outside the workspace", () => {
+    // Both rules are hard denials, so nothing is let through either way — but
+    // the operator is told what happened, and "writes outside the workspace:
+    // /etc/motd" describes a filesystem mishap where the finding is that a
+    // protected credential was read. Same failure mode the /dev/null fix
+    // tests against, one rule along.
+    const violation = evaluateCommand(
+      actor,
+      "cp .secrets/customer-db-url.txt /etc/motd",
+      context,
+    );
+    expect(violation?.rule).toBe("protected-secret-access");
+    expect(violation?.detail).toContain("protected .secrets/ directory");
+    expect(isReviewableRule(violation!.rule)).toBe(false);
+  });
+
+  it("orders every non-reviewable rule ahead of every reviewable one", () => {
+    // The first matching rule decides the whole command, and an approved
+    // command is rerun verbatim with no re-evaluation — so a reviewable rule
+    // ordered ahead of a hard denial lets an operator wave through an action
+    // they were never shown. Ordering *within* each group is free; this
+    // boundary is not.
+    const reviewable = policyStatements()
+      .map((entry) => entry.rule)
+      .map((rule) => isReviewableRule(rule));
+    expect(reviewable).toEqual([...reviewable].sort((a, b) => Number(a) - Number(b)));
   });
 
   it("fails closed when no write roots are declared at all", () => {
