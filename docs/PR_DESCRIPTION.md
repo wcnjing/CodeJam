@@ -1,7 +1,6 @@
 # Evaluation & reliability lane
 
-`feat/evaluation-reliability` → `main` · 31 commits · 46 files, +6,9xx / −70
-· CI green:
+`feat/evaluation-reliability` → `main` · CI green:
 [run 33265492084](https://github.com/wcnjing/CodeJam/actions/runs/33265492084)
 
 Measurements quoted below are from
