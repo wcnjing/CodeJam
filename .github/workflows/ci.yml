@@ -101,6 +101,14 @@ jobs:
       - name: Benchmark (JSON + human report)
         run: npm run bench
 
+      # ubuntu only. Its decision A/B is cross-platform, but the run wall-clock
+      # and the teardown window spawn the shebang stand-in, which Windows cannot
+      # dispatch. The harness detects that and skips those two sections rather
+      # than reporting a wrong number, so running it here is where the teardown
+      # figure - the containment race window - actually gets measured.
+      - name: Overhead and containment window
+        run: npm run bench:overhead
+
       - name: Zero-config front door
         run: npm run demo:offline
 

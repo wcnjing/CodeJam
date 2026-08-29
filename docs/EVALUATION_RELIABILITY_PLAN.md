@@ -217,7 +217,22 @@ Measured with the real `CodexRunner` against a fake codex binary:
 Flat across both modes and flat across command count — as expected, because both
 modes run the same scan and the wall-clock is dominated by process spawn.
 
-**Prerequisite for a real baseline: an injectable evaluator on `scanCommands`.**
+**Update (tasks 1.2, diff A):** the seam landed as `scanCommandsWith`, approved
+by Person 1 in a delegation form that leaves `scanCommands`' signature
+byte-identical, so the enforcement path the runners call has no injectable
+evaluator on it at all. `npm run bench:overhead` uses it for a genuine
+policy-off baseline: **~2.9 µs per command**, flat from 5 to 50 commands per run.
+
+One honest limit on that number. The A/B runs at the **scan layer**, not the
+whole-runner layer: `codex-runner.ts` imports `scanCommands` as an ESM binding
+and calls it with three arguments, so nothing outside that module can substitute
+an evaluator. Wiring the seam *through* the runner would need a second change
+inside `codex-runner.ts`, which was not part of what was approved. The harness
+therefore measures the delta exactly at the seam, measures the run wall-clock
+with policy on, and reports the ratio — a sound decomposition, and labelled as
+one rather than presented as a whole-runner A/B.
+
+**Original note, kept for the record:**
 `guardedEvaluate(command, context, evaluate = evaluateCommand)` already takes an
 injectable third parameter. `scanCommands(commands, startIndex, context)` does
 not — it calls `guardedEvaluate(command, context)` and gets the default. Adding
@@ -598,10 +613,10 @@ that inference into a measurement.
 | # | Task | Notes |
 | --- | --- | --- |
 | 1.1 | **DONE** — `npm run bench` (`bench/runner.ts` + `bench-cli.ts`) | One entry point, two outputs: human report and `bench-results.json`. Every proportion carries numerator, denominator and a 95% Wilson interval; zero-numerator results carry the exact one-sided bound instead. Provenance: git SHA + dirty flag, node, OS/arch, CPU, corpus size, policy hash, timestamp. Composes the existing harnesses and measures nothing itself |
-| 1.2 | Overhead harness: policy-on vs policy-off wall-clock per simulated Run, using the existing fake-Codex stand-in | The genuinely missing measurement (§2.3). Gates it produces follow the slope-not-absolute decision in §2.3 — portable assertions everywhere, absolutes only on pinned-platform CI |
+| 1.2 | **DONE** — `npm run bench:overhead` (`bench/overhead.ts`) | Three costs reported separately, never collapsed: decision (~2.9 µs/command, paired A/B via `scanCommandsWith`), store write (cross-referenced to 1.6, not re-measured), and **teardown — the containment race window**. The A/B is at the scan layer, not whole-runner; see the note in §2.3. Spawn-dependent sections self-skip on Windows and say so |
 | 1.3 | Container-teardown latency measurement (also the containment race window) | Safety number as well as perf |
 | 1.4 | **DONE** — `npm run redteam`; moved `apps/server/redteam.ts` → `src/redteam.ts` | At the old path it sat outside the tsconfig `include`, so it was never type-checked, and had no script, so nothing ran it. Now both. Split into library + CLI to match the `policy-eval` / `security-benchmark` convention; the 56 probes are unchanged. **The CLI exits non-zero on an undocumented bypass** — the original always exited 0, so a total regression would have gone unnoticed. 55/56 denied; the one miss (`b64-eval`) is the documented base64 residual |
-| 1.5 | Benchmark result baseline file + regression gate with tolerance bands | **Gate on p50 only**; report CV alongside as a smell, never as a threshold (§2.2). Tolerance bands follow §2.3's slope-not-absolute decision |
+| 1.5 | **DONE (gate); baseline file outstanding** — `bench/regression.test.ts` | Two tiers. Everywhere: linearity r² ≥ 0.98 and slope < 25 µs/event, loose enough that a loaded laptop cannot trip it, tight enough to catch the store going quadratic. Pinned CI only (`CI=true` **and** linux): slope < 8, decision p50 < 15 µs, headroom sized from the measured 15–28% CV. p50 only. The baseline-file-with-history part needs CI runs this branch does not have yet |
 | 1.6 | **DONE — measure and document only.** `npm run bench:store` (`bench/store-overhead.ts`), reporting the curve, the fixed/marginal decomposition and r² | Constructs its own `JsonStore` in a temp dir: **no edit to `store.ts`, no owner sign-off**. Runs in CI on both platforms, so the curve is no longer a laptop figure. The fix is scoped in §2.3 and deliberately **not built** |
 
 ### Phase 2 — E2E and demo, mostly unblocked
