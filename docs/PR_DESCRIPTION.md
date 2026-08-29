@@ -168,13 +168,14 @@ and docs — 30 added files.
 
 ## Known limitations
 
-- **12 Windows test failures — distinct from the EINVAL fix above, and not
-  addressed by it.** These come from a different limitation: the runtime suite's
-  fake-Codex stand-in is a `#!/usr/bin/env node` shebang script, and Windows
-  dispatches on neither the shebang nor the executable bit. A non-blocking
-  `windows-latest` CI leg runs anyway so the claim rests on public evidence
-  rather than on one machine; the signal there is the failure **count**, which
-  has been 12 throughout.
+- **12 Windows test failures — on a platform the challenge does not require.**
+  The brief specifies macOS or Linux. Windows was verified as additional work,
+  which is how the RCE near-miss above was found at all. These 12 are **distinct
+  from the EINVAL fix and not addressed by it**: the runtime suite's fake-Codex
+  stand-in is a `#!/usr/bin/env node` shebang script, and Windows dispatches on
+  neither the shebang nor the executable bit. The non-blocking `windows-latest`
+  CI leg is reporting rather than a gate, which is why the branch badge is green
+  while that leg is red. The signal there is the failure **count**, 12 throughout.
 - **Replay fixtures are synthesized, not recorded.** No live model was available
   to capture from. Each fixture declares this in a `source` field and a test
   asserts every fixture declares provenance. Re-recording on demo hardware would

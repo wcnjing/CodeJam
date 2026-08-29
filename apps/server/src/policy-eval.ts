@@ -175,7 +175,7 @@ export function evaluatePolicy(
  * comparable to the hand-rolled timer this replaced — which took a single hrtime
  * pair around every call and so never paid per-call timer overhead — while still
  * producing a distribution rather than a single number. See `bench/metrics.ts`
- * for why per-call timing of a ~2 µs function needs care on a 100 ns clock.
+ * for why per-call timing of a ~5 µs function needs care on a 100 ns clock.
  */
 function measureThroughput(corpus: CorpusEntry[]): number {
   if (corpus.length === 0) return 0;

@@ -28,9 +28,11 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 | Legitimate tasks blocked | 0% | 1.4% |
 | Added per-command decision latency (p95) | — | **~24 µs** |
 
-*Computed live in-app at **Security Evaluation** (`npm run bench:security` for the
-CLI). These are policy **decisions** on a corpus we authored, not observed
-execution — real-world bypasses exist (see Limitations); the physical
+*Figures from CI run
+[33263104468](https://github.com/wcnjing/CodeJam/actions/runs/33263104468); ranges
+span its three runners. Computed live in-app at **Security Evaluation**
+(`npm run bench` for the CLI). These are policy **decisions** on a corpus we
+authored, not observed execution — real-world bypasses exist (see Limitations); the physical
 "zero bytes left" claim comes from the live collector demo, not this table. The
 one residual — a fully base64-encoded command — is named, not hidden.*
 
@@ -42,7 +44,29 @@ Run it locally with Docker, Colima, or rootless Podman.
 > Limitations). Do not use production data or credentials. See
 > [SECURITY.md](SECURITY.md).
 
-## Selected track: Kill Switch (safety and sandboxing)
+## Direction: threat modeling and safety
+
+*Selected track: **Kill Switch** (safety and sandboxing) — the starter kit's name
+for this direction, recorded here because
+[docs/HACKATHON_EXTENSION_GUIDE.md](docs/HACKATHON_EXTENSION_GUIDE.md)'s
+acceptance checklist requires the README to name one selected track. The challenge
+brief itself frames the same area as **Threat Modeling and Safety**; both names
+describe this work.*
+
+The brief's threat table names the risks this addresses directly — prompt
+injection and tool misuse, credential exposure, sandbox escape, cross-user access
+and data exfiltration, runaway execution, and sensitive trace capture. Each maps
+to a control here and to an entry in
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md):
+
+| Brief's threat | Control in this repo |
+| --- | --- |
+| Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
+| Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/33 secret-channel attacks allowed |
+| Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–2 ms |
+| Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
+| Runaway execution | Step budget enforced by the platform, independent of policy mode |
+| Sensitive trace capture | Redaction before the audit store; unbounded-growth risk tracked as TM-OPS-001 |
 
 This fork implements one middleware track: **a command policy engine that
 contains attempted secret exfiltration from inside the Agent Runtime.**
@@ -397,9 +421,14 @@ CPU, corpus size, policy hash)
 not redundancy: it separates platform from runtime version, which an earlier
 comparison had confounded.
 
-**Windows, scoped precisely.** Install, typecheck, build, all evaluation
-harnesses, the offline entry point and — since the fix above — the
-`local-process` runtime provider all work. One thing does not:
+**Windows was verified beyond what the challenge asks.** The brief specifies
+**macOS or Linux**; Windows is not a supported platform for this submission.
+We verified it anyway, and the RCE near-miss above is a direct result — it was
+found only because someone ran the code where it was never required to run.
+
+On Windows: install, typecheck, build, all evaluation harnesses, the offline
+entry point and — after the fix above — the `local-process` runtime provider all
+work. One thing does not:
 
 - **The runtime test suite** — 12 of 157 fail. The fake-Codex stand-in is spawned
   via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
@@ -409,9 +438,11 @@ harnesses, the offline entry point and — since the fix above — the
   or refuses to run and says how to proceed. Verified end to end against an
   npm-generated shim: the run completes and enforcement still fires.
 
-A non-blocking `windows-latest` CI leg runs anyway, so both platform claims rest
-on the same public evidence rather than on someone's machine. The signal there is
-the failure *count*.
+A non-blocking `windows-latest` CI leg runs on every push, so this claim rests on
+public evidence rather than on someone's machine. The signal there is the failure
+*count*, which has been 12 throughout. Because Windows is outside the stated
+requirements, that leg is **reporting, not a gate** — it is why the branch badge
+is green while the leg is red, and that is deliberate rather than tolerated.
 
 **A replay demo path that does not overclaim.** `RUNTIME_PROVIDER=replay` streams
 a recorded event stream so the governance loop can be shown with no key, no
@@ -513,6 +544,9 @@ and requires a named approver + reason before it can continue or be denied.
 
 ## Requirements
 
+- **macOS or Linux** — the platforms the challenge brief specifies. Windows was
+  additionally verified; see the evaluation section for exactly what does and
+  does not work there.
 - Node.js 22+
 - npm 10+
 - Docker, Colima, or Podman

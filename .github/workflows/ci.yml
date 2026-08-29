@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # BLOCKING. This is the job that closes the "78/78 on POSIX" claim in
+  # BLOCKING. This is the job that closes the POSIX pass claim in
   # docs/EVALUATION_RELIABILITY_PLAN.md §0, which until now rested on a single
   # run on one contributor's machine.
   #

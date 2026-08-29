@@ -14,8 +14,8 @@
  *
  * - **Resolution is platform-dependent.** `process.hrtime.bigint()` ticks at
  *   100 ns on Windows — 68% of back-to-back reads return a 0 ns delta and the
- *   rest return exactly 100 ns — against roughly 55 ns on Linux. Timing a ~2 µs
- *   call on a 100 ns clock quantises every sample into ~5% steps. `batchSize`
+ *   rest return exactly 100 ns — against roughly 55 ns on Linux. Timing a ~5 µs
+ *   call on a 100 ns clock quantises every sample into ~2% steps. `batchSize`
  *   exists for that: it times a run of calls together and divides back out,
  *   trading tail detail for resolution.
  * - **`max` is not a statistic.** It is a single sample, so it reports whichever

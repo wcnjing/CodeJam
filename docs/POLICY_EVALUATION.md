@@ -46,7 +46,13 @@ interpreter egress, and evasion). By provenance: 50 entries came from external
 review, 17 are internal red-team regressions written during a review of the
 rules, and the remaining 104 were authored alongside the detector.
 
-## Results at the time of writing
+## Results
+
+Figures below are from CI run
+[33263104468](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), not
+from a local run. The mean eval cost is a range because it spans that run's three
+runners; an earlier version of this document said `~1.0 us/command`, taken on one
+machine with an unwarmed timer.
 
 ```
   Core detection      100.0%   (89/89 direct attacks caught)
@@ -189,7 +195,8 @@ the model being willing to misbehave.
 
 **10. Red-teaming: 17 bypasses, then a false positive, then a live false positive.**
 
-A 56-probe adversarial sweep (`apps/server/redteam.ts`) against the
+A 56-probe adversarial sweep (`apps/server/src/redteam.ts`, `npm run redteam`)
+against the
 `/bin/bash -lc` wrapper form found **17 bypasses** in the first pass — almost all
 sharing one root cause: they hid the *tool name* (`c""url`, `$X`, printf-built
 binaries, base64-decoded commands) while still naming the destination. The fix
