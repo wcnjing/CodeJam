@@ -114,9 +114,11 @@ export interface EvaluationSuiteSummary {
     maliciousBlocked: number;
     maliciousEscaped: number;
     benignBlocked: number;
+    detectedMalicious: number;
     attackBlockRate: number;
     escapeRate: number;
     falsePositiveRate: number;
+    detectionRate: number;
   };
   byTag: Record<string, { total: number; passed: number; rate: number }>;
 }

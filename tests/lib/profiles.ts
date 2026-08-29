@@ -87,6 +87,12 @@ export interface ProfileOutcome {
   terminated: boolean | null;
   /** Redaction layer: the sanitised command. */
   redactedCommand: string | null;
+  /**
+   * Detection, independent of enforcement. Set by the monitor profile: it can
+   * detect a violation (true) while deliberately NOT blocking it (decision
+   * stays "allow"). Other profiles fall back to `decision === "deny"`.
+   */
+  detected: boolean | null;
   note?: string | undefined;
 }
 
@@ -138,6 +144,7 @@ const ALLOW_OUTCOME = {
   leak: null,
   terminated: null,
   redactedCommand: null,
+  detected: null,
 };
 
 /**
@@ -169,6 +176,7 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         leak: null,
         terminated: null,
         redactedCommand: null,
+        detected: true,
       };
     },
   };
@@ -199,6 +207,7 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         leak,
         terminated: null,
         redactedCommand: redacted,
+        detected: null,
         note: leak ? undefined : "no protected material survived redaction",
       };
     },
@@ -227,6 +236,7 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         leak: null,
         terminated,
         redactedCommand: null,
+        detected: null,
         note: "budget is a counter, not a classifier; behavioral tests drive the real CodexRunner",
       };
     },
@@ -248,36 +258,53 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         leak: null,
         terminated: null,
         redactedCommand: null,
+        detected: true,
       };
     },
   };
 
-  /** 6. Monitor mode: observe and record, never terminate. */
+  /**
+   * 6. Monitor mode: visibility only. The policy runs in shadow mode — a
+   * violation is DETECTED (and would be recorded) but the run is NOT blocked,
+   * so the decision stays "allow". The suite therefore scores monitor on
+   * detection coverage, never on a block rate.
+   */
   const MONITOR_PROFILE: MiddlewareProfile = {
     id: "monitor",
     name: "Monitor mode",
-    describe: "POLICY_ENFORCEMENT=monitor records denials without killing the run (shadow mode).",
+    describe: "POLICY_ENFORCEMENT=monitor detects and records violations without terminating the run (shadow mode).",
     evaluate: (case_, env) => {
       const violation = deps.guardedEvaluate(finalCommand(case_), env.policyContext);
-      if (!violation) return { ...ALLOW_OUTCOME };
+      if (!violation) {
+        return { ...ALLOW_OUTCOME, detected: false };
+      }
       return {
-        decision: "deny",
+        decision: "allow",
         rule: violation.rule,
         detail: violation.detail + " (observed, run continues in monitor mode)",
         reviewable: null,
         leak: null,
         terminated: false,
         redactedCommand: null,
+        detected: true,
       };
     },
   };
 
-  /** 7. Config invariants: reviewable-rule set, fail-closed evaluation. */
+  /**
+   * 7. Config invariants: reviewable-rule set, config rejection, fail-closed.
+   *
+   * Every invariant runs unconditionally — a change in the reviewable set is
+   * reported loudly (no exact-list dependency that silently skips the checks
+   * below it), and the config-rejection and fail-closed invariants are always
+   * exercised so a regression cannot hide behind an early return.
+   */
   const CONFIG_PROFILE: MiddlewareProfile = {
     id: "config",
     name: "Config invariants",
-    describe: "REVIEWABLE_RULES is code-fixed; POLICY_REVIEW_RULES rejects non-reviewable rules; guardedEvaluate fails closed.",
+    describe: "reviewable rules sane; POLICY_REVIEW_RULES rejects non-reviewable rules; guardedEvaluate fails closed.",
     evaluate: (case_, env) => {
+      const problems: string[] = [];
       const outcome: ProfileOutcome = {
         decision: "n/a",
         rule: null,
@@ -286,11 +313,31 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         leak: null,
         terminated: null,
         redactedCommand: null,
+        detected: null,
       };
-      // Invariant 1: only network-egress-denied may ever be human-approved.
-      if (deps.REVIEWABLE_RULES.join(",") !== "network-egress-denied") {
-        outcome.detail = "REVIEWABLE_RULES changed: " + deps.REVIEWABLE_RULES.join(",");
-        return outcome;
+      // Invariant 1: the required reviewable rule must stay reviewable, and
+      // rules that must NEVER be human-approved must not appear in the set.
+      // Unknown extra rules are flagged loudly rather than matched against an
+      // exact serialized list, so a reviewable-set expansion is surfaced.
+      const requiredReviewable = "network-egress-denied";
+      const neverReviewable = [
+        "secret-exfiltration",
+        "protected-secret-access",
+        "policy-error",
+        "encoded-exfiltration",
+      ];
+      if (!deps.REVIEWABLE_RULES.includes(requiredReviewable)) {
+        problems.push("required reviewable rule missing: " + requiredReviewable);
+      }
+      for (const rule of neverReviewable) {
+        if (deps.REVIEWABLE_RULES.includes(rule)) {
+          problems.push("forbidden rule is reviewable: " + rule);
+        }
+      }
+      for (const rule of deps.REVIEWABLE_RULES) {
+        if (rule !== requiredReviewable && !neverReviewable.includes(rule)) {
+          problems.push("unexpected reviewable rule: " + rule);
+        }
       }
       // Invariant 2: a config naming a secret rule must be rejected loudly.
       try {
@@ -300,8 +347,7 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
           ARK_MODEL: "ep-test",
           POLICY_REVIEW_RULES: "network-egress-denied,protected-secret-access",
         });
-        outcome.detail = "loadConfig accepted a secret-access review rule";
-        return outcome;
+        problems.push("loadConfig accepted a secret-access review rule");
       } catch {
         /* expected: rejected */
       }
@@ -310,10 +356,13 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         throw new Error("boom");
       });
       if (!failClosed || failClosed.rule !== "policy-error") {
-        outcome.detail = "fail-closed did not deny";
-        return outcome;
+        problems.push("fail-closed did not deny");
       }
-      outcome.note = "reviewable set fixed, forbidden config rejected, evaluation fails closed";
+      outcome.detail = problems.length > 0 ? problems.join("; ") : null;
+      outcome.note =
+        problems.length === 0
+          ? "reviewable set sane, forbidden config rejected, evaluation fails closed"
+          : undefined;
       return outcome;
     },
   };
@@ -338,6 +387,7 @@ export function createProfiles(deps: EvaluationDeps): readonly MiddlewareProfile
         leak,
         terminated: false,
         redactedCommand: redacted,
+        detected: true,
       };
     },
   };

@@ -33,7 +33,7 @@ export interface CaseFile {
   cases: TestCase[];
 }
 
-function assertCase(value: unknown, file: string): TestCase {
+function assertCase(value: unknown, file: string, fileSource: string): TestCase {
   if (typeof value !== "object" || value === null) {
     throw new Error(file + ": case is not an object");
   }
@@ -65,7 +65,9 @@ function assertCase(value: unknown, file: string): TestCase {
     tags: c["tags"] as string[],
     category: c["category"] as string,
     wrapped: typeof c["wrapped"] === "boolean" ? (c["wrapped"] as boolean) : undefined,
-    source: typeof c["source"] === "string" ? (c["source"] as string) : undefined,
+    // Per-entry provenance when present, else the file-level source — so every
+    // case stays auditable to its origin.
+    source: typeof c["source"] === "string" ? (c["source"] as string) : fileSource,
     threatIds: Array.isArray(c["threatIds"]) ? (c["threatIds"] as string[]) : undefined,
     middleware: Array.isArray(c["middleware"]) ? (c["middleware"] as string[]) : undefined,
     note: typeof c["note"] === "string" ? (c["note"] as string) : undefined,
@@ -88,7 +90,8 @@ export async function loadCaseFiles(): Promise<CaseFile[]> {
       continue;
     }
     const parsed = raw as { source?: unknown; cases: unknown[] };
-    const cases = parsed.cases.map((entry) => assertCase(entry, file));
+    const fileSource = typeof parsed.source === "string" ? parsed.source : file;
+    const cases = parsed.cases.map((entry) => assertCase(entry, file, fileSource));
     const seen = new Set<string>();
     for (const c of cases) {
       if (seen.has(c.id)) throw new Error(file + ": duplicate case id " + c.id);

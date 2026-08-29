@@ -247,6 +247,7 @@ function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
             <tr>
               <th>Middleware layer</th>
               <th>Block rate</th>
+              <th>Detection</th>
               <th>Escape rate</th>
               <th>False positives</th>
               <th>Cases</th>
@@ -257,6 +258,9 @@ function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
               <tr key={s.profileId} className={s.profileId === "all" ? "pentest-total" : undefined}>
                 <td>{s.profileName}</td>
                 <td>{pct(s.totals.attackBlockRate)}</td>
+                <td className={s.totals.detectionRate === 1 ? "pentest-good" : undefined}>
+                  {pct(s.totals.detectionRate)}
+                </td>
                 <td className={s.totals.escapeRate === 0 ? "pentest-good" : undefined}>
                   {pct(s.totals.escapeRate)}
                 </td>

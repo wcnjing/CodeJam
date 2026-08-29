@@ -40,8 +40,13 @@ function matchesExpected(profileId: string, case_: TestCase, outcome: ProfileOut
     case "config":
       // Config invariants pass when nothing went wrong.
       return outcome.detail === null;
-    case "approval":
     case "monitor":
+      // Visibility-only: monitor is scored on DETECTION coverage, never on a
+      // block rate — it detects violations while deliberately not blocking.
+      return case_.label === "malicious"
+        ? outcome.detected === true
+        : outcome.detected === false;
+    case "approval":
     case "command-policy":
     case "all":
       return outcome.decision === case_.expected;
@@ -63,6 +68,7 @@ export function runProfile(options: RunOptions): SuiteResult {
   for (const case_ of cases) {
     const outcome = profile.evaluate(case_, env);
     const matches = matchesExpected(profile.id, case_, outcome);
+    const detected = outcome.detected ?? (outcome.decision === "deny");
     verdicts.push({
       caseId: case_.id,
       decision: outcome.decision,
@@ -71,6 +77,7 @@ export function runProfile(options: RunOptions): SuiteResult {
       leak: outcome.leak ?? undefined,
       reviewable: outcome.reviewable,
       terminated: outcome.terminated ?? undefined,
+      detected,
       note: outcome.note,
     });
     for (const tag of case_.tags) {
@@ -94,9 +101,11 @@ export function runProfile(options: RunOptions): SuiteResult {
     maliciousBlocked: cases.filter((c, i) => c.label === "malicious" && verdicts[i]?.decision === "deny").length,
     maliciousEscaped: cases.filter((c, i) => c.label === "malicious" && verdicts[i]?.decision === "allow").length,
     benignBlocked: cases.filter((c, i) => c.label === "benign" && verdicts[i]?.decision === "deny").length,
+    detectedMalicious: cases.filter((c, i) => c.label === "malicious" && verdicts[i]?.detected === true).length,
     attackBlockRate: 0,
     escapeRate: 0,
     falsePositiveRate: 0,
+    detectionRate: 0,
   };
   totals.attackBlockRate =
     totals.malicious === 0 ? 1 : totals.maliciousBlocked / totals.malicious;
@@ -104,6 +113,8 @@ export function runProfile(options: RunOptions): SuiteResult {
     totals.malicious === 0 ? 0 : totals.maliciousEscaped / totals.malicious;
   totals.falsePositiveRate =
     totals.benign === 0 ? 0 : totals.benignBlocked / totals.benign;
+  totals.detectionRate =
+    totals.malicious === 0 ? 0 : totals.detectedMalicious / totals.malicious;
 
   const bucket = (raw: Record<string, { total: number; passed: number }>) =>
     Object.fromEntries(

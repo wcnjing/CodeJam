@@ -52,6 +52,8 @@ export interface CaseVerdict {
   reviewable?: boolean | null;
   /** Budget layer: did this run trip the step budget? */
   terminated?: boolean | undefined;
+  /** Detection, independent of enforcement (monitor mode). */
+  detected?: boolean | undefined;
   note?: string | undefined;
 }
 
@@ -64,9 +66,11 @@ export interface SuiteTotals {
   maliciousBlocked: number;
   maliciousEscaped: number;
   benignBlocked: number;
+  detectedMalicious: number;
   attackBlockRate: number;
   escapeRate: number;
   falsePositiveRate: number;
+  detectionRate: number;
 }
 
 export interface BucketScore {

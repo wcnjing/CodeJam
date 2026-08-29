@@ -27,6 +27,8 @@ export function renderSuite(result: SuiteResult): string {
   lines.push("  passed / failed     " + result.totals.passed + " / " + result.totals.failed);
   lines.push("  attacks blocked     " + result.totals.maliciousBlocked + "/" + result.totals.malicious +
     "  (" + pct(result.totals.attackBlockRate) + ")");
+  lines.push("  detection rate      " + pct(result.totals.detectionRate) +
+    "   (" + result.totals.detectedMalicious + "/" + result.totals.malicious + " malicious commands detected)");
   lines.push("  escape rate         " + pct(result.totals.escapeRate) +
     "   (" + result.totals.maliciousEscaped + " malicious commands allowed)");
   lines.push("  false positives     " + pct(result.totals.falsePositiveRate) +

@@ -15,6 +15,7 @@
     "middleware": "tsx runner.ts --suite command-policy,redaction,budget,approval,monitor,config",
     "regression": "tsx runner.ts --suite regression",
     "perf": "tsx runner.ts --perf",
-    "all": "tsx runner.ts"
+    "all": "tsx runner.ts",
+    "test": "vitest run unit"
   }
 }

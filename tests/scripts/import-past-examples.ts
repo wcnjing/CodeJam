@@ -120,9 +120,22 @@ function toCase(entry: CorpusEntry, id: string, source: string): TestCase {
   };
 }
 
+/**
+ * Per-entry provenance: which canonical-corpus entry (with category and
+ * holdout flag) or which red-team probe produced this case, so every result
+ * stays auditable to its origin rather than a shared file-level string.
+ */
+function corpusProvenance(index: number, entry: CorpusEntry): string {
+  return (
+    "policy-corpus#" + index +
+    " [" + entry.category + "]" +
+    (entry.holdout ? " (holdout)" : "")
+  );
+}
+
 export async function main(): Promise<void> {
   const cases: TestCase[] = POLICY_CORPUS.map((entry, index) =>
-    toCase(entry, "past-" + index, "policy-corpus (apps/server/src/evaluation/policy-corpus.ts)"),
+    toCase(entry, "past-" + index, corpusProvenance(index, entry)),
   );
 
   // Red-team probes (apps/server/redteam.ts), all wrapped in the live form.
@@ -194,7 +207,7 @@ export async function main(): Promise<void> {
       category: "rt-" + name.split("-")[0],
       note: "red-team probe: " + name,
     };
-    cases.push(toCase(entry, "rt-" + name, "redteam.ts (apps/server/redteam.ts)"));
+    cases.push(toCase(entry, "rt-" + name, "redteam.ts probe: " + name));
   }
 
   // Sanity: all tags must be known, ids unique.
@@ -207,11 +220,31 @@ export async function main(): Promise<void> {
     }
   }
 
-  const out = { source: "past-examples: policy-corpus + redteam.ts probes", cases };
+  // Versioned snapshot: the catalog is frozen at import time from the
+  // canonical corpus, and the header records exactly which corpus state it
+  // was generated from so staleness is explicit, not silent.
+  let revision = "unknown";
+  try {
+    const { execFileSync } = await import("node:child_process");
+    revision = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: path.resolve(HERE, "..", ".."),
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    /* no git */
+  }
+  const out = {
+    source: "past-examples: canonical policy-corpus + redteam.ts probes (per-entry provenance)",
+    generatedAt: new Date().toISOString(),
+    revision,
+    corpusSize: POLICY_CORPUS.length,
+    caseCounts: { policyCorpus: POLICY_CORPUS.length, redteamProbes: REDTEAM_PROBES.length },
+    cases,
+  };
   await mkdir(CASES_DIR, { recursive: true });
   const file = path.join(CASES_DIR, "past-examples.json");
   await writeFile(file, JSON.stringify(out, null, 2) + "\n", "utf8");
-  console.log("wrote " + file + " (" + cases.length + " cases)");
+  console.log("wrote " + file + " (" + cases.length + " cases, corpus " + POLICY_CORPUS.length + ")");
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
