@@ -1,0 +1,98 @@
+{
+  "$comment": [
+    "Performance baseline for task 1.5, derived from real CI history rather than",
+    "from one machine. Every sample below came from a green ubuntu-latest job on",
+    "this branch, across Node 22 and Node 24.",
+    "",
+    "These thresholds are valid ONLY on a pinned platform. The same metrics on an",
+    "unpinned machine are noise: the store slope measured CV 10.8% here against",
+    "27.6% on a contributor laptop, which is the evidence behind the",
+    "absolutes-only-on-pinned-CI rule in plan section 2.3.",
+    "",
+    "Bands are sized from the observed spread, not picked. Raising one requires",
+    "saying why in the commit; lowering one as the code improves is the point."
+  ],
+  "platform": "ubuntu-latest, Node 22 and 24",
+  "sourceRuns": [
+    "33233262616",
+    "33233411679",
+    "33233893571",
+    "33233997276",
+    "33248900544",
+    "33249503557",
+    "33249740996",
+    "33250228877",
+    "33251479460",
+    "33252728827",
+    "33252825198"
+  ],
+  "generatedAt": "2026-08-29",
+  "metrics": {
+    "storeWriteMarginalMicrosecondsPerEvent": {
+      "description": "Least-squares slope of JsonStore.mutate() p50 against stored policy events.",
+      "samples": [
+        2.8,
+        2.6,
+        2.79,
+        2.41,
+        1.93,
+        2.01,
+        2.47,
+        2.67,
+        2.05,
+        2.53,
+        2.81,
+        2.64,
+        2.48,
+        2.35,
+        2.61,
+        2.43,
+        2.73,
+        2.06,
+        2.2,
+        2.48,
+        2.61,
+        2.64
+      ],
+      "statistics": {
+        "n": 22,
+        "min": 1.93,
+        "max": 2.81,
+        "mean": 2.468,
+        "stdDev": 0.267,
+        "coefficientOfVariation": 0.108
+      },
+      "threshold": 4.0,
+      "thresholdRationale": "1.42x the highest of 22 observations (2.81) and ~5.7 standard deviations above the mean. Tightened from the initial 8.0, which was set with no history."
+    },
+    "policyDecisionP50Microseconds": {
+      "description": "evaluateCommand p50 over the corpus, median of repeated sweeps.",
+      "samples": [
+        4.77,
+        3.91,
+        7.75,
+        4.77,
+        6.57,
+        5.3,
+        6.63,
+        5.35,
+        6.86,
+        3.1,
+        5.4,
+        4.5,
+        6.87,
+        5.62
+      ],
+      "statistics": {
+        "n": 14,
+        "min": 3.1,
+        "max": 7.75,
+        "mean": 5.529,
+        "stdDev": 1.29,
+        "coefficientOfVariation": 0.2334
+      },
+      "threshold": 12.0,
+      "thresholdRationale": "1.55x the highest of 14 observations (7.75), ~5 standard deviations above the mean. Kept comparatively loose because this metric's CV is 23.3% even on pinned CI. Tightened from 15.0."
+    }
+  }
+}

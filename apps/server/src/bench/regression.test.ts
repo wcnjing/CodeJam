@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import baseline from "./baseline.json" with { type: "json" };
 import { timeSweep } from "./metrics.js";
 import { policyWorkload } from "./policy-workload.js";
 import { measureStoreOverhead } from "./store-overhead.js";
@@ -91,13 +92,13 @@ describe("absolutes, pinned CI only", () => {
   it.skipIf(!PINNED_CI)(
     "keeps the store-write marginal cost near its CI baseline",
     async () => {
-      // Measured on ubuntu-latest: 2.15 (node 22 in-bench), 2.60 and 2.80
-      // (node 24 / node 22 standalone). Threshold 8 us/event is ~3x the highest,
-      // sized from the 22.9%-27.6% CV observed for timing metrics. Tighten this
-      // once several CI runs have been collected - a baseline file is the
-      // follow-up, and it needs history this branch does not have yet.
+      // Threshold now comes from `baseline.json`, derived from 22 samples across
+      // 11 green CI runs on this branch rather than from one machine's guess.
+      // Observed 1.93-2.81 us/event, CV 10.8%; the band sits at 4.0, which is
+      // 1.42x the highest sample and ~5.7 sd above the mean.
+      const metric = baseline.metrics.storeWriteMarginalMicrosecondsPerEvent;
       const { slope } = await slopeAndLinearity();
-      expect(slope).toBeLessThan(8);
+      expect(slope, metric.thresholdRationale).toBeLessThan(metric.threshold);
     },
     60_000,
   );
@@ -112,9 +113,27 @@ describe("absolutes, pinned CI only", () => {
         () => timeSweep(policyWorkload(), { warmupRounds: 200, rounds: 1000 }).p50,
       ),
     );
-    // CI measured 4.77 us p50; 15 us is ~3x. Same reasoning as above.
-    expect(p50).toBeLessThan(15);
+    // Also from `baseline.json`: 14 samples, 3.10-7.75 us, CV 23.3%. The band is
+    // 12.0 - deliberately looser relative to its spread than the slope's,
+    // because this metric is the noisier of the two even on pinned CI.
+    const metric = baseline.metrics.policyDecisionP50Microseconds;
+    expect(p50, metric.thresholdRationale).toBeLessThan(metric.threshold);
   }, 60_000);
+});
+
+describe("the baseline file itself", () => {
+  it("carries the history its thresholds were derived from", () => {
+    // A threshold with no recorded provenance is a number someone can quietly
+    // raise. These assertions make the derivation part of the build.
+    for (const [name, metric] of Object.entries(baseline.metrics)) {
+      expect(metric.samples.length, name).toBeGreaterThanOrEqual(10);
+      expect(metric.thresholdRationale.length, name).toBeGreaterThan(40);
+      // The band must actually sit above everything observed, or it is not a
+      // band, it is a coin flip.
+      expect(metric.threshold, name).toBeGreaterThan(Math.max(...metric.samples));
+    }
+    expect(baseline.sourceRuns.length).toBeGreaterThanOrEqual(10);
+  });
 });
 
 describe("the gate's own assumptions", () => {

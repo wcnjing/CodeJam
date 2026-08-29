@@ -174,6 +174,12 @@ these rather than rebuild them.
     investigating when it jumps, but a CI gate on a number that moves 5x between
     invocations is a gate on the runner, not the code. Recorded here so it is not
     proposed again.
+  - **Pinning the platform is what makes a band possible — now measured, not
+    argued.** The store-write slope over 22 samples from 11 green ubuntu CI runs
+    has **CV 10.8%** (1.93–2.81 µs/event). The same metric on a contributor laptop
+    measured **CV 27.6%** (2.25–4.66). Two and a half times the spread, same code.
+    That gap is the entire justification for §2.3's "absolutes only on pinned CI"
+    rule, and it is why `baseline.json` states the platform it is valid for.
 - **The measurement is aimed at the cheap layer.** All three timers measure
   `evaluateCommand()` in isolation — single-digit microseconds. The dominant
   per-decision cost in the *running* system is the store write that records the
@@ -715,7 +721,7 @@ sequencing, not convenience:
 
 | # | Task | Notes |
 | --- | --- | --- |
-| 0.1 | `PolicyProbe` adapter seam (new file, my lane) | The de-risking move for §3 |
+| 0.1 | **DROPPED — obsoleted, not abandoned** | The de-risking move for §3 was an adapter interface to insulate the harnesses from a policy-engine rewrite. `scanCommandsWith` (diff A, agreed with Person 1) delivered the seam that mattered directly in `command-policy.ts`, and `bench/policy-workload.ts` already centralises the one place harnesses touch the engine. A second indirection layer over a seam that now exists would be cost without benefit. **This is a closed decision, not unfinished work** |
 | 0.2 | **DONE** — `.github/workflows/ci.yml`: `npm ci` → `typecheck` → `test` → `build` → `eval:policy` → `bench:security` → `threat-model` | Blocking job on ubuntu-latest × Node 22 and 24. Separate **non-blocking** windows-latest leg, `continue-on-error: true`, named so its state is unambiguous — see the note below. `redteam` deliberately not wired in; that is 1.4 |
 | 0.3 | **DONE** — `scripts/preflight.mjs`, `npm run doctor` | Node/npm versions, container engine, ports 3000/5173/9099, Ark key shape, `ARK_MODEL`, and a live `ARK_BASE_URL` probe with the BytePlus-vs-Volcengine 401 hint. Exits non-zero on hard failure; warnings never block |
 | 0.4 | **DONE** — `npm run demo:offline` + README front door | `npm ci` → `npm run demo:offline` is now the documented zero-config path. The clean-install *timing* rehearsal on a fresh clone is still outstanding |
@@ -751,7 +757,7 @@ that inference into a measurement.
 | 1.2 | **DONE** — `npm run bench:overhead` (`bench/overhead.ts`) | Three costs reported separately, never collapsed: decision (~2.9 µs/command, paired A/B via `scanCommandsWith`), store write (cross-referenced to 1.6, not re-measured), and **teardown — the containment race window**. The A/B is at the scan layer, not whole-runner; see the note in §2.3. Spawn-dependent sections self-skip on Windows and say so |
 | 1.3 | Container-teardown latency measurement (also the containment race window) | Safety number as well as perf |
 | 1.4 | **DONE** — `npm run redteam`; moved `apps/server/redteam.ts` → `src/redteam.ts` | At the old path it sat outside the tsconfig `include`, so it was never type-checked, and had no script, so nothing ran it. Now both. Split into library + CLI to match the `policy-eval` / `security-benchmark` convention; the 56 probes are unchanged. **The CLI exits non-zero on an undocumented bypass** — the original always exited 0, so a total regression would have gone unnoticed. 55/56 denied; the one miss (`b64-eval`) is the documented base64 residual |
-| 1.5 | **DONE (gate); baseline file outstanding** — `bench/regression.test.ts` | Two tiers. Everywhere: linearity r² ≥ 0.98 and slope < 25 µs/event, loose enough that a loaded laptop cannot trip it, tight enough to catch the store going quadratic. Pinned CI only (`CI=true` **and** linux): slope < 8, decision p50 < 15 µs, headroom sized from the measured 15–28% CV. p50 only. The baseline-file-with-history part needs CI runs this branch does not have yet |
+| 1.5 | **DONE** — `bench/regression.test.ts` + `bench/baseline.json` | Two tiers. Everywhere: linearity r² ≥ 0.98 and slope < 25 µs/event, loose enough that a loaded laptop cannot trip it, tight enough to catch the store going quadratic. Pinned CI only (`CI=true` **and** linux): slope < 8, decision p50 < 15 µs, headroom sized from the measured 15–28% CV. p50 only. **Baseline now derived from real history**: 22 slope samples and 14 latency samples across 11 green CI runs, recorded in `baseline.json` with their provenance. Slope band tightened 8.0 → 4.0, latency 15 → 12; a test asserts every threshold names its derivation and sits above every sample it was derived from |
 | 1.7 | **DONE** — `npm run bench:generate`: generated attack bank, two tiers | 3,430 variants from a cross product, stratified reporting with CIs, plus a 24-variant token sample through the real Runtime on ubuntu. Gate fails on an undocumented bypass signature or a count above the ratchet of 14. Found the `perl` × `and-chain` bypass — see §2.4. **The ratchet is a starting point, not a target**: it records what escaped on the day the bank was built so the number cannot silently grow, and lowering it as rules improve is the goal |
 | 1.6 | **DONE — measure and document only.** `npm run bench:store` (`bench/store-overhead.ts`), reporting the curve, the fixed/marginal decomposition and r² | Constructs its own `JsonStore` in a temp dir: **no edit to `store.ts`, no owner sign-off**. Runs in CI on both platforms, so the curve is no longer a laptop figure. The fix is scoped in §2.3 and deliberately **not built** |
 
