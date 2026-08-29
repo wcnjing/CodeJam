@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml/badge.svg)](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml)
 
+<sub>The badge currently resolves from the `feat/evaluation-reliability` branch, which is where the workflow lives until it merges — it is not yet a statement about `main`. Do not over-read it before then.</sub>
+
 **The problem.** AI agents run real shell commands with real credentials and
 open networking — and today nobody can see, approve, or stop what they actually
 *do*. Prompt filters guard what you say to an agent; nothing guards what the

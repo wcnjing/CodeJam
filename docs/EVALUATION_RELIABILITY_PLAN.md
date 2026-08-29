@@ -7,26 +7,42 @@
 
 ## 0. Baseline verified on this branch
 
-Everything below was actually run, not assumed. Two environments were used, and
-they are named per row because they differ in more than one variable:
+Everything below was actually run, not assumed. The test-suite rows are no longer
+a single-machine assertion: they are **CI-verified on clean runners** —
+[run 33232530058](https://github.com/wcnjing/CodeJam/actions/runs/33232530058).
 
-- **POSIX** — Linux, Node 22.22.2
-- **Windows** — Node 24.16.0
+Environments:
+
+- **CI** — `ubuntu-latest` on Node 22 and Node 24; `windows-latest` on Node 24
+- **Local POSIX** — Linux, Node 22.22.2
+- **Local Windows** — Node 24.16.0
 
 | Check | Environment | Result |
 | --- | --- | --- |
-| `npm install` from lockfile | POSIX | 196 packages, ~5s, exit 0 |
-| `rm -rf node_modules && npm ci` | POSIX | ~6s, exit 0 |
+| `npm install` from lockfile | local POSIX | 196 packages, ~5s, exit 0 |
+| `rm -rf node_modules && npm ci` | local POSIX | ~6s, exit 0 |
 | `npm run eval:policy` | both | runs, prints scorecard |
 | `npm run bench:security` | both | runs, headline escape rate 1.4%, p50 2.3 µs / p95 4.5 µs |
-| `npm run check` | POSIX | exit 0 — **78/78 pass** across 14 test files, ~25s |
-| `npm run check` | Windows | exit 1 — **66/78 pass, 12 fail**, ~16s to first red (see below) |
+| `npm run test` | **CI ubuntu, Node 22** | exit 0 — **106/106 pass** across 16 test files, 2.77s |
+| `npm run test` | **CI ubuntu, Node 24** | exit 0 — **106/106 pass** across 16 test files, 2.04s |
+| `npm run test` | **CI windows, Node 24** | exit 1 — **94/106 pass, 12 fail** across 16 files, 3.24s |
+| `npm run check` | local Windows | exit 1 — the same 12 failures (see below) |
 
-**These two runs are not a controlled comparison:** the Node major differs (22 vs
-24) as well as the platform. The conclusion is unaffected, because both failure
-mechanisms are unambiguously platform-specific and not runtime-version-specific —
-shebang dispatch of an executable-bit script, and assertions on literal `/tmp`
-paths. Neither changes between Node 22 and Node 24 on the same OS.
+The suite has grown since this document was written: 78 tests across 14 files
+then, **106 across 16** now, after Phase 1 added `bench/metrics.test.ts` and
+`evaluation-contract.test.ts`. The figures above are the current ones. The ~25s
+local `npm run check` figure is superseded by CI's measured `npm run test` times,
+which are the ones a reader can click through and check.
+
+**The platform-vs-Node-major confound is resolved — by measurement, not
+inference.** This section previously carried a caveat: the POSIX and Windows
+baselines differed in *two* variables at once, platform and Node major, so
+attributing the failures to platform rested on reading the failure mechanisms
+rather than on evidence. The ubuntu matrix settles it — **Node 22 and Node 24
+both pass 106/106 on the same OS**, so the Node major is not the variable. And the
+Windows leg reproduced **12 failures out of 106, byte-identically to the local
+Windows run**, on a clean GitHub runner with no contributor machine involved.
+Both platform claims now rest on the same public evidence.
 
 Local repo note: this working tree was nested one directory below the remote's
 layout with no commits on `main`. It has been flattened so the tree matches
@@ -34,9 +50,9 @@ layout with no commits on `main`. It has been flattened so the tree matches
 
 ### Finding: the validation command is green on POSIX, red on Windows out of the box
 
-This is a **platform** defect, not a broken suite. On a clean Linux/macOS clone,
-`npm ci && npm run check` is exit 0 with all 78 tests passing in about 25s. On a
-clean Windows clone the same command fails: 66 pass, 12 fail, across 4 files —
+This is a **platform** defect, not a broken suite. On Linux, `npm ci && npm run
+check` is exit 0 with all 106 tests passing, on both Node 22 and Node 24. On
+Windows the same command fails: 94 pass, 12 fail, across 4 files —
 `runner-policy.test.ts` (8/8), `budget.test.ts` (2/2),
 `container-runner-policy.test.ts` (1/1) and `container-codex-runner.test.ts`
 (1/2). Two distinct POSIX-only assumptions account for all 12:

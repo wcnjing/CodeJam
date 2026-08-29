@@ -128,16 +128,26 @@ jobs:
       - name: Test (expected red — 12 POSIX-only failures)
         run: npm run test
 
+      # Everything below carries `if: always()`. Without it a failing test step
+      # aborts the job, which is what happened on the first CI run: Build and
+      # every step after it were skipped, so this leg verified typecheck and test
+      # and nothing else. The 12 test failures are known and expected; they must
+      # not also hide whether the build and the CLIs work on Windows.
+
       - name: Build
+        if: always()
         run: npm run build
 
       - name: Report — policy scorecard
+        if: always()
         run: npm run eval:policy
 
       - name: Report — security benchmark
+        if: always()
         run: npm run bench:security
 
       - name: Report — threat model coverage
+        if: always()
         run: npm run threat-model
 
       # The front door a reviewer without a key runs first. Its three
@@ -146,4 +156,5 @@ jobs:
       # should catch. Needs no ARK_API_KEY, no engine and no network, which is
       # precisely the CI runner's situation.
       - name: Zero-config front door
+        if: always()
         run: npm run demo:offline
