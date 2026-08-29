@@ -88,15 +88,31 @@ jobs:
       # a wrapper whose parts pass while it is never invoked is exactly what CI
       # should catch. Needs no ARK_API_KEY, no engine and no network, which is
       # precisely the CI runner's situation.
+      # GATE, not a report: exits non-zero on a bypass that is not a documented
+      # residual. Wired here by task 1.4, which the note removed above was
+      # waiting for.
+      - name: Adversarial probe sweep (gate)
+        run: npm run redteam
+
+      # One entry point over everything above, emitting bench-results.json with
+      # git SHA, node, OS/arch, corpus size and policy hash, and every proportion
+      # as numerator / denominator / confidence interval. Uploaded below so a
+      # number can be attributed to a build and diffed against the previous one.
+      - name: Benchmark (JSON + human report)
+        run: npm run bench
+
       - name: Zero-config front door
         run: npm run demo:offline
 
-      # DEFERRED: `npm run redteam`. redteam.ts is currently orphaned — it has no
-      # npm script and sits outside the server tsconfig's include, so there is
-      # nothing to invoke here yet. Wiring it up is task 1.4 in
-      # docs/EVALUATION_RELIABILITY_PLAN.md §5; add the step in that task, not here.
-      #
-      # NOT RUN HERE: `npm run doctor`. Preflight requires ARK_API_KEY, ARK_MODEL
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-node${{ matrix.node }}
+          path: bench-results.json
+          if-no-files-found: warn
+
+      #       # NOT RUN HERE: `npm run doctor`. Preflight requires ARK_API_KEY, ARK_MODEL
       # and a reachable model endpoint, none of which exist on a CI runner. It is
       # a developer/demo-day tool, not a build gate.
 
@@ -167,6 +183,14 @@ jobs:
       # a wrapper whose parts pass while it is never invoked is exactly what CI
       # should catch. Needs no ARK_API_KEY, no engine and no network, which is
       # precisely the CI runner's situation.
+      - name: Adversarial probe sweep (gate)
+        if: always()
+        run: npm run redteam
+
+      - name: Benchmark (JSON + human report)
+        if: always()
+        run: npm run bench
+
       - name: Zero-config front door
         if: always()
         run: npm run demo:offline

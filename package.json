@@ -24,7 +24,9 @@
     "eval:policy": "npm run eval:policy -w @launchpad/server",
     "threat-model": "npm run threat-model -w @launchpad/server",
     "bench:security": "npm run bench:security -w @launchpad/server",
-    "bench:store": "npm run bench:store -w @launchpad/server"
+    "bench:store": "npm run bench:store -w @launchpad/server",
+    "bench": "npm run bench -w @launchpad/server",
+    "redteam": "npm run redteam -w @launchpad/server"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

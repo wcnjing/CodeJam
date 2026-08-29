@@ -13,7 +13,9 @@
     "eval:policy": "tsx src/policy-eval-cli.ts",
     "threat-model": "tsx src/threat-model-cli.ts",
     "bench:security": "tsx src/security-benchmark-cli.ts",
-    "bench:store": "tsx src/bench/store-overhead-cli.ts"
+    "bench:store": "tsx src/bench/store-overhead-cli.ts",
+    "bench": "tsx src/bench/bench-cli.ts",
+    "redteam": "tsx src/redteam-cli.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",

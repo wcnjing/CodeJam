@@ -130,7 +130,7 @@ these rather than rebuild them.
 | Threat register + coverage gate | `apps/server/src/threat-model.ts`, `threat-model-cli.ts` | `@covers <id>` test tagging |
 | Runtime integration tests | `apps/server/src/runner-policy.test.ts` | Fake-Codex stand-in, real streaming + termination path |
 | Service-level tests | `agent-service.test.ts`, `approval.test.ts`, `budget.test.ts` | Blocked/held/terminated runs, recovery, scoped grants |
-| Ad-hoc red-team probes | `apps/server/redteam.ts` | Not wired to any npm script |
+| Ad-hoc red-team probes | `apps/server/src/redteam.ts` | **Now wired**: `npm run redteam`, type-checked, gated on regressions, and run in CI (task 1.4) |
 | Demo support scripts | `scripts/mock-collector.mjs`, `scripts/plant-injection.mjs`, `scripts/start-local-poc.sh` | Live demo mechanics |
 
 **Key structural fact:** every harness above calls `evaluateCommand()` from
@@ -146,7 +146,7 @@ these rather than rebuild them.
   can be diffed run-over-run or trended.
 - No run metadata (policy version, corpus version, host, node version, commit),
   so a number cannot be attributed to a build.
-- `redteam.ts` is orphaned — not in `package.json`, not in CI, not in `npm run check`.
+- ~~`redteam.ts` is orphaned~~ — **fixed by task 1.4**: moved into `src/` so it type-checks, wired to `npm run redteam`, and run in CI with a regression gate.
 
 ### 2.2 Metrics
 - **Three duplicate latency implementations**: `measureThroughput()` in
@@ -279,6 +279,21 @@ harness prints separates the two terms, because they behave differently:
 - **The linearity is not an assumption.** r² is 0.9996–1.0000 on three
   independent CI environments. Growth in stored evidence is exactly linear in
   cost — measured, on hardware nobody on this team owns.
+
+**Correction, from running it repeatedly (task 1.3).** The claim above that the
+marginal term is "portable enough to gate on" was based on five single runs in
+five environments. Running it six times on ONE machine gives a marginal term of
+2.25, 4.18, 4.07, 3.30, 4.66 and 2.53 µs/event — mean 3.50, **CV 27.6%, range
+2.07×**. The run-to-run spread on a single machine is therefore *larger* than the
+1.55× spread across five environments, which means the cross-environment figure
+was mostly measuring noise rather than platform.
+
+This does not change which term to gate on — the fixed term is worse on both
+counts. It changes what a gate needs: **a single run of the marginal term is not
+a threshold-able number on either axis.** Task 1.5 must take a median across
+repetitions with bands sized from the observed CV, exactly as §2.2 concluded for
+latency. Recorded here so the earlier, more confident sentence is not quoted on
+its own.
 
 #### Decision: store-write gates are set on the slope, not the absolute
 
@@ -582,10 +597,10 @@ that inference into a measurement.
 
 | # | Task | Notes |
 | --- | --- | --- |
-| 1.1 | Single benchmark runner entry point emitting JSON + human report, with run metadata | |
+| 1.1 | **DONE** — `npm run bench` (`bench/runner.ts` + `bench-cli.ts`) | One entry point, two outputs: human report and `bench-results.json`. Every proportion carries numerator, denominator and a 95% Wilson interval; zero-numerator results carry the exact one-sided bound instead. Provenance: git SHA + dirty flag, node, OS/arch, CPU, corpus size, policy hash, timestamp. Composes the existing harnesses and measures nothing itself |
 | 1.2 | Overhead harness: policy-on vs policy-off wall-clock per simulated Run, using the existing fake-Codex stand-in | The genuinely missing measurement (§2.3). Gates it produces follow the slope-not-absolute decision in §2.3 — portable assertions everywhere, absolutes only on pinned-platform CI |
 | 1.3 | Container-teardown latency measurement (also the containment race window) | Safety number as well as perf |
-| 1.4 | Wire `redteam.ts` into an npm script and into CI | Currently orphaned |
+| 1.4 | **DONE** — `npm run redteam`; moved `apps/server/redteam.ts` → `src/redteam.ts` | At the old path it sat outside the tsconfig `include`, so it was never type-checked, and had no script, so nothing ran it. Now both. Split into library + CLI to match the `policy-eval` / `security-benchmark` convention; the 56 probes are unchanged. **The CLI exits non-zero on an undocumented bypass** — the original always exited 0, so a total regression would have gone unnoticed. 55/56 denied; the one miss (`b64-eval`) is the documented base64 residual |
 | 1.5 | Benchmark result baseline file + regression gate with tolerance bands | **Gate on p50 only**; report CV alongside as a smell, never as a threshold (§2.2). Tolerance bands follow §2.3's slope-not-absolute decision |
 | 1.6 | **DONE — measure and document only.** `npm run bench:store` (`bench/store-overhead.ts`), reporting the curve, the fixed/marginal decomposition and r² | Constructs its own `JsonStore` in a temp dir: **no edit to `store.ts`, no owner sign-off**. Runs in CI on both platforms, so the curve is no longer a laptop figure. The fix is scoped in §2.3 and deliberately **not built** |
 
