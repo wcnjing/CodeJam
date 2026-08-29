@@ -237,9 +237,6 @@ export const REVIEWABLE_RULES: readonly string[] = [
   ...COMBINATION_POLICIES.filter((policy) => policy.reviewable).map((policy) => policy.id),
 ];
 
-/** Removed in Task 5 once evaluateCommand itself takes a real actor parameter. */
-const PLACEHOLDER_ACTOR: Actor = { agentId: "unknown", threadId: null };
-
 /**
  * Decide whether a command may run.
  *
@@ -251,6 +248,7 @@ const PLACEHOLDER_ACTOR: Actor = { agentId: "unknown", threadId: null };
  * comment).
  */
 export function evaluateCommand(
+  actor: Actor,
   command: string,
   context: PolicyContext,
 ): PolicyViolation | null {
@@ -272,7 +270,7 @@ export function evaluateCommand(
     const matching = requests
       .filter((request) => request.capability === policy.action)
       .map(toResource)
-      .filter((resource) => policy.when(resource, decisionContext, PLACEHOLDER_ACTOR));
+      .filter((resource) => policy.when(resource, decisionContext, actor));
     if (matching.length === 0) continue;
     const hosts = policy.hosts?.(matching);
     return {
@@ -386,12 +384,13 @@ export interface DetectedViolation extends PolicyViolation {
  */
 
 export function guardedEvaluate(
+  actor: Actor,
   command: string,
   context: PolicyContext,
-  evaluate: (command: string, context: PolicyContext) => PolicyViolation | null = evaluateCommand,
+  evaluate: (actor: Actor, command: string, context: PolicyContext) => PolicyViolation | null = evaluateCommand,
 ): PolicyViolation | null {
   try {
-    return evaluate(command, context);
+    return evaluate(actor, command, context);
   } catch {
     return {
       rule: "policy-error",
@@ -410,6 +409,7 @@ export function guardedEvaluate(
  */
 
 export function scanCommands(
+  actor: Actor,
   commands: readonly string[],
   startIndex: number,
   context: PolicyContext,
@@ -418,7 +418,7 @@ export function scanCommands(
   for (let index = startIndex; index < commands.length; index += 1) {
     const command = commands[index];
     if (!command) continue;
-    const violation = guardedEvaluate(command, context);
+    const violation = guardedEvaluate(actor, command, context);
     if (violation) {
       found.push({ ...violation, command: redactCommand(command, context.secretValues) });
     }
