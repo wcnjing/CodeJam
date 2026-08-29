@@ -44,6 +44,12 @@ tools × secret channels × shell wrappers, 3,430 variants) that reported one
 stratum at 95.00% against a 99.59% aggregate. Nobody had written the case; a
 hand-authored corpus cannot escape the bias of its author.
 
+The "before" column is from
+[run 33254598308](https://github.com/wcnjing/CodeJam/actions/runs/33254598308),
+the last build before the fix; "after" from the run linked at the top. Those
+"before" figures cannot appear in a post-fix run, which is why they are
+attributed separately rather than left to look unverifiable.
+
 | | before | after |
 | --- | --- | --- |
 | generated bank | 99.59% (3,416/3,430) | **100.00%** (3,430/3,430) |
