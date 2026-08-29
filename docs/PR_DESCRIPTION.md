@@ -91,11 +91,20 @@ metacharacter-laden prompt never reaches a shell.
 
 Every figure is from a CI run on a clean runner, linked so it can be checked.
 
-- **Containment window: p50 2 ms, max 2 ms** — from the denied command being
+> Worth flagging as a process finding, not just a habit: re-reading each figure
+> against the log of the run it cites caught wrong numbers **four separate
+> times**, always the same failure — a value carried forward from an earlier
+> build while the text linked a newer run. Correctness metrics are stable and
+> survive that unnoticed; timing figures move every run, so a stale one is
+> indistinguishable from a real regression. A document full of links is not the
+> same as a document full of verified links.
+
+- **Containment window: p50 1–2 ms, max 2 ms** — from the denied command being
   emitted to the Runtime process being dead. This is the README's own containment
   race, previously unquantified.
-- **Store-write cost is O(events already stored)** — 0.40 ms at zero events,
-  **13.12 ms at 5,000**, against ~5.1 µs for a policy decision. Growth is linear
+- **Store-write cost is O(events already stored)** — 0.29–0.99 ms at zero
+  events, **10.05–17.87 ms at 5,000**, against 4.15–5.05 µs for a policy
+  decision. Growth is linear
   at **r² 0.9984–0.9999 across three independent runners**, so it is a property of
   the code, not of a machine. *The fix is scoped and deliberately not built*: the
   two cheap options cap the log by discarding audit records, which for a project

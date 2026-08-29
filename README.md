@@ -278,19 +278,29 @@ Every figure below comes from a CI run on a clean GitHub runner, linked so it ca
 be checked rather than taken on trust. Nothing here was measured only on a
 contributor's laptop.
 
+> **The verification step is itself a finding.** Re-reading each figure against
+> the log of the run it cites has caught wrong numbers **four separate times**,
+> and every time it was the same failure: a value carried forward from an earlier
+> build while the text linked a newer run. Correctness metrics are stable, so
+> they survive that unnoticed; **timing figures move every run, so a stale one is
+> indistinguishable from a real change**. Citing a run has to mean citing the run
+> the number came from, and that is only true if someone checks. A document full
+> of links is not the same as a document full of verified links.
+
 **Containment is measured, not asserted.** From the denied command being emitted
-to the Runtime process being dead: **p50 3 ms, max 3 ms**. That window is the
+to the Runtime process being dead: **p50 1–2 ms, max 2 ms** across the run's
+two POSIX jobs. That window is the
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085), `npm run bench:overhead`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), `npm run bench:overhead`)
 
-**The middleware's real cost is not the policy decision.** A decision is ~5.5 µs.
+**The middleware's real cost is not the policy decision.** A decision is 4.15–5.05 µs.
 Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
 whole database on every call, so writing one policy event is **O(events already
-stored)** — 0.38 ms at zero events, **13.95 ms at 5,000**. Growth is exactly
-linear, r² **0.9999–1.0000** across three independent runners, so this is a
+stored)** — 0.29–0.99 ms at zero events, **10.05–17.87 ms at 5,000**. Growth is exactly
+linear, r² **0.9984–0.9999** across three independent runners, so this is a
 property of the code and not of a machine.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085), `npm run bench:store`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), `npm run bench:store`)
 
 *The fix is scoped and deliberately not built.* Three options are written up with
 trade-offs; the two cheap ones cap the log by discarding audit records. For a
@@ -340,7 +350,8 @@ including ordinary in-workspace scripts — behind any of five separator forms.*
 single-tool finding would have produced a single-tool fix.
 
 **And the first fix passed every hand-written probe while regressing core
-detection to 93.8%.** Every corpus entry is wrapped in `bash -lc "…"`, which puts
+detection to 93.8%** — measured locally, never committed, so it appears in no
+CI run. Every corpus entry is wrapped in `bash -lc "…"`, which puts
 the payload inside one quoted string so the line never splits and the leading
 `echo` still shields it. Hand-testing missed that; the labeled corpus caught it.
 That is the clearest argument in this project for why both exist: **generation
@@ -382,7 +393,7 @@ overstating residual risk is the only safe direction for a security number.
 CPU, corpus size, policy hash)
 
 **CI: 157 tests green on ubuntu-latest, Node 22 and 24.**
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085)) The matrix is
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468)) The matrix is
 not redundancy: it separates platform from runtime version, which an earlier
 comparison had confounded.
 
@@ -417,8 +428,8 @@ in ~3 s on any platform.
 
 **Replay does not prove containment**, and says so at the end of every run.
 Containment is proven separately, spawning for real: **24/24 generated attacks
-terminated the Runtime**, teardown p50 2–3 ms
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085)). A parity
+terminated the Runtime**, teardown p50 1–2 ms, max 5 ms
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468)). A parity
 test feeds the same recorded bytes to the real runner and to the replay runner
 and requires the same outcome, so the two cannot drift. Fixtures are labelled
 **synthesized, not recorded** — no live model was available to capture from, and

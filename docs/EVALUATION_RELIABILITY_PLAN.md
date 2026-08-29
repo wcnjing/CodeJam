@@ -93,6 +93,25 @@ enforcement suite. That is a materially smaller claim than "Windows is broken",
 and it sharpens the §4 ask: the fix really is confined to two of Persons 1–2's
 test files, not to the project's Windows support in general.
 
+#### Citing a run only means something if someone checks
+
+Every figure in the README and the PR description links the CI run it came from.
+Re-reading each one against that run's log caught wrong numbers **four separate
+times**, and every time the same failure: a value carried forward from an earlier
+build while the text linked a newer run.
+
+The reason it recurs is worth stating. Correctness metrics — recall, escape rate,
+leak counts — are stable across runs, so a stale one still looks right and is
+never questioned. **Timing figures move every run**, so a stale one is
+indistinguishable from a real regression, and the only way to tell is to open the
+log. The failure is not carelessness about numbers; it is that the two kinds of
+number need different handling and look identical on the page.
+
+Practical consequence for anyone maintaining these documents: when a figure and a
+run link are updated, they must be updated **together**, and the figure re-read
+from that run's log rather than assumed to have followed. Four for four, the
+assumption was wrong.
+
 #### The security metrics are platform-independent
 
 `bench:security` produced **identical headline numbers on Windows and Linux**:
