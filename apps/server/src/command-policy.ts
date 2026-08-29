@@ -55,10 +55,10 @@ export type Decision =
  * tuple: "this action on this resource, in this context, is denied because...".
  *
  * `detail`/`hosts` take every resource that matched `when` in one command, not
- * just the one passed to `decide()` — real orchestration (Task 3) aggregates
- * across all of a command's resources for the matching policy before building
- * the final violation, so "Command contacts non-allowlisted host(s): a, b, c"
- * keeps listing every host, not just the first.
+ * just the one passed to `decide()`: `evaluateCommand` calls `decide()` per
+ * resource and then hands the matching policy all of the resources it claimed,
+ * so "Command contacts non-allowlisted host(s): a, b, c" keeps listing every
+ * host, not just the first.
  */
 export interface Policy {
   id: string;
@@ -250,10 +250,10 @@ export const REVIEWABLE_RULES: readonly string[] = [
  *
  * Returns the first matching rule, or null when every capability the command
  * requests is permitted in this context. Combination policies are checked
- * first (secret-exfiltration's priority today), then per-tuple policies in
- * POLICY_RULES order — for each, every resource in the command that matches
- * is aggregated into one violation, not just the first (see Policy's doc
- * comment).
+ * first (secret-exfiltration's priority today), then every resource is settled
+ * by `decide()` and the denials are reported in POLICY_RULES order — for each
+ * rule, every resource in the command it claimed is aggregated into one
+ * violation, not just the first (see Policy's doc comment).
  */
 export function evaluateCommand(
   actor: Actor,
@@ -274,12 +274,24 @@ export function evaluateCommand(
     };
   }
 
+  // decide() settles each resource on its own; this loop only groups the
+  // denials by the rule that produced them, so a rule's detail/hosts still see
+  // every resource it matched rather than the first. Going through the
+  // primitive is the point: the thing under test is the thing enforced.
+  const denied = new Map<string, Resource[]>();
+  for (const request of requests) {
+    const resource = toResource(request);
+    const decision = decide(actor, request.capability, resource, decisionContext, POLICY_RULES);
+    if (decision.effect === "ALLOW") continue;
+    denied.set(decision.rule, [...(denied.get(decision.rule) ?? []), resource]);
+  }
+
   for (const policy of POLICY_RULES) {
-    const matching = requests
-      .filter((request) => request.capability === policy.action)
-      .map(toResource)
-      .filter((resource) => policy.when(resource, decisionContext, actor));
-    if (matching.length === 0) continue;
+    const matching = denied.get(policy.id);
+    if (!matching) continue;
+    // Not decide()'s own `hosts`: that is per-resource, and it is present even
+    // when empty. Aggregated here across every resource the rule matched, and
+    // omitted when there is no scoped exception to offer.
     const hosts = policy.hosts?.(matching);
     return {
       rule: policy.id,

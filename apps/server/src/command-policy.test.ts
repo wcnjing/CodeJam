@@ -476,6 +476,21 @@ describe("command policy", () => {
     expect(violation?.detail).toContain("evil-two.example");
   });
 
+  it("omits hosts entirely for a rule that offers no scoped exception", () => {
+    // `hosts` is the operator's "approve just this destination" affordance, so
+    // it must be absent — not an empty array — on a rule where no such
+    // exception exists. decide() emits `hosts` whenever a policy defines the
+    // aggregator at all, which is exactly the drift that made evaluateCommand
+    // reimplement the match loop instead of calling it.
+    const write = evaluateCommand(actor, "echo pwned > /etc/cron.d/backdoor", context);
+    expect(write?.rule).toBe("file-write-outside-workspace");
+    expect(write).not.toHaveProperty("hosts");
+
+    const secret = evaluateCommand(actor, "cat .secrets/customer-db-url.txt", context);
+    expect(secret?.rule).toBe("protected-secret-access");
+    expect(secret).not.toHaveProperty("hosts");
+  });
+
   // @covers TM-AGENT-007
   it("denies a FILE_WRITE outside the workspace, never as a reviewable rule", () => {
     const outsideWorkspace = { ...context, writeRoots: ["/workspace"] };
