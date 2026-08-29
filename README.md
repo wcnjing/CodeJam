@@ -279,18 +279,18 @@ be checked rather than taken on trust. Nothing here was measured only on a
 contributor's laptop.
 
 **Containment is measured, not asserted.** From the denied command being emitted
-to the Runtime process being dead: **p50 2 ms, max 3 ms**. That window is the
+to the Runtime process being dead: **p50 3 ms, max 3 ms**. That window is the
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), `npm run bench:overhead`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085), `npm run bench:overhead`)
 
-**The middleware's real cost is not the policy decision.** A decision is ~4.7 µs.
+**The middleware's real cost is not the policy decision.** A decision is ~5.5 µs.
 Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
 whole database on every call, so writing one policy event is **O(events already
-stored)** — 0.35 ms at zero events, **13.61 ms at 5,000**. Growth is exactly
-linear, r² **0.9998–1.0000** across three independent runners, so this is a
+stored)** — 0.38 ms at zero events, **13.95 ms at 5,000**. Growth is exactly
+linear, r² **0.9999–1.0000** across three independent runners, so this is a
 property of the code and not of a machine.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), `npm run bench:store`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085), `npm run bench:store`)
 
 *The fix is scoped and deliberately not built.* Three options are written up with
 trade-offs; the two cheap ones cap the log by discarding audit records. For a
@@ -347,10 +347,14 @@ That is the clearest argument in this project for why both exist: **generation
 finds the cases nobody thought to write, and the curated corpus catches fixes
 that only work on the cases you did.**
 
+The "before" column is from run
+[33254598308](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), the
+last build before the fix; "after" from the linked run above.
+
 | | before | after |
 | --- | --- | --- |
 | `and-chain` wrapper | 95.92% (329/343) | **100%** (343/343) |
-| `perl` tool | 95.00% (266/280) | **100%** (280/280) |
+| `perl` tool | 95.00% (266/280) | **100%** — the report lists only strata below 100%, and that list is now empty |
 | generated bank, aggregate | 99.59% (3,416/3,430) | **100.00%** (3,430/3,430) |
 | accepted-bypass ratchet | 14 | **0** |
 | corpus core detection | 100% (60/60) | **100%** (64/64) |
@@ -366,9 +370,9 @@ not evidence the rate is zero — 33 attempts only buy so much confidence:
 | metric | counts | interval |
 | --- | --- | --- |
 | Secret leaks | 0/33 | **≤ 8.7%** (95%, one-sided exact) |
-| Unsafe-action escape rate | 1/69 | 1.4%, 95% CI 0.3–7.8% |
-| Attack block rate | 68/69 | 98.6%, 95% CI 92.2–99.7% |
-| False positive rate | 1/45 | 2.2%, 95% CI 0.4–11.6% |
+| Unsafe-action escape rate | 1/73 | 1.4%, 95% CI 0.2–7.4% |
+| Attack block rate | 72/73 | 98.6%, 95% CI 92.6–99.8% |
+| False positive rate | 1/47 | 2.1%, 95% CI 0.4–11.1% |
 | Red-team probe denials | 55/56 | 98.2%, 95% CI 90.6–99.7% |
 
 Zero-numerator results use the exact Clopper-Pearson bound rather than Wilson,
@@ -377,8 +381,8 @@ overstating residual risk is the only safe direction for a security number.
 (`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
 CPU, corpus size, policy hash)
 
-**CI: 148 tests green on ubuntu-latest, Node 22 and 24.**
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308)) The matrix is
+**CI: 157 tests green on ubuntu-latest, Node 22 and 24.**
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085)) The matrix is
 not redundancy: it separates platform from runtime version, which an earlier
 comparison had confounded.
 
@@ -386,7 +390,7 @@ comparison had confounded.
 harnesses, the offline entry point and — since the fix above — the
 `local-process` runtime provider all work. One thing does not:
 
-- **The runtime test suite** — 12 of 148 fail. The fake-Codex stand-in is spawned
+- **The runtime test suite** — 12 of 157 fail. The fake-Codex stand-in is spawned
   via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
   neither, so every spawn throws `EFTYPE`.
 - ~~**The `local-process` runtime provider**~~ — **fixed**, see the RCE
@@ -414,7 +418,7 @@ in ~3 s on any platform.
 **Replay does not prove containment**, and says so at the end of every run.
 Containment is proven separately, spawning for real: **24/24 generated attacks
 terminated the Runtime**, teardown p50 2–3 ms
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308)). A parity
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33262943085)). A parity
 test feeds the same recorded bytes to the real runner and to the replay runner
 and requires the same outcome, so the two cannot drift. Fixtures are labelled
 **synthesized, not recorded** — no live model was available to capture from, and
