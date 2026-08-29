@@ -87,7 +87,7 @@ describe("capabilities on the decision", () => {
     for (const { rule, statement } of statements) {
       expect(rule, statement).toBeTruthy();
       // Every rule speaks in capability vocabulary, not shell syntax.
-      expect(statement).toMatch(/NETWORK_EGRESS|SECRET_READ/);
+      expect(statement).toMatch(/NETWORK_EGRESS|SECRET_READ|FILE_WRITE/);
     }
   });
 });

@@ -3,6 +3,7 @@ import {
   decide,
   evaluateCommand,
   guardedEvaluate,
+  isReviewableRule,
   policyContextFrom,
   type Actor,
   type Decision,
@@ -11,7 +12,7 @@ import {
   type Resource,
 } from "./command-policy.js";
 
-const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
+const context = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], "/workspace");
 
 describe("decide()", () => {
   const actor: Actor = { agentId: "agent-1", threadId: null };
@@ -419,6 +420,36 @@ describe("command policy", () => {
 
   it("ignores empty input", () => {
     expect(evaluateCommand("   ", context)).toBeNull();
+  });
+
+  it("lists every non-allowlisted host in one command, not just the first", () => {
+    // Locks in the aggregation behavior described in the plan's Global
+    // Constraints: Policy.detail/hosts take every matching resource, not one.
+    const violation = evaluateCommand(
+      "curl https://evil-one.example https://evil-two.example",
+      context,
+    );
+    expect(violation?.rule).toBe("network-egress-denied");
+    expect(violation?.hosts).toEqual(
+      expect.arrayContaining(["evil-one.example", "evil-two.example"]),
+    );
+    expect(violation?.detail).toContain("evil-one.example");
+    expect(violation?.detail).toContain("evil-two.example");
+  });
+
+  it("denies a FILE_WRITE outside the workspace, never as a reviewable rule", () => {
+    const outsideWorkspace = { ...context, workspaceRoot: "/workspace" };
+    const violation = evaluateCommand("echo pwned > /etc/cron.d/backdoor", outsideWorkspace);
+    expect(violation?.rule).toBe("file-write-outside-workspace");
+    expect(violation?.detail).toContain("/etc/cron.d/backdoor");
+    expect(isReviewableRule("file-write-outside-workspace")).toBe(false);
+  });
+
+  it("allows a FILE_WRITE inside the workspace", () => {
+    const insideWorkspace = { ...context, workspaceRoot: "/workspace" };
+    expect(
+      evaluateCommand("echo 'export const x = 1;' > src/x.ts", insideWorkspace),
+    ).toBeNull();
   });
 });
 
