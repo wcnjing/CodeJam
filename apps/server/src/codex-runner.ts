@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
 import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
+import { resolveCodexBinary } from "./codex-binary.js";
 import { policyContextFrom, scanCommands, type DetectedViolation } from "./command-policy.js";
 import type {
   AgentRunner,
@@ -148,7 +149,8 @@ export class CodexRunner implements AgentRunner {
 
   async isAvailable(): Promise<boolean> {
     try {
-      await execFileAsync(this.config.codexBin, ["--version"], {
+      const binary = resolveCodexBinary(this.config.codexBin);
+      await execFileAsync(binary.command, [...binary.prefixArgs, "--version"], {
         timeout: 5_000,
         env: this.childEnvironment(),
       });
@@ -175,7 +177,12 @@ export class CodexRunner implements AgentRunner {
     }
 
     const args = buildCodexArgs(request, this.config.codexSandboxMode);
-    const child = spawn(this.config.codexBin, args, {
+    // Resolve to something spawnable WITHOUT a shell. On Windows a global npm
+    // install yields a .cmd shim that Node will not spawn, and a shell is not an
+    // option here: `args` contains the HTTP message body, so a shell would make
+    // a message into host command execution. See codex-binary.ts.
+    const binary = resolveCodexBinary(this.config.codexBin);
+    const child = spawn(binary.command, [...binary.prefixArgs, ...args], {
       cwd: request.workspacePath,
       env: this.childEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
