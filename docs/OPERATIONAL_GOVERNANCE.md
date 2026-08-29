@@ -25,10 +25,17 @@ Not every denial is reviewable. Only the egress rules — `network-egress-denied
 (a named tool reaching a host outside the allowlist) and
 `network-egress-denied-implicit` (the same destination, with no recognised
 tool naming it) — reach a legitimate need often enough (a package registry) to
-be held for a human. `secret-exfiltration` and `protected-secret-access` are
-**always hard-denied and never subject to approval**, so no operator can be
-socially-engineered or fatigued into waving through the theft of a protected
-secret. The reviewable set is `POLICY_REVIEW_RULES`, defaulting to egress only.
+be held for a human. `secret-exfiltration`, `protected-secret-access` and
+`file-write-outside-workspace` are **always hard-denied and never subject to
+approval**, so no operator can be socially-engineered or fatigued into waving
+through the theft of a protected secret or a write past the sandbox boundary.
+The reviewable set is `POLICY_REVIEW_RULES`, defaulting to egress only.
+
+That third rule is why the container runner declares `/tmp` and `/var/tmp` as
+write roots alongside `/workspace`: its container is `--rm` with two bind mounts,
+so a scratch write there escapes nothing, and a rule with no appeal path must not
+kill an ordinary run over `git diff > /tmp/patch.diff`. The host-process runner,
+where `/tmp` is the real host `/tmp`, declares only the workspace path.
 
 The granted exception is **scoped to the exact hosts named and consumed by a
 single run** — proven live: after an approval let one task reach the npm
@@ -48,4 +55,12 @@ a standing allowlist change.
    plug an identity provider in exactly here (the "Bouncer" track this project
    did not take).
 4. **Hard-blocked runs have no appeal.** Only held (reviewable) runs can be
-   reconsidered; a `secret-exfiltration` block is final by design.
+   reconsidered; a `secret-exfiltration`, `protected-secret-access` or
+   `file-write-outside-workspace` block is final by design.
+5. **The write boundary is enforced by tool name, not destination.**
+   `file-write-outside-workspace` is a governance claim (no operator may approve
+   it) resting on a detector that inspects only redirects and
+   `cp`/`mv`/`tee`/`rm`/`mkdir`; `touch`, `dd`, `sed -i`, `install`, `ln`,
+   `chmod` and interpreter writes are not seen. The authority limit is real; its
+   coverage is first-pass. Recorded as unreduced residual likelihood on
+   TM-AGENT-007 rather than as a solved control.
