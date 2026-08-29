@@ -50,6 +50,7 @@ describe("command policy quality gates", () => {
   it("exercises every policy rule at least once", () => {
     // If a rule stops firing across the whole corpus it is dead code or broken.
     expect(Object.keys(result.ruleCounts).sort()).toEqual([
+      "encoded-exfiltration",
       "network-egress-denied",
       "protected-secret-access",
       "secret-exfiltration",

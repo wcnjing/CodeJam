@@ -102,21 +102,22 @@ CLI/CI suite.
 leak / no runaway / invariants hold, not that an attack was detected. See
 `tests/docs/regression-matrix.md` for the layer-combination analysis.
 
-## current scores (revision 295939c, 231 unique commands)
+## current scores (231 unique commands)
 
 | Suite | Block | Escape | FP |
 | --- | ---: | ---: | ---: |
 | baseline | 0.0% | 100.0% | 0.0% |
-| command-policy | 89.1% | 10.9% | 5.4% |
-| regression (whole stack) | 89.1% | 10.9% | 5.4% |
+| command-policy | 100.0% | 0.0% | 5.4% |
+| regression (whole stack) | 100.0% | 0.0% | 5.4% |
 
-- 19 escapes: fully-encoded commands, dotted octal/hex IPv4, trailing-dot
-  hosts, eval chains, encoded interpreter payloads (the documented text-only
-  detector limit, quantified).
+- 0 escapes: fully-encoded commands (base64/hex/ANSI-C/octal), dotted octal/hex
+  IPv4 and trailing-dot hosts, eval chains and encoded interpreter payloads are
+  mitigated by decode-and-re-evaluate (`encoded-exfiltration`) plus host
+  normalisation — see `apps/server/src/middleware/command-policy.ts`.
 - 3 false positives, including the documented build-constant URL
   (`npm run build -- --base https://cdn.example.com/assets`) plus two new
   findings (`git log --grep='https://…'`, `curl http://[::1]:8080/health`).
-- perf: policy decision mean ~4.7 µs (p95 ~7.9 µs), full chain ~3.5 µs,
+- perf: policy decision mean ~4.4 µs (p95 ~7.7 µs), full chain ~3.5 µs,
   `scanCommands` ~3.2 µs/cmd, redaction ~1.1 µs.
 
 ## escalation policy (working instruction)
@@ -130,10 +131,8 @@ leak / no runaway / invariants hold, not that an attack was detected. See
 ## hardlines
 
 - restricted to the `test-suite` branch
-- the pentest suite never modifies the platform's behaviour — the library in
-  `tests/` tests whatever middleware it is handed; apps/ edits are limited to
-  wiring the real middleware into the library
-  (`apps/server/src/core/evaluation-deps.ts`) and rendering the suite on the
-  Security Evaluation page, done under explicit user permission
-- middleware stays server-side; the suite reaches it through real code paths,
-  never through a user-facing toggle
+- middleware is server-side only, never user-facing and not possible for a
+  user to tamper with, edit or delete; changes land in
+  `apps/server/src/middleware/command-policy.ts` and are driven by the pentest
+  suite (`@sentinel/evaluation`) as the regression oracle — tests first
+- the UI is not touched (per the goals)

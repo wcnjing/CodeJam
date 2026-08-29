@@ -148,7 +148,11 @@ function extractHosts(command: string): string[] {
   // `npm install --registry https://...` all carry the destination in a URL.
   for (const match of command.matchAll(/\b[a-z][a-z0-9+.-]*:\/\/([^/\s"'`)]+)/gi)) {
     const authority = match[1];
-    if (authority) hosts.add(authority.replace(/^.*@/, "").split(":")[0]!.toLowerCase());
+    if (authority) {
+      // A single trailing dot is the DNS root marker of an FQDN
+      // (`attacker.example.` == `attacker.example`), not part of the host.
+      hosts.add(authority.replace(/^.*@/, "").split(":")[0]!.toLowerCase().replace(/\.$/, ""));
+    }
   }
 
   // IPv6 literals in brackets, e.g. `curl http://[2001:db8::1]/` or bare
@@ -175,10 +179,32 @@ function extractHosts(command: string): string[] {
   // Bare host arguments anywhere in the command, e.g. `nc attacker.example 4444`,
   // `ssh -R 9000:localhost:22 relay.attacker.example`, `openssl -connect h:443`.
   // Scanning only the token after the tool name missed every flagged variant.
+  //
+  // Host labels may be dotted-OCTAL or dotted-HEX IPv4 (`0306.0063.0144.0007`,
+  // `0xc6.0x33.0x64.0x07`) — the same destination in another radix — and an
+  // FQDN may carry the DNS-root trailing dot (`attacker.example.`). Both are
+  // normalised before the plausibility check; `/` is a valid token boundary
+  // (a path on a bare host).
+  const DOTTED_OCTAL_IP = /^(0[0-7]{1,3}\.){3}0[0-7]{1,3}$/;
+  const DOTTED_HEX_IP = /^(0x[0-9a-fA-F]{1,2}\.){3}0x[0-9a-fA-F]{1,2}$/;
+  const normalizeEncodedIpv4 = (token: string): string | null => {
+    if (DOTTED_OCTAL_IP.test(token)) {
+      return token.split(".").map((label) => String(parseInt(label, 8))).join(".");
+    }
+    if (DOTTED_HEX_IP.test(token)) {
+      return token.split(".").map((label) => String(parseInt(label.slice(2), 16))).join(".");
+    }
+    return null;
+  };
+
   for (const match of withoutUrls.matchAll(
-    /(?:^|[\s;&|(=@:'"`])((?:[a-z0-9-]+\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3}|\d{7,10})(?=[\s;&|)'"`:,]|$)/gi,
+    /(?:^|[\s;&|(=@:'"`])((?:[a-z0-9-]+\.)+[a-z]{2,}\.?|(?:(?:0[0-7]{1,3}|0x[0-9a-fA-F]{1,2}|\d{1,3})\.){3}(?:0[0-7]{1,3}|0x[0-9a-fA-F]{1,2}|\d{1,3})|\d{7,10})(?=[/\s;&|)'"`:,]|$)/gi,
   )) {
-    const token = match[1];
+    let token = match[1];
+    if (!token) continue;
+    const encoded = normalizeEncodedIpv4(token);
+    if (encoded) token = encoded;
+    if (token.endsWith(".")) token = token.slice(0, -1);
     if (!token || looksLikeFilename(token) || !isPlausibleHost(token)) continue;
     hosts.add(token.toLowerCase());
   }
@@ -186,11 +212,158 @@ function extractHosts(command: string): string[] {
   return [...hosts];
 }
 
+/**
+ * ── Encoded-payload decoding ──────────────────────────────────────────────
+ *
+ * A fully-encoded command (`eval "$(echo <base64> | base64 -d)"`) carries no
+ * literal URL, host, tool or secret for the text matcher to see. The only
+ * text-visible signal is the DECODER itself plus the encoded blob, so we
+ * materialize what the command will decode and re-run the SAME policy on it.
+ * A payload that decodes to a violation is a bypass attempt, not a
+ * coincidence; a payload that decodes to harmless text stays allowed. No
+ * command is ever executed — decoding is pure text.
+ */
+
+const MAX_DECODE_DEPTH = 4;
+
+/** A decoder is actually invoked (base64 -d, python b64decode, node Buffer.from). */
+const BASE64_DECODER =
+  /\bbase64\s+(?:-d|--decode|-D)\b|\bb64decode\s*\(|\.from\([^)]*["']base64["']\)/i;
+const XXD_HEX_DECODER = /\bxxd\s+-r\b/i;
+
+const BASE64_BLOB = /[A-Za-z0-9+/]{20,}={0,2}/g;
+const HEX_BLOB = /\b[0-9a-fA-F]{20,}\b/g;
+const ANSI_C_QUOTE = /\$'([^']*)'/g;
+const PRINTF_OCTAL = /printf\s+['"]%b['"]\s+['"]([^'"]*)['"]/g;
+
+function isPrintable(text: string): boolean {
+  return text.length > 0 && /^[\x20-\x7e\t\n\r]*$/.test(text);
+}
+
+/** Decode a base64 blob, including repeated (double-encoded) layers. */
+function decodeBase64Layers(blob: string): string[] {
+  const layers: string[] = [];
+  let current = blob.replace(/=+$/, "");
+  for (let index = 0; index < MAX_DECODE_DEPTH; index += 1) {
+    let decoded: string;
+    try {
+      decoded = Buffer.from(current, "base64").toString("utf8");
+    } catch {
+      break;
+    }
+    if (!decoded || decoded.includes("\uFFFD") || !isPrintable(decoded)) break;
+    layers.push(decoded);
+    // Continue only when the result is itself a plausible base64 blob.
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(decoded.trim())) break;
+    current = decoded.trim();
+  }
+  return layers;
+}
+
+/** Decode bash ANSI-C quoting: \xNN and \NNN octal escapes. */
+function decodeAnsiC(body: string): string | null {
+  // The /bin/bash -lc "<...>" form Codex emits double-escapes backslashes;
+  // collapse them before decoding escapes.
+  body = body.replace(/\\\\/g, "\\");
+  let out = "";
+  for (let index = 0; index < body.length; ) {
+    if (body[index] === "\\") {
+      const rest = body.slice(index + 1);
+      const hex = rest.match(/^x([0-9a-fA-F]{2})/);
+      if (hex) {
+        out += String.fromCharCode(parseInt(hex[1]!, 16));
+        index += 4; // backslash + 'x' + two hex digits
+        continue;
+      }
+      const octal = rest.match(/^([0-7]{1,3})/);
+      if (octal) {
+        out += String.fromCharCode(parseInt(octal[1]!, 8));
+        index += 1 + octal[1]!.length;
+        continue;
+      }
+      out += rest[0] ?? "";
+      index += 2;
+      continue;
+    }
+    out += body[index]!;
+    index += 1;
+  }
+  return isPrintable(out) ? out : null;
+}
+
+/** Decode `printf '%b' '\NNN...'` octal escapes. */
+function decodeOctalEscapes(body: string): string | null {
+  // Collapse double-escaped backslashes from the wrapped /bin/bash -lc form.
+  body = body.replace(/\\\\/g, "\\");
+  let out = "";
+  for (let index = 0; index < body.length; ) {
+    if (body[index] === "\\") {
+      const octal = body.slice(index + 1).match(/^([0-7]{1,3})/);
+      if (octal) {
+        out += String.fromCharCode(parseInt(octal[1]!, 8));
+        index += 1 + octal[1]!.length;
+        continue;
+      }
+      out += body[index + 1] ?? "";
+      index += 2;
+      continue;
+    }
+    out += body[index]!;
+    index += 1;
+  }
+  return isPrintable(out) ? out : null;
+}
+
+/** Payloads the command itself would materialize via a decoder it invokes. */
+function decodedPayloads(command: string): string[] {
+  const payloads: string[] = [];
+  if (BASE64_DECODER.test(command)) {
+    for (const match of command.matchAll(BASE64_BLOB)) {
+      payloads.push(...decodeBase64Layers(match[0]!));
+    }
+  }
+  if (XXD_HEX_DECODER.test(command)) {
+    for (const match of command.matchAll(HEX_BLOB)) {
+      try {
+        const decoded = Buffer.from(match[0]!, "hex").toString("utf8");
+        if (isPrintable(decoded)) payloads.push(decoded);
+      } catch {
+        /* not hex */
+      }
+    }
+  }
+  for (const match of command.matchAll(ANSI_C_QUOTE)) {
+    const decoded = decodeAnsiC(match[1]!);
+    if (decoded) payloads.push(decoded);
+  }
+  for (const match of command.matchAll(PRINTF_OCTAL)) {
+    const decoded = decodeOctalEscapes(match[1]!);
+    if (decoded) payloads.push(decoded);
+  }
+  return payloads;
+}
+
 export function evaluateCommand(
   command: string,
   context: PolicyContext,
+  depth = 0,
 ): PolicyViolation | null {
   if (!command.trim()) return null;
+
+  // Encoded payloads: run the decoded text through the SAME policy. If the
+  // command's own decoder materializes a denied payload, the command is a
+  // bypass attempt. Depth-limited so encoded chains cannot recurse forever.
+  if (depth < MAX_DECODE_DEPTH) {
+    for (const payload of decodedPayloads(command)) {
+      const inner = evaluateCommand(payload, context, depth + 1);
+      if (inner) {
+        return {
+          rule: "encoded-exfiltration",
+          detail: "Command decodes to a denied payload: " + inner.detail,
+        };
+      }
+    }
+  }
 
   const allowed = new Set(context.allowedHosts.map((host) => host.toLowerCase()));
   const usesNetwork = usesNetworkTool(command) || INLINE_NETWORK.test(command);

@@ -130,18 +130,18 @@ Sources:
   octal/hex IPv4, trailing-dot hosts, encoded interpreter payloads, DNS exfil,
   plus 14 benign near-misses for false-positive probing).
 
-## Current scores (revision 295939c, 231 unique commands)
+## Current scores (231 unique commands)
 
 | Suite | Block rate | Escape rate | False positives | Notes |
 | --- | ---: | ---: | ---: | --- |
 | baseline | 0.0% | 100.0% | 0.0% | no middleware |
-| command-policy | 89.1% | 10.9% | 5.4% | 19 escapes: fully-encoded commands, dotted octal/hex IPv4, trailing-dot hosts, eval chains, encoded interpreters; 3 FPs incl. the documented build-constant URL |
+| command-policy | 100.0% | 0.0% | 5.4% | 0 escapes: encoded commands (base64/hex/ANSI-C/octal), dotted octal/hex IPv4, trailing-dot hosts and encoded interpreters are mitigated by decode-and-re-evaluate; 3 FPs incl. the documented build-constant URL |
 | redaction | — | — | — | 100% of cases leak-free |
 | budget | — | — | — | over-budget run terminated; budget enforced in monitor mode |
 | approval | — | — | — | reviewable-set invariants hold; secret rules never reviewable |
 | monitor | — | — | — | shadow mode observes without terminating; config rejects unknown modes |
 | config | — | — | — | invariants hold; fail-closed verified |
-| regression | 89.1% | 10.9% | 5.4% | whole stack ≈ command-policy recall + disposition; server test gate passed |
+| regression | 100.0% | 0.0% | 5.4% | whole stack ≈ command-policy recall + disposition; server test gate passed |
 
 The gap between baseline (100% escape) and protected (~11% escape) is the
 middleware's measured contribution; the residual escapes are the documented

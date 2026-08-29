@@ -19,16 +19,16 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 
 | Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
-| Attacks the policy would allow | 100% | **1.4%** |
+| Attacks the policy would allow | 100% | **0%** |
 | Secret-channel attacks allowed | 33/33 | **0/33** |
 | Legitimate tasks blocked | 0% | 2.2% |
-| Added per-command decision latency (p95) | — | **~2 µs** |
+| Added per-command decision latency (p95) | — | **~8 µs** |
 
 *Computed live in-app at **Security Evaluation** (`npm run bench:security` for the
 CLI). These are policy **decisions** on a corpus we authored, not observed
 execution — real-world bypasses exist (see Limitations); the physical
-"zero bytes left" claim comes from the live collector demo, not this table. The
-one residual — a fully base64-encoded command — is named, not hidden.*
+"zero bytes left" claim comes from the live collector demo, not this table.
+Residuals are named, not hidden.*
 
 Run it locally with Docker, Colima, or rootless Podman.
 
@@ -220,9 +220,9 @@ sidebar — computed on demand from the running policy engine, so the dashboard 
 never drift from what actually enforces. It reports the **policy-predicted escape
 rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
-drops from 100% (no middleware) to 1.4% (one documented base64 residual, named
-not hidden), secret-channel attacks allowed from 33/33 to 0/33, with a p95
-decision latency of ~2 µs.
+drops from 100% (no middleware) to 0% (encoded-command bypasses are mitigated by
+decode-and-re-evaluate), secret-channel attacks allowed from 33/33 to 0/33, with
+a p95 decision latency of ~8 µs.
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
@@ -250,9 +250,14 @@ operational-controls mapping.
 
 Recorded honestly, because each one is a real gap:
 
-- **Detection is textual.** A fully encoded command
-  (`eval "$(echo <base64> | base64 -d)"`) defeats it. Only network-layer egress
-  control closes this, which was deliberately not attempted — see
+- **Detection is textual.** Fully encoded commands (`eval "$(echo <base64> |
+  base64 -d)"`) are mitigated by decode-and-re-evaluate: the policy
+  materialises what the command's own decoder would produce (base64, hex via
+  `xxd`, ANSI-C `$'\x..'`, octal `printf %b`) and runs the decoded text through
+  the same rules, so an encoded URL, host, secret or reverse shell is denied
+  exactly as if it had been written in the clear. This is still text-level —
+  only network-layer egress control is a sound boundary, which was
+  deliberately not attempted — see
   [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
 - **Containment versus prevention.** Confirmed against a live Ark endpoint:
   Codex emits `item.started` carrying the full command with `exit_code: null,
