@@ -6,6 +6,7 @@ import {
   isReviewableRule,
   policyContextFrom,
   policyStatements,
+  REVIEWABLE_RULES,
   type Actor,
   type Decision,
   type DecisionContext,
@@ -493,8 +494,10 @@ describe("command policy", () => {
 
   // @covers TM-AGENT-007
   it("denies a FILE_WRITE outside the workspace, never as a reviewable rule", () => {
-    const outsideWorkspace = { ...context, writeRoots: ["/workspace"] };
-    const violation = evaluateCommand(actor, "echo pwned > /etc/cron.d/backdoor", outsideWorkspace);
+    // The context, not the command, is what "workspace-only" names: the run
+    // may write under /workspace and nowhere else. The command is the escape.
+    const workspaceOnly = { ...context, writeRoots: ["/workspace"] };
+    const violation = evaluateCommand(actor, "echo pwned > /etc/cron.d/backdoor", workspaceOnly);
     expect(violation?.rule).toBe("file-write-outside-workspace");
     expect(violation?.detail).toContain("/etc/cron.d/backdoor");
     expect(isReviewableRule("file-write-outside-workspace")).toBe(false);
@@ -632,6 +635,15 @@ describe("command policy", () => {
       .map((entry) => entry.rule)
       .map((rule) => isReviewableRule(rule));
     expect(reviewable).toEqual([...reviewable].sort((a, b) => Number(a) - Number(b)));
+  });
+
+  it("exposes exactly two rules an operator may ever approve", () => {
+    // REVIEWABLE_RULES is derived from the policy tables' own `reviewable`
+    // flags, which is what keeps it from drifting — but it also means a stray
+    // `reviewable: true` on a new rule silently widens what an operator can
+    // wave through, with nothing in the diff that reads as a policy change.
+    // Naming the set here forces that widening to be argued for explicitly.
+    expect(REVIEWABLE_RULES).toEqual(["network-egress-denied", "network-egress-denied-implicit"]);
   });
 
   it("fails closed when no write roots are declared at all", () => {

@@ -48,11 +48,16 @@ export interface AgentRun {
 
 /** What an action would do, in the vocabulary the policy decides on. */
 export interface CapabilityRequest {
-  capability: "NETWORK_EGRESS" | "SECRET_READ";
-  /** A hostname, or the label of the protected material. */
+  capability: "NETWORK_EGRESS" | "SECRET_READ" | "FILE_WRITE";
+  /** A hostname, the label of the protected material, or a write target. */
   resource: string;
   trusted: boolean;
-  via: "network-tool" | "interpreter" | "destination-only" | "protected-material";
+  via:
+    | "network-tool"
+    | "interpreter"
+    | "destination-only"
+    | "protected-material"
+    | "file-write";
 }
 
 export interface PolicyDecision {
