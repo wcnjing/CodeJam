@@ -1,5 +1,7 @@
 # Sentinel — govern every action, not just every prompt
 
+[![CI](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml/badge.svg)](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml)
+
 **The problem.** AI agents run real shell commands with real credentials and
 open networking — and today nobody can see, approve, or stop what they actually
 *do*. Prompt filters guard what you say to an agent; nothing guards what the
@@ -231,7 +233,11 @@ commands are redacted before they are stored or displayed.
 ### Measuring it
 
 The policy engine is scored against a labeled corpus rather than a handful of
-examples, with thresholds asserted in CI:
+examples. The thresholds are asserted as tests — `policy-eval.test.ts`,
+`security-benchmark.test.ts` and `threat-model.test.ts` gate core recall, false
+positive rate, evasion recall, escape rate, secret leaks and threat coverage —
+so `npm run check` fails the build on a regression, and
+[CI](.github/workflows/ci.yml) runs it on every push:
 
 ```bash
 npm run eval:policy
@@ -344,6 +350,24 @@ and requires a named approver + reason before it can continue or be denied.
 - A Volcengine Ark API key and endpoint that supports the Responses API
 
 Codex CLI is included in the Runtime image and is not required on the host.
+
+Run `npm run doctor` to check all of the above at once, including the ports the
+demo needs and whether your key and `ARK_BASE_URL` actually agree — it exits
+non-zero and names the fix for anything that would otherwise fail after a
+multi-minute image build.
+
+### See it work without a key
+
+The evaluation harnesses need no API key, no container engine and no network:
+
+```bash
+npm ci
+npm run demo:offline
+```
+
+That runs the policy scorecard, the security benchmark and the threat-model
+coverage report end to end. It is the fastest way to check the project's claims
+before setting anything up.
 
 ## Local browser SOP
 
@@ -462,8 +486,9 @@ docker compose down
 ## Development
 
 ```bash
-npm install
+npm ci                  # lockfile-exact; `npm install` also works
 cp .env.example .env
+npm run doctor          # verify tooling, ports and credentials before starting
 npm install --global @openai/codex@0.111.0
 npm run dev
 ```

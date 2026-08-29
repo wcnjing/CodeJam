@@ -412,11 +412,32 @@ sequencing, not convenience:
 | # | Task | Notes |
 | --- | --- | --- |
 | 0.1 | `PolicyProbe` adapter seam (new file, my lane) | The de-risking move for §3 |
-| 0.2 | CI workflow: `npm ci` → `typecheck` → `test` → `build` → `eval:policy` → `bench:security` → `threat-model` | Makes the "asserted in CI" claim true; pure addition, no existing file touched. Ubuntu first; add a Windows leg once §0's failures are resolved, otherwise CI would be born red |
-| 0.3 | `scripts/preflight.mjs` — Node/npm version, container engine, free ports, `ARK_BASE_URL` reachability, `.env` sanity | Demo reliability + clean install |
-| 0.4 | Clean-install rehearsal: fresh clone → `npm ci` → zero-config eval, timed and documented | Produces the real "minimal steps" number |
+| 0.2 | **DONE** — `.github/workflows/ci.yml`: `npm ci` → `typecheck` → `test` → `build` → `eval:policy` → `bench:security` → `threat-model` | Blocking job on ubuntu-latest × Node 22 and 24. Separate **non-blocking** windows-latest leg, `continue-on-error: true`, named so its state is unambiguous — see the note below. `redteam` deliberately not wired in; that is 1.4 |
+| 0.3 | **DONE** — `scripts/preflight.mjs`, `npm run doctor` | Node/npm versions, container engine, ports 3000/5173/9099, Ark key shape, `ARK_MODEL`, and a live `ARK_BASE_URL` probe with the BytePlus-vs-Volcengine 401 hint. Exits non-zero on hard failure; warnings never block |
+| 0.4 | **DONE** — `npm run demo:offline` + README front door | `npm ci` → `npm run demo:offline` is now the documented zero-config path. The clean-install *timing* rehearsal on a fresh clone is still outstanding |
 | 0.5 | Unified metrics module: warmup, repetitions, p50/p95/**p99**, throughput, RSS/CPU delta | Replaces three duplicate timers — **ownership question, see §6** |
-| 0.6 | `npm run demo:offline` — a zero-config entry point running `eval:policy` + `bench:security` + `threat-model` with no Ark key and no container engine | The front door §2.4 says is missing. All three CLIs already run clean with no `.env` and no credentials; what is absent is a single command that presents them as the way in. **Not the same thing as 2.3** — see below |
+| 0.6 | **DONE** — folded into 0.4. `npm run demo:offline` runs `eval:policy` + `bench:security` + `threat-model` with no Ark key and no container engine | Verified exit 0 with `ARK_API_KEY`, `ARK_MODEL` and `ARK_BASE_URL` all unset and no engine running. **Still not the same thing as 2.3** — see below |
+
+#### Why the Windows CI leg is non-blocking rather than absent
+
+The original plan for 0.2 said "Ubuntu first; add a Windows leg once §0's
+failures are resolved, otherwise CI would be born red". That was the wrong call,
+and the reason is §0 itself: the Windows figures there were as much a
+single-machine assertion as the POSIX ones were. Deferring the leg would have
+left one platform claim verifiable and the other not.
+
+`continue-on-error: true` resolves it — both platforms run on every push, the
+branch badge stays green, and the 12 known failures are visible rather than
+asserted. The job name states the expectation outright, so a reader does not have
+to guess whether red means broken. **The signal worth watching is the failure
+COUNT**: a change either means a new POSIX-only assumption was introduced, or one
+was fixed.
+
+The ubuntu matrix runs **Node 22 and 24** for a related reason. §0 records that
+the POSIX and Windows baselines differed in two variables at once — platform and
+Node major — so attributing the failures to platform was an inference, however
+well supported by the mechanisms. Passing on both Node majors on one OS turns
+that inference into a measurement.
 
 ### Phase 1 — after Phase 0, still unblocked
 

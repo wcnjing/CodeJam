@@ -1,0 +1,133 @@
+name: CI
+
+# Makes the README's "thresholds asserted in CI" true.
+#
+# The numeric gates already live in vitest — policy-eval.test.ts,
+# security-benchmark.test.ts and threat-model.test.ts assert core recall, false
+# positive rate, evasion recall, escape rate, secret leaks and threat coverage,
+# and `npm run test` runs them. What was missing was a machine that runs it on
+# every push. That is all this file adds; it introduces no new thresholds.
+#
+# The eval CLIs run after the gates as reporting output. They print the scorecard
+# for a human to read in the job log; they are not a second set of thresholds to
+# keep in sync with the first.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # BLOCKING. This is the job that closes the "78/78 on POSIX" claim in
+  # docs/EVALUATION_RELIABILITY_PLAN.md §0, which until now rested on a single
+  # run on one contributor's machine.
+  #
+  # The node 22/24 matrix is not redundancy. §0 records that the POSIX and
+  # Windows baselines differed in TWO variables — platform and Node major — so
+  # the attribution of the failures to platform was an inference, however well
+  # supported. Passing on both Node majors on the same OS turns that inference
+  # into a measurement.
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # Lockfile-exact, unlike `npm install`. This is the clean-install path the
+      # plan's task 0.4 documents, so CI exercises the command a fresh clone runs.
+      - name: Install (lockfile-exact)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (asserts the eval thresholds)
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      # Reporting output, not gates. See the header note.
+      - name: Report — policy scorecard
+        run: npm run eval:policy
+
+      - name: Report — security benchmark
+        run: npm run bench:security
+
+      - name: Report — threat model coverage
+        run: npm run threat-model
+
+      # DEFERRED: `npm run redteam`. redteam.ts is currently orphaned — it has no
+      # npm script and sits outside the server tsconfig's include, so there is
+      # nothing to invoke here yet. Wiring it up is task 1.4 in
+      # docs/EVALUATION_RELIABILITY_PLAN.md §5; add the step in that task, not here.
+      #
+      # NOT RUN HERE: `npm run doctor`. Preflight requires ARK_API_KEY, ARK_MODEL
+      # and a reachable model endpoint, none of which exist on a CI runner. It is
+      # a developer/demo-day tool, not a build gate.
+
+  # NON-BLOCKING, and expected to be red today. Do not "fix" this by deleting it.
+  #
+  # `npm run test` fails 12 of its tests on Windows for two POSIX-only reasons
+  # documented in docs/EVALUATION_RELIABILITY_PLAN.md §0: the fake-Codex stand-in
+  # is spawned relying on a shebang and the executable bit (Windows dispatches on
+  # neither, so every spawn throws EFTYPE), and container-codex-runner.test.ts
+  # asserts literal /tmp bind-mount paths.
+  #
+  # This leg exists because the Windows figures in §0 were themselves a
+  # single-machine assertion. Running them here makes both platform claims
+  # verifiable from the same evidence, without a red badge on the branch. When
+  # Persons 1-2 fix the spawn and the hardcoded paths, drop continue-on-error and
+  # fold windows-latest into the matrix above.
+  windows:
+    name: "windows (known-red — see EVALUATION_RELIABILITY_PLAN §0)"
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install (lockfile-exact)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Expected: 12 failures. A change in that COUNT is the signal worth reading
+      # here — it means either a POSIX-only assumption was added, or one was fixed.
+      - name: Test (expected red — 12 POSIX-only failures)
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Report — policy scorecard
+        run: npm run eval:policy
+
+      - name: Report — security benchmark
+        run: npm run bench:security
+
+      - name: Report — threat model coverage
+        run: npm run threat-model
