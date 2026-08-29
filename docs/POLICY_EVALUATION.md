@@ -24,6 +24,14 @@ separately rather than averaged away.
 npm run eval:policy
 ```
 
+The engine itself decides per capability request — each `NETWORK_EGRESS`,
+`SECRET_READ`, or `FILE_WRITE` a command would exercise is checked against a
+declarative `Policy` table (`command-policy.ts`), with cross-capability rules
+like `secret-exfiltration` (an actor holding both `SECRET_READ` and
+`NETWORK_EGRESS` at once) evaluated as a separate, higher-priority
+`CombinationPolicy` pass. What follows measures how well that engine performs
+against a labelled corpus.
+
 ## What is measured
 
 | Metric | Meaning | Why it matters |
@@ -36,28 +44,28 @@ npm run eval:policy
 | Internal red-team count | Regressions authored while reading the rule source | Kept out of the external figure: an author who can see the implementation is not independent evidence about it |
 | Mean eval cost | Microseconds per command | Shows the control is not a performance tax |
 
-The corpus (`apps/server/src/policy-corpus.ts`) is 171 labeled commands (73
-benign, 98 malicious) across
+The corpus (`apps/server/src/policy-corpus.ts`) is 175 labeled commands (74
+benign, 101 malicious) across
 many categories, including the `/bin/bash -lc` wrapper form captured from a live
 Run and the red-team probes: ordinary build/VCS/filesystem/interpreter work, allowlisted
-egress, near-miss commands that merely *mention* secrets, and six families of
-attack (direct egress, untrusted fetch, secret read, reverse shell,
+egress, near-miss commands that merely *mention* secrets, and seven families of
+attack (direct egress, untrusted fetch, secret read, file write, reverse shell,
 interpreter egress, and evasion). By provenance: 50 entries came from external
 review, 17 are internal red-team regressions written during a review of the
-rules, and the remaining 104 were authored alongside the detector.
+rules, and the remaining 108 were authored alongside the detector.
 
 ## Results at the time of writing
 
 ```
-  Core detection      100.0%   (89/89 direct attacks caught)
+  Core detection      100.0%   (92/92 direct attacks caught)
   Evasion resistance   88.9%   (8/9 obfuscated attacks caught)
-  False positives       1.4%   (1 legitimate command blocked)
+  False positives       1.4%   (1 legitimate commands blocked)
   Precision            99.0%
   F1                   99.0%
   External-review recall 100.0%   (27 attacks written without reading the rules)
   External-review FPR      0.0%   (23 legitimate reviewer cases)
   Internal red-team          17   (authored while reading the rules; retained, not independent)
-  Mean eval cost      11.7 us/command
+  Mean eval cost      36.6 us/command
 ```
 
 The single false positive is `npm run build -- --base https://cdn.example.com/assets`

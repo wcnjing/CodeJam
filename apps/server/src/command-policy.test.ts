@@ -475,6 +475,7 @@ describe("command policy", () => {
     expect(violation?.detail).toContain("evil-two.example");
   });
 
+  // @covers TM-AGENT-007
   it("denies a FILE_WRITE outside the workspace, never as a reviewable rule", () => {
     const outsideWorkspace = { ...context, workspaceRoot: "/workspace" };
     const violation = evaluateCommand(actor, "echo pwned > /etc/cron.d/backdoor", outsideWorkspace);

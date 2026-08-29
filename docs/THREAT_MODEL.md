@@ -58,7 +58,7 @@ The consequential boundaries are not the network edges. They are:
 
 ## 3. What can go wrong, and what we do about it
 
-Seven threats are registered. Summary (full detail, attack paths, and residual
+Eight threats are registered. Summary (full detail, attack paths, and residual
 notes in the register):
 
 | ID | Threat | Inherent | Control | Residual | Verified |
@@ -69,6 +69,7 @@ notes in the register):
 | TM-AGENT-004 | Runaway execution / denial of wallet | 12 MED | Platform step budget (always on) | 6 LOW | ✅ |
 | TM-AGENT-005 | Consequential egress without oversight | 12 MED | Human approval, run-scoped host grant | 6 LOW | ✅ |
 | TM-AGENT-006 | Cross-agent evidence leakage | 6 LOW | Per-agent scoping in the service | 3 LOW | ✅ |
+| TM-AGENT-007 | Agent writes outside the sandboxed workspace | 9 MED | Workspace-scoped FILE_WRITE denial | 3 LOW | ✅ |
 | TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction + retention bound (`AUDIT_RETENTION_DAYS`) | 2 LOW | ✅ |
 
 **Scope note:** the egress control is a reactive command-text guard, not a
@@ -91,7 +92,7 @@ radius, not the worst-case consequence.
 
 ## 4. Did we do a good enough job?
 
-- **Verified-control rate: 7/7** mitigated threats have a passing test, enforced
+- **Verified-control rate: 8/8** mitigated threats have a passing test, enforced
   by CI. Removing a control's test fails the build and names the threat.
 - **Negative testing:** 69 labelled attacks (incl. red-team and external-review probes) + 6 live
   red-team prompts against the running model. One residual bypass (base64 `eval`)

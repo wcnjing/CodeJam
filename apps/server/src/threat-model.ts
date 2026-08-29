@@ -227,6 +227,34 @@ export const THREAT_REGISTER: Threat[] = [
     reviewTriggers: ["multi-user identity added", "store backend changed"],
   },
   {
+    id: "TM-AGENT-007",
+    title: "Agent writes outside the sandboxed workspace",
+    methodology: ["STRIDE: Tampering", "OWASP Agentic: Excessive Agency"],
+    assets: ["host filesystem", "other agents' workspaces", "container writable surface"],
+    actor: "a looping or manipulated agent reaching past its own workspace",
+    trustBoundary: "agent execution -> filesystem writes",
+    entryPoint: "any shell command with a write-shaped target (redirect, cp/mv/tee/rm/mkdir)",
+    attackPath: [
+      "agent (directly, or via injected instruction) issues a command whose write target resolves outside its mounted workspace",
+      "the write lands on host-adjacent or another agent's storage the agent was never granted",
+    ],
+    inherent: { likelihood: 3, impact: 3 },
+    controls: [
+      {
+        id: "CTRL-FILE-WRITE-DENY",
+        description:
+          "FILE_WRITE requests resolved against the run's workspace root; any write outside it is hard-denied, never reviewable",
+        where: "capabilities.ts extractCapabilities, command-policy.ts file-write-outside-workspace",
+      },
+    ],
+    residual: { likelihood: 1, impact: 3 },
+    residualNote:
+      "Detection is command-text based, the same honest limitation as the egress rules: a destination built at runtime or a fully encoded command is still invisible.",
+    owner: "runtime-team",
+    status: "mitigated",
+    reviewTriggers: ["a new write-shaped tool added to the runtime image"],
+  },
+  {
     id: "TM-OPS-001",
     title: "Unbounded audit-log growth",
     methodology: ["LINDDUN: Non-compliance", "OWASP: secret leakage through logs"],
