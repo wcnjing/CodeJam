@@ -154,13 +154,30 @@ const COMBINATION_POLICIES: CombinationPolicy[] = [
 ];
 
 /**
- * Per-capability policies. Order is significant within each action: the first
- * match decides. `network-egress-denied` / `network-egress-denied-implicit`
- * stay mutually exclusive per resource via `via` — a resource with `via ===
+ * Per-capability policies. Order is significant: the first policy with any
+ * matching resource decides the whole command, so a hard denial must be
+ * ordered ahead of a reviewable one it could otherwise be shadowed by.
+ * `file-write-outside-workspace` therefore leads: a command that both writes
+ * outside the sandbox and contacts a non-allowlisted host must NOT report the
+ * reviewable egress rule, because an approved command is rerun verbatim
+ * without re-evaluation — the operator would be waving through a sandbox
+ * escape they were never shown.
+ *
+ * `network-egress-denied` / `network-egress-denied-implicit` stay mutually
+ * exclusive per resource via `via` — a resource with `via ===
  * "destination-only"` can only match the implicit rule, never the named-tool
  * rule, which is what keeps an obfuscated destination reporting the correct id.
  */
 const POLICY_RULES: Policy[] = [
+  {
+    id: "file-write-outside-workspace",
+    statement: "FILE_WRITE is permitted only inside the run's workspace.",
+    action: "FILE_WRITE",
+    reviewable: false,
+    when: (resource) => !resource.trusted,
+    detail: (resources) =>
+      "Command writes outside the workspace: " + resources.map((r) => r.value).join(", ") + ".",
+  },
   {
     id: "network-egress-denied",
     statement: "NETWORK_EGRESS is permitted only to destinations on the run's allowlist.",
@@ -196,15 +213,6 @@ const POLICY_RULES: Policy[] = [
     reviewable: false,
     when: () => true,
     detail: (resources) => "Command reads " + resources[0]?.value + ".",
-  },
-  {
-    id: "file-write-outside-workspace",
-    statement: "FILE_WRITE is permitted only inside the run's workspace.",
-    action: "FILE_WRITE",
-    reviewable: false,
-    when: (resource) => !resource.trusted,
-    detail: (resources) =>
-      "Command writes outside the workspace: " + resources.map((r) => r.value).join(", ") + ".",
   },
 ];
 
