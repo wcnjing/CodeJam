@@ -142,6 +142,52 @@ describe("FILE_WRITE capability extraction", () => {
     });
   });
 
+  it("does not extract the /dev pseudo-devices as write targets", () => {
+    // Discarding output is not a filesystem write and carries no
+    // workspace-escape risk. Extracting `/dev/null` as a target made it
+    // untrusted (absolute, outside the root) and so hard-denied
+    // `npm test > /dev/null 2>&1` — one of the commonest shell idioms there is,
+    // with no operator override available.
+    const discards = [
+      "npm test > /dev/null 2>&1",
+      "npm run build 2>/dev/null",
+      "find . -name '*.ts' 2>/dev/null",
+      "git status > /dev/null",
+      "node app.js > /dev/stdout",
+      "node app.js 2> /dev/stderr",
+      "node app.js >/dev/fd/2",
+    ];
+    for (const command of discards) {
+      expect(
+        extractCapabilities(command, context).filter((c) => c.capability === "FILE_WRITE"),
+        command,
+      ).toEqual([]);
+    }
+  });
+
+  it("still extracts a real write alongside a discarded stream", () => {
+    // The carve-out is for the pseudo-device only; a genuine target in the
+    // same command must survive it.
+    const caps = extractCapabilities("cat package.json > out.txt 2>/dev/null", context);
+    expect(caps.filter((c) => c.capability === "FILE_WRITE").map((c) => c.resource)).toEqual([
+      "out.txt",
+    ]);
+  });
+
+  it("does not carve out an ordinary path that merely starts with /dev", () => {
+    // `/devops` and `/dev/shm/x` are real writable locations outside the
+    // workspace; only the known pseudo-devices are exempt.
+    for (const target of ["/devops/deploy.sh", "/dev/shm/payload"]) {
+      const caps = extractCapabilities("echo pwned > " + target, context);
+      expect(caps, target).toContainEqual({
+        capability: "FILE_WRITE",
+        resource: target,
+        trusted: false,
+        via: "file-write",
+      });
+    }
+  });
+
   it("reports every named target for tee/mkdir/rm, not just the first", () => {
     const caps = extractCapabilities("tee out1.log out2.log", context);
     expect(

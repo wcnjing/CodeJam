@@ -295,6 +295,21 @@ function writeTargetsFromInvocation(tool: string, args: string[]): string[] {
   return [];
 }
 
+// Pseudo-devices that discard or re-emit a stream rather than writing a file.
+// `cmd > /dev/null 2>&1` is among the commonest shell idioms there is and
+// escapes nothing, but as an absolute path it resolves outside any workspace
+// root — so extracting it as a write target would hard-deny ordinary work with
+// no operator override. Matched exactly, so real writable locations that merely
+// share the prefix (`/dev/shm/payload`, `/devops/deploy.sh`) stay governed.
+//
+// Deliberately NOT extended to /dev/tcp/* or /dev/udp/*: those are sockets, and
+// a write to one is real egress that must stay denied.
+const DISCARD_TARGET = /^\/dev\/(?:null|stdout|stderr|fd\/\d+)$/;
+
+function isDiscardedStream(target: string): boolean {
+  return DISCARD_TARGET.test(target.replace(/^['"]+/, "").replace(/['"]+$/, ""));
+}
+
 /** Every write-shaped target in a command: shell redirects plus write-tool arguments. */
 function writeTargets(command: string): string[] {
   const targets: string[] = [];
@@ -306,7 +321,8 @@ function writeTargets(command: string): string[] {
     if (!invocation) continue;
     targets.push(...writeTargetsFromInvocation(invocation.tool, invocation.args));
   }
-  return targets;
+  // Applied to both sources: `tee /dev/null` discards just as a redirect does.
+  return targets.filter((target) => !isDiscardedStream(target));
 }
 
 /**

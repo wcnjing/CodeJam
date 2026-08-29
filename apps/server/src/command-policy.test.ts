@@ -464,6 +464,27 @@ describe("command policy", () => {
     expect(isReviewableRule(violation!.rule)).toBe(false);
   });
 
+  it("does not deny discarding output to /dev/null as a workspace escape", () => {
+    const discards = [
+      "git status > /dev/null",
+      "npm test > /dev/null 2>&1",
+      "npm run build 2>/dev/null",
+      "find . -name '*.ts' 2>/dev/null",
+    ];
+    for (const command of discards) {
+      expect(evaluateCommand(command, context), command).toBeNull();
+    }
+  });
+
+  it("names the secret it reads, not the stream it discards", () => {
+    // Extracting /dev/null as a write target let file-write-outside-workspace
+    // shadow the real finding, reporting "writes outside the workspace:
+    // /dev/null" for a command whose actual threat is reading an SSH key.
+    const violation = evaluateCommand("find / -name 'id_rsa' 2>/dev/null", context);
+    expect(violation?.rule).toBe("protected-secret-access");
+    expect(violation?.detail).toContain("SSH private key");
+  });
+
   it("allows a FILE_WRITE inside the workspace", () => {
     const insideWorkspace = { ...context, workspaceRoot: "/workspace" };
     expect(
