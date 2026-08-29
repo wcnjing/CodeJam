@@ -126,7 +126,10 @@ export interface SystemInfo {
   arkModel: string | null;
   codexAvailable: boolean;
   codexSandboxMode: string;
-  runtimeProvider: "local-process" | "container";
+  // Mirrors apps/server/src/config.ts. Hand-duplicated with no shared import,
+  // so a provider added there and not here is wrong at runtime with a green
+  // build - the same hazard documented on EvaluationSummary.latency.
+  runtimeProvider: "local-process" | "container" | "replay";
   containerEngine: string | null;
   runtime: string;
 }

@@ -16,7 +16,8 @@ const envSchema = z.object({
     .default("workspace-write"),
   CODEX_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(600_000),
   CODEX_MAX_OUTPUT_BYTES: z.coerce.number().int().min(65_536).default(2_097_152),
-  RUNTIME_PROVIDER: z.enum(["local-process", "container"]).default("local-process"),
+  // `replay` is a demo/CI provider: recorded model output, real everything else.
+  RUNTIME_PROVIDER: z.enum(["local-process", "container", "replay"]).default("local-process"),
   CONTAINER_ENGINE: z.string().min(1).default("docker"),
   CONTAINER_RUNTIME_IMAGE: z.string().min(1).default("volc-agent-runtime:local"),
   CONTAINER_CPU_LIMIT: z.coerce.number().positive().default(2),
