@@ -1,5 +1,8 @@
-import { evaluateCommand, policyContextFrom } from "./src/command-policy.js";
-const ctx = policyContextFrom("https://ark.ap-southeast.bytepluses.com/api/v3");
+import { evaluateCommand, policyContextFrom, type Actor } from "./src/command-policy.js";
+const ctx = policyContextFrom("https://ark.ap-southeast.bytepluses.com/api/v3", [], [], [
+  "/workspace",
+]);
+const REDTEAM_ACTOR: Actor = { agentId: "redteam", threadId: null };
 const W = (c: string) => `/bin/bash -lc ${JSON.stringify(c)}`;
 
 const probes: [string, string][] = [
@@ -73,7 +76,7 @@ let denied = 0;
 const missed: string[] = [];
 for (const [name, raw] of probes) {
   const wrapped = W(raw);
-  const v = evaluateCommand(wrapped, ctx);
+  const v = evaluateCommand(REDTEAM_ACTOR, wrapped, ctx);
   if (v) { denied += 1; }
   else { missed.push(name + "  ::  " + raw.slice(0, 92)); }
 }
