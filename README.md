@@ -282,15 +282,15 @@ contributor's laptop.
 to the Runtime process being dead: **p50 2 ms, max 3 ms**. That window is the
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198), `npm run bench:overhead`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), `npm run bench:overhead`)
 
-**The middleware's real cost is not the policy decision.** A decision is ~5 µs.
+**The middleware's real cost is not the policy decision.** A decision is ~4.7 µs.
 Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
 whole database on every call, so writing one policy event is **O(events already
-stored)** — 0.40 ms at zero events, **13.47 ms at 5,000**. Growth is exactly
-linear, r² **0.9995–1.0000** across three independent runners, so this is a
+stored)** — 0.35 ms at zero events, **13.61 ms at 5,000**. Growth is exactly
+linear, r² **0.9998–1.0000** across three independent runners, so this is a
 property of the code and not of a machine.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198), `npm run bench:store`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), `npm run bench:store`)
 
 *The fix is scoped and deliberately not built.* Three options are written up with
 trade-offs; the two cheap ones cap the log by discarding audit records. For a
@@ -318,7 +318,7 @@ nobody thought to write it. **That is the argument for generation over
 hand-authoring**, and it is why the aggregate is printed last: 99.59% would pass
 any review while a family sits at 95%. Reported to the rule owners, not silently
 patched.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198), `npm run bench:generate`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), `npm run bench:generate`)
 
 **Zero is reported with its denominator and its interval.** "0 secret leaks" is
 not evidence the rate is zero — 33 attempts only buy so much confidence:
@@ -337,15 +337,15 @@ overstating residual risk is the only safe direction for a security number.
 (`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
 CPU, corpus size, policy hash)
 
-**CI: 147 tests green on ubuntu-latest, Node 22 and 24.**
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198)) The matrix is
+**CI: 148 tests green on ubuntu-latest, Node 22 and 24.**
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308)) The matrix is
 not redundancy: it separates platform from runtime version, which an earlier
 comparison had confounded.
 
 **Windows, scoped precisely.** Install, typecheck, build, all evaluation
 harnesses and the offline entry point work. Two things do not:
 
-- **The runtime test suite** — 12 of 147 fail. The fake-Codex stand-in is spawned
+- **The runtime test suite** — 12 of 148 fail. The fake-Codex stand-in is spawned
   via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
   neither, so every spawn throws `EFTYPE`.
 - **The `local-process` runtime provider** — unusable. `codex-runner.ts` spawns
@@ -373,7 +373,7 @@ in ~3 s on any platform.
 **Replay does not prove containment**, and says so at the end of every run.
 Containment is proven separately, spawning for real: **24/24 generated attacks
 terminated the Runtime**, teardown p50 2–3 ms
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33252825198)). A parity
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33254598308)). A parity
 test feeds the same recorded bytes to the real runner and to the replay runner
 and requires the same outcome, so the two cannot drift. Fixtures are labelled
 **synthesized, not recorded** — no live model was available to capture from, and
