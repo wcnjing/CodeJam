@@ -21,6 +21,7 @@
     "doctor": "node scripts/preflight.mjs",
     "preflight": "node scripts/preflight.mjs",
     "demo:offline": "node scripts/demo-offline.mjs",
+    "demo:check": "node scripts/demo-smoke.mjs",
     "eval:policy": "npm run eval:policy -w @launchpad/server",
     "threat-model": "npm run threat-model -w @launchpad/server",
     "bench:security": "npm run bench:security -w @launchpad/server",

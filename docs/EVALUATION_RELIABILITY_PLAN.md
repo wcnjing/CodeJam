@@ -487,6 +487,55 @@ it.
 proves the **container actually dies** — a regex matching is not a process being
 killed, and only the second tier can support the defence-in-depth claim.
 
+#### Finding: the local-process runner cannot start Codex on Windows at all
+
+Found while validating the pre-demo smoke check (task 2.4), and **separate from
+the shebang/`EFTYPE` issue in §0** — this one affects the product, not the tests.
+
+`codex-runner.ts:178` spawns the Codex binary with no `shell` option:
+
+```ts
+const child = spawn(this.config.codexBin, args, { cwd, env, stdio: [...] });
+```
+
+On Windows a global npm install does not produce a bare executable. It produces a
+shim trio — `<name>`, `<name>.cmd`, `<name>.ps1` (verified on this machine: an
+unrelated global package installed exactly that way). And since the fix for
+CVE-2024-27980, Node refuses to spawn `.cmd` or `.bat` without `shell: true`:
+
+| call | result |
+| --- | --- |
+| `spawnSync("codex.cmd", args)` | **`EINVAL`** |
+| `spawnSync("codex.cmd", args, { shell: true })` | exit 0 |
+
+So a Windows developer who follows the README's own instruction —
+`npm install --global @openai/codex@0.111.0`, then `npm run dev` — gets
+`spawn EINVAL` on every run with `RUNTIME_PROVIDER=local-process`. Confirmed
+end-to-end here: a live server pointed at a `.cmd` stand-in failed every run with
+exactly that error.
+
+Two consequences worth separating:
+
+- **For §0's scope claim.** The earlier finding was that Windows can install,
+  typecheck, build and run every evaluation harness, failing only the runtime
+  test suite. That still holds for the *container* runtime provider, which is the
+  documented demo path. But the **local-process** provider is unusable on Windows,
+  which narrows "Windows works apart from the tests" a little further than it
+  first appeared.
+- **For this lane's smoke check.** `npm run demo:check` cannot exercise its
+  happy-path or deny-path steps on Windows, because no `CODEX_BIN` can be
+  spawned there at all — not a shebang script (`EFTYPE`), not a `.cmd`
+  (`EINVAL`). The health, engine, collector, agent-creation, canary and
+  collector-count checks all run cross-platform; the two run-driven checks are
+  POSIX-only. The same sequence is proven in-process by `e2e.test.ts`, which is
+  why that test uses the `AgentRunner` interface fake rather than a spawn.
+
+**Not fixed here.** `codex-runner.ts` is Persons 1–2's file, and the fix is not a
+one-liner: `shell: true` would make the command line subject to shell parsing,
+which for a security-sensitive spawn deserves its own review. Handed over with
+the reproduction above. It belongs alongside the §4 row on the Windows test
+failures, since the same team owns both.
+
 ### 2.5 E2E integration testing
 - `runner-policy.test.ts` is a real integration test but stops at the runner
   boundary — it never goes through HTTP.
@@ -670,7 +719,7 @@ that inference into a measurement.
 | 2.1 | Full-loop E2E test over HTTP: create agent → run → denial → held → approve → scoped grant → continuation → recovery | **Nothing.** Asserts run status + approval records — `agent-service.ts` vocabulary, which survives a policy-engine rewrite |
 | 2.2 | `/api/evaluation` payload contract test | Person 3 agreeing the field set |
 | 2.3 | Deterministic offline demo mode (recorded/scripted runner, no live model) | **Team decision — see §6** |
-| 2.4 | Pre-demo smoke script running the full happy path + the deny path end to end | 2.1, 2.3 — sequencing only; neither is blocked on Person 1 |
+| 2.4 | **DONE** — `npm run demo:check` (`scripts/demo-smoke.mjs`) | Nine checks against a live server, exits non-zero on any failure, ~2s. Health, container engine, collector, agent, benign run, egress run held, approve → continuation, **canary byte-identical against the literal `workspace.ts` seeds**, and **collector request count zero** — the last two being the claim the demo actually makes. Distinguishes "the model declined" from "the policy failed", so a model that will not cooperate does not read as a broken control. The two run-driven checks are POSIX-only — see the `EINVAL` finding in §2.4 |
 | 2.5 | Final overhead + metrics numbers for the writeup, against the final policy engine | Person 1 landing |
 
 **0.6 and 2.3 are different things and both are wanted.** 0.6 is a *front door*:
