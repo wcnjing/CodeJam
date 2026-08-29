@@ -278,11 +278,38 @@ export function scanCommands(
   startIndex: number,
   context: PolicyContext,
 ): DetectedViolation[] {
+  return scanCommandsWith(commands, startIndex, context, guardedEvaluate);
+}
+
+/**
+ * `scanCommands` with the evaluator injected.
+ *
+ * Exists so the overhead harness can measure the runner with policy OFF, by
+ * injecting an evaluator that returns null. `POLICY_ENFORCEMENT=monitor` cannot
+ * serve as that baseline: both runners call this scan unconditionally and the
+ * mode gates only the terminate/throw, so monitor mode does the same evaluation
+ * work and merely declines to act on it. Without this seam the harness can
+ * report absolute numbers but has nothing to subtract.
+ *
+ * Deliberately a separate export rather than an optional fourth parameter on
+ * `scanCommands`: the enforcement entry point the runners call keeps its exact
+ * signature, so there is no injectable evaluator on the path that enforces.
+ *
+ * `evaluate` is expected to be fail-closed. `guardedEvaluate` is, and is what
+ * `scanCommands` passes; an injected evaluator that throws will propagate, so
+ * callers passing a raw evaluator should wrap it themselves.
+ */
+export function scanCommandsWith(
+  commands: readonly string[],
+  startIndex: number,
+  context: PolicyContext,
+  evaluate: (command: string, context: PolicyContext) => PolicyViolation | null,
+): DetectedViolation[] {
   const found: DetectedViolation[] = [];
   for (let index = startIndex; index < commands.length; index += 1) {
     const command = commands[index];
     if (!command) continue;
-    const violation = guardedEvaluate(command, context);
+    const violation = evaluate(command, context);
     if (violation) {
       found.push({ ...violation, command: redactCommand(command, context.secretValues) });
     }
