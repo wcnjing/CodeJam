@@ -7,11 +7,22 @@
  * broken five minutes before presenting rather than during.
  *
  * Usage:
- *   npm run demo:check                    against http://127.0.0.1:3000
+ *   npm run demo:check                    against a server you already started
+ *   npm run demo:check:replay             starts its own replay server, no setup
  *   BASE_URL=http://host:3000 npm run demo:check
  *   npm run demo:check -- --skip-engine   when running without a container engine
  *
- * Requires the server to be running already (`npm run poc` or `npm run dev`).
+ * Without --self-host it requires a server already running (`npm run poc`).
+ *
+ * --self-host starts one with RUNTIME_PROVIDER=replay on a spare port and tears
+ * it down afterwards. That makes the two run-driven checks - benign run and
+ * egress-held-then-approved - CROSS-PLATFORM, which they otherwise are not: on
+ * Windows no CODEX_BIN can be spawned at all (shebang -> EFTYPE, .cmd -> EINVAL,
+ * see §2.4 of the plan). The replay provider fakes only the model, so those two
+ * checks still exercise the real policy engine, audit trail and approval loop.
+ * It is a weaker check than a live model in one specific way, named at the end
+ * of the run so nobody mistakes it for the real thing: nothing is contained,
+ * because nothing is spawned.
  *
  * ON REUSE. `apps/server/src/bench/../e2e.test.ts` drives the same governance
  * loop and this script deliberately does NOT share code with it. The two differ
@@ -33,12 +44,17 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const argv = process.argv.slice(2);
 const SKIP_ENGINE = argv.includes("--skip-engine");
-const BASE_URL = (process.env.BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
+const SELF_HOST = argv.includes("--self-host");
+const SELF_HOST_PORT = Number(process.env.SELF_HOST_PORT || 3099);
+const BASE_URL = SELF_HOST
+  ? `http://127.0.0.1:${SELF_HOST_PORT}`
+  : (process.env.BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
 const TOKEN = (process.env.APP_AUTH_TOKEN || "").trim();
 const COLLECTOR_PORT = 9099;
 
@@ -110,10 +126,51 @@ async function waitForRun(runId, budgetMs = 90_000) {
   return { status: "timeout:" + last, run: null };
 }
 
+/** Starts a replay-provider server and waits for it to answer. */
+async function startReplayServer() {
+  const dataRoot = await mkdtemp(path.join(tmpdir(), "demo-check-"));
+  const child = spawn(
+    // node + the tsx loader, never a .cmd or a shebang script: those are the two
+    // things Windows cannot spawn, and this script has to work there.
+    process.execPath,
+    ["--import", "tsx", path.join("apps", "server", "src", "index.ts")],
+    {
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        PORT: String(SELF_HOST_PORT),
+        NODE_ENV: "development",
+        LOG_LEVEL: "warn",
+        RUNTIME_PROVIDER: "replay",
+        ARK_API_KEY: "replay-no-key-needed",
+        ARK_MODEL: "ep-replay",
+        APP_AUTH_TOKEN: "",
+        APP_DATA_DIR: path.join(dataRoot, "data"),
+        AGENT_WORKSPACE_ROOT: path.join(dataRoot, "workspaces"),
+        CODEX_HOME: path.join(dataRoot, "codex"),
+      },
+    },
+  );
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (await portBound(SELF_HOST_PORT)) return { child, dataRoot };
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  child.kill();
+  return { child: null, dataRoot };
+}
+
+let selfHosted = null;
+if (SELF_HOST) {
+  selfHosted = await startReplayServer();
+}
+
 console.log("");
 console.log("Pre-demo smoke check");
 console.log("-".repeat(74));
 console.log(`  target ${BASE_URL}${TOKEN ? " (authenticated)" : " (no APP_AUTH_TOKEN set)"}`);
+if (SELF_HOST) {
+  console.log("  mode   --self-host, RUNTIME_PROVIDER=replay (model faked, policy real)");
+}
 console.log("-".repeat(74));
 
 // ---------------------------------------------------------------- 1. health
@@ -350,7 +407,13 @@ if (agent) {
 if (collector) {
   await new Promise((resolve) => collector.close(resolve));
   if (collectorHits === 0) {
-    record("pass", "Mock collector received nothing", "0 requests - containment held");
+    record(
+      "pass",
+      "Mock collector received nothing",
+      SELF_HOST
+        ? "0 requests (replay mode: nothing was spawned, so trivially true)"
+        : "0 requests - containment held",
+    );
   } else {
     record(
       "fail",
@@ -371,6 +434,16 @@ if (agent) {
 
 // ------------------------------------------------------------------ verdict
 
+if (selfHosted?.child) {
+  selfHosted.child.kill();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+if (selfHosted?.dataRoot) {
+  await rm(selfHosted.dataRoot, { recursive: true, force: true, maxRetries: 5 }).catch(
+    () => undefined,
+  );
+}
+
 const seconds = (Date.now() - startedAt) / 1000;
 const warnings = results.filter((result) => result.status === "warn").length;
 
@@ -385,6 +458,13 @@ if (hardFailures === 0 && warnings === 0) {
   }
 } else {
   console.log(`  NOT READY: ${hardFailures} failure(s), ${warnings} warning(s).`);
+}
+if (SELF_HOST) {
+  console.log("");
+  console.log("  Replay mode caveat, stated so it is not overclaimed: the model was faked");
+  console.log("  and nothing was spawned, so NOTHING WAS CONTAINED. This run proves the");
+  console.log("  policy decision, the audit trail and the approval loop. Containment is");
+  console.log("  proven elsewhere - `npm run bench:generate` token tier, ubuntu.");
 }
 console.log(`  Total: ${seconds.toFixed(1)}s`);
 if (seconds > 60) {

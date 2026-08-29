@@ -22,6 +22,7 @@
     "preflight": "node scripts/preflight.mjs",
     "demo:offline": "node scripts/demo-offline.mjs",
     "demo:check": "node scripts/demo-smoke.mjs",
+    "demo:check:replay": "node scripts/demo-smoke.mjs --self-host --skip-engine",
     "eval:policy": "npm run eval:policy -w @launchpad/server",
     "threat-model": "npm run threat-model -w @launchpad/server",
     "bench:security": "npm run bench:security -w @launchpad/server",
