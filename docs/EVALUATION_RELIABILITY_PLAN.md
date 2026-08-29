@@ -276,6 +276,43 @@ and it is measurable today without waiting on anyone.
   engine.** `npm run eval:policy` / `bench:security` are the only zero-config
   entry points and they are not presented as the front door.
 
+#### Finding: the setup tooling nearly shipped a shell injection
+
+Found while building `scripts/preflight.mjs` (task 0.3). Recorded here for where
+it happened rather than how large it was.
+
+The container-engine check shells out to `<engine> info`, where the engine name
+comes from `CONTAINER_ENGINE` — an operator-supplied environment variable. The
+first version passed it to `spawnSync` as `(command, args)`, which is safe: an
+args array is not shell-interpreted. Clearing an unrelated Node deprecation
+(DEP0190, which fires on an args array combined with `shell: true`) meant
+collapsing that into a single command string — and that one change turned an
+inert variable into a shell metacharacter sink.
+`CONTAINER_ENGINE='docker; echo PWNED'` would have executed `echo PWNED`.
+
+`shell: true` cannot simply be dropped; it is what makes `npm` resolve to
+`npm.cmd` on Windows. So the interpolated value is constrained instead:
+`CONTAINER_ENGINE` must match `/^[A-Za-z0-9._-]+$/`, or the check fails without
+running anything.
+
+Three reasons this is a finding and not a footnote:
+
+- **It is this project's own threat model turned inward.** The product exists to
+  deny commands that splice in a second command or reach a non-allowlisted
+  destination. Nearly shipping that exact defect class in our own setup script is
+  the sharpest evidence available that the adversarial discipline here is real
+  rather than self-congratulatory — the same reading that produced the corpus is
+  what caught it.
+- **It was introduced by a safety fix**, not by the original code. Clearing a
+  deprecation warning is the kind of change that gets waved through, and this one
+  silently moved a trust boundary in the line beside it.
+- **No test would have caught it.** It is not a wrong answer, it is a wrong
+  capability. It surfaced from asking "what does this variable reach?" — a
+  question none of the harnesses in §2.1–§2.3 are shaped to ask.
+
+Verified: `CONTAINER_ENGINE='docker; echo PWNED'` is rejected as "not a plain
+executable name", and `PWNED` never appears in the output.
+
 ### 2.5 E2E integration testing
 - `runner-policy.test.ts` is a real integration test but stops at the runner
   boundary — it never goes through HTTP.

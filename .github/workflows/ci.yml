@@ -75,6 +75,14 @@ jobs:
       - name: Report — threat model coverage
         run: npm run threat-model
 
+      # The front door a reviewer without a key runs first. Its three
+      # constituents are exercised above, but the wrapper itself never was --
+      # a wrapper whose parts pass while it is never invoked is exactly what CI
+      # should catch. Needs no ARK_API_KEY, no engine and no network, which is
+      # precisely the CI runner's situation.
+      - name: Zero-config front door
+        run: npm run demo:offline
+
       # DEFERRED: `npm run redteam`. redteam.ts is currently orphaned — it has no
       # npm script and sits outside the server tsconfig's include, so there is
       # nothing to invoke here yet. Wiring it up is task 1.4 in
@@ -131,3 +139,11 @@ jobs:
 
       - name: Report — threat model coverage
         run: npm run threat-model
+
+      # The front door a reviewer without a key runs first. Its three
+      # constituents are exercised above, but the wrapper itself never was --
+      # a wrapper whose parts pass while it is never invoked is exactly what CI
+      # should catch. Needs no ARK_API_KEY, no engine and no network, which is
+      # precisely the CI runner's situation.
+      - name: Zero-config front door
+        run: npm run demo:offline
