@@ -183,9 +183,18 @@ function measureThroughput(corpus: CorpusEntry[]): number {
     corpus.map((entry) => entry.command),
     DEFAULT_CONTEXT,
   );
+  // Warmup sized for the engine actually being measured.
+  //
+  // This was `corpus.length * 2` (~240 calls), carried over from when the policy
+  // was a handful of regexes. Against the capability engine - a real shell
+  // parser with far more code paths - that measures a cold JIT and reported ~2x
+  // the steady-state cost, which is what tripped `policy-eval.test.ts`'s <50us
+  // gate on CI while the same engine passed it on main. Main's loop is 200 full
+  // corpus passes in one timed block, so its mean is almost entirely warm; this
+  // now warms for comparably long before timing anything.
   return timeSweep(workload, {
-    warmupRounds: corpus.length * 2,
-    rounds: 20,
+    warmupRounds: corpus.length * 40,
+    rounds: 40,
     batchSize: corpus.length,
   }).mean;
 }

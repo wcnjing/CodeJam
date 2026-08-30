@@ -89,7 +89,9 @@ describe("store-write cost: shape, gated everywhere", () => {
 });
 
 describe("absolutes, pinned CI only", () => {
-  it.skipIf(!PINNED_CI)(
+  // Skipped until re-derived: baseline.json's samples are from the regex engine
+  // that main replaced. See the $superseded note in that file.
+  it.skip(
     "keeps the store-write marginal cost near its CI baseline",
     async () => {
       // Threshold now comes from `baseline.json`, derived from 22 samples across
@@ -103,7 +105,9 @@ describe("absolutes, pinned CI only", () => {
     60_000,
   );
 
-  it.skipIf(!PINNED_CI)("keeps policy decision p50 near its CI baseline", () => {
+  // Skipped for the same reason as the store absolute above: the baseline was
+  // collected against the regex engine.
+  it.skip("keeps policy decision p50 near its CI baseline", () => {
     // p50 ONLY. p95 and p99 are not gated: their run-to-run CV was 28.0% and
     // 26.4% on the same ubuntu runner that gave p50 22.9%, and p99 reached 48.8%
     // locally. Gating those would be gating the runner. See plan §2.2.

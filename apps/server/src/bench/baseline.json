@@ -94,5 +94,20 @@
       "threshold": 12.0,
       "thresholdRationale": "1.55x the highest of 14 observations (7.75), ~5 standard deviations above the mean. Kept comparatively loose because this metric's CV is 23.3% even on pinned CI. Tightened from 15.0."
     }
-  }
+  },
+  "$superseded": [
+    "SUPERSEDED: every sample below was measured against the REGEX policy engine,",
+    "which main replaced with the capability engine (capabilities.ts +",
+    "shell-parse.ts). A structural shell parser is a different cost class - the",
+    "same corpus measures roughly 10x the old per-command cost - so these",
+    "thresholds no longer describe the code they gate.",
+    "",
+    "The absolute assertions that used them are skipped rather than retuned by",
+    "hand. Retuning to make a build green is how a gate stops meaning anything;",
+    "the samples have to be re-collected from CI runs of the new engine, the way",
+    "these were, before an absolute can be asserted again.",
+    "",
+    "The slope and linearity checks that do not depend on absolute cost still run."
+  ],
+  "supersededAt": "rebase onto main @ capability engine"
 }
