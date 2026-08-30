@@ -357,6 +357,12 @@ export class AgentService {
       arkModel: this.config.arkModel || null,
       codexAvailable: await this.runner.isAvailable(),
       codexSandboxMode: this.config.codexSandboxMode,
+      // The UI describes what happens to a denial ("held for a human" vs
+      // "blocked outright"), and that is a configuration answer, not a fact
+      // about the rule. Serving it stops the browser hard-coding one mode's
+      // behaviour as if it were the only one.
+      policyEnforcement: this.config.policyEnforcement,
+      policyReviewRules: [...this.config.policyReviewRules],
       runtimeProvider: this.config.runtimeProvider,
       containerEngine:
         this.config.runtimeProvider === "container"

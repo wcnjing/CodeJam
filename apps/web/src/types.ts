@@ -43,6 +43,8 @@ export interface AgentRun {
     cachedInputTokens?: number;
     outputTokens?: number;
   } | null;
+  startedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
 }
 
@@ -57,7 +59,10 @@ export interface CapabilityRequest {
     | "interpreter"
     | "destination-only"
     | "protected-material"
-    | "file-write";
+    | "file-write"
+    | "file-write-unresolved";
+  /** Recovered from a payload the command would decode or pipe into a shell. */
+  decoded?: true;
 }
 
 export interface PolicyDecision {
@@ -131,6 +136,10 @@ export interface SystemInfo {
   arkModel: string | null;
   codexAvailable: boolean;
   codexSandboxMode: string;
+  /** "enforce" | "monitor" — in monitor mode nothing is blocked or held at all. */
+  policyEnforcement: string;
+  /** Rules whose denials pause for a human instead of blocking outright. */
+  policyReviewRules: string[];
   // Mirrors apps/server/src/config.ts. Hand-duplicated with no shared import,
   // so a provider added there and not here is wrong at runtime with a green
   // build - the same hazard documented on EvaluationSummary.latency.
