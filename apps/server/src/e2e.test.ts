@@ -120,7 +120,7 @@ async function makeApp(
   roots.push(root);
   const config = loadConfig({
     NODE_ENV: "test",
-    APP_AUTH_TOKEN: TOKEN,
+    APP_PRINCIPALS: "ops-alice:" + TOKEN,
     APP_DATA_DIR: path.join(root, "data"),
     AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
     CODEX_HOME: path.join(root, "codex"),
@@ -192,10 +192,9 @@ describe("full governance loop over HTTP", () => {
     });
     expect(pending[0]!.hosts).toContain("registry.npmjs.org");
 
-    // approve, with a named actor and a reason
+    // approve, with a reason; the approver comes from the credential
     const decision = await post(app, `/api/approvals/${pending[0]!.id}`, {
       decision: "approve",
-      actor: "ops-alice",
       reason: "npm registry is a trusted dependency source",
     });
     expect(decision.statusCode).toBe(200);
@@ -253,13 +252,23 @@ describe("full governance loop over HTTP", () => {
       method: "POST",
       url: "/api/approvals/" + approvalId,
       headers: { "content-type": "application/json" },
-      payload: JSON.stringify({ decision: "approve", actor: "x", reason: "y" }),
+      payload: JSON.stringify({ decision: "approve", reason: "y" }),
     });
     expect(unauthenticated.statusCode).toBe(401);
 
-    // Authenticated but missing the mandatory accountability fields.
-    const noActor = await post(app, "/api/approvals/" + approvalId, { decision: "approve" });
-    expect(noActor.statusCode).toBe(400);
+    // Authenticated but missing the mandatory accountability field. The approver
+    // is no longer one of them — it comes from the credential, not the body.
+    const noReason = await post(app, "/api/approvals/" + approvalId, { decision: "approve" });
+    expect(noReason.statusCode).toBe(400);
+
+    // A client that still supplies an approver is refused outright rather than
+    // having the field silently stripped.
+    const spoofed = await post(app, "/api/approvals/" + approvalId, {
+      decision: "approve",
+      reason: "y",
+      actor: "someone-else",
+    });
+    expect(spoofed.statusCode).toBe(400);
 
     // Still pending: neither attempt resolved anything.
     const after = await get(app, `/api/agents/${agent.id}/approvals`);
@@ -355,7 +364,6 @@ async function resolvedChain(): Promise<AuditChain> {
   const decision = (
     await post(app, "/api/approvals/" + approvalId, {
       decision: "approve",
-      actor: "ops-alice",
       reason: "trusted registry",
     })
   ).json() as { continuationRun: { id: string } | null };
