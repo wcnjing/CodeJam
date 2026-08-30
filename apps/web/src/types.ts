@@ -79,6 +79,10 @@ export interface PolicyDecision {
   decidedAt: string;
 }
 
+export interface Principal {
+  id: string;
+}
+
 export interface ApprovalRequest {
   id: string;
   agentId: string;
@@ -90,6 +94,7 @@ export interface ApprovalRequest {
   hosts: string[];
   status: "pending" | "approved" | "denied";
   requestedAt: string;
+  /** Authenticated principal that resolved it. Never client-supplied. */
   resolvedBy: string | null;
   decisionReason: string | null;
   resolvedAt: string | null;

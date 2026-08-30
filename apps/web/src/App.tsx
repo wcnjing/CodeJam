@@ -7,6 +7,7 @@ import type {
   EvaluationSummary,
   Message,
   PolicyDecision,
+  Principal,
   SystemInfo,
 } from "./types";
 import { AuditTimeline } from "./components/AuditTimeline";
@@ -279,7 +280,7 @@ export default function App() {
   const [policyEvents, setPolicyEvents] = useState<PolicyDecision[]>([]);
   const [showPolicy, setShowPolicy] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const [approver, setApprover] = useState("operator");
+  const [principal, setPrincipal] = useState<Principal | null>(null);
   const [approvalReason, setApprovalReason] = useState("");
   const [view, setView] = useState<"welcome" | "agents" | "evaluation">("welcome");
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
@@ -392,7 +393,11 @@ export default function App() {
   }, [agents, refreshAgents]);
 
   const bootstrap = useCallback(async () => {
-    await Promise.all([refreshAgents(), api.system().then(setSystem)]);
+    await Promise.all([
+      refreshAgents(),
+      api.system().then(setSystem),
+      api.me().then(({ principal: current }) => setPrincipal(current)),
+    ]);
   }, [refreshAgents]);
 
   useEffect(() => {
@@ -562,7 +567,6 @@ export default function App() {
       const result = await api.resolveApproval(
         approval.id,
         decision,
-        approver.trim() || "operator",
         approvalReason.trim(),
       );
       setApprovalReason("");
@@ -972,8 +976,7 @@ export default function App() {
                   <PendingApprovalCard
                     mode={policyMode}
                     approval={pendingApproval}
-                    approver={approver}
-                    onApproverChange={setApprover}
+                    principal={principal}
                     reason={approvalReason}
                     onReasonChange={setApprovalReason}
                     busy={busy}
