@@ -148,6 +148,25 @@ const WRAPPERS: Wrapper[] = [
   { name: "eval-string", wrap: (c) => `eval "${c.replace(/"/g, '\\"')}"` },
   { name: "newline-separator", wrap: (c) => `echo hi\n${c}` },
   { name: "xargs", wrap: (c) => `echo go | xargs -I{} ${c}` },
+
+  // --- pipeline sinks: text written, then executed ---
+  //
+  // Same lesson a third time. The wrappers above all RUN the command; none of
+  // them WROTE it and then ran what was written. So the bank could not express
+  // `echo '<command>' | sh` — the shortest bypass of the textual carve-out,
+  // simpler than any encoded form, and open on every branch until it was fixed
+  // by hand rather than found here.
+  //
+  // The distinguishing feature is a sink that executes stdin, so the axis is
+  // the sink: a shell reading its script from stdin, a shell behind another
+  // filter, and xargs turning stdin into argv.
+  { name: "pipe-to-sh", wrap: (c) => `echo ${JSON.stringify(c)} | sh` },
+  { name: "pipe-to-bash", wrap: (c) => `printf '%s' ${JSON.stringify(c)} | bash` },
+  { name: "pipe-through-filter-to-sh", wrap: (c) => `echo ${JSON.stringify(c)} | tee /dev/stderr | sh` },
+  {
+    name: "base64-pipe-to-sh",
+    wrap: (c) => `echo ${Buffer.from(c).toString("base64")} | base64 -d | sh`,
+  },
 ];
 
 export interface Variant {

