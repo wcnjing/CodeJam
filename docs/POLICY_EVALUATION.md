@@ -50,34 +50,32 @@ measures how well that engine performs against a labelled corpus.
 | Internal red-team count | Regressions authored while reading the rule source | Kept out of the external figure: an author who can see the implementation is not independent evidence about it |
 | Mean eval cost | Microseconds per command | Shows the control is not a performance tax |
 
-The corpus (`apps/server/src/policy-corpus.ts`) is 179 labeled commands (77
-benign, 102 malicious) across
+The corpus (`apps/server/src/policy-corpus.ts`) is 198 labeled commands (84
+benign, 114 malicious) across
 many categories, including the `/bin/bash -lc` wrapper form captured from a live
 Run and the red-team probes: ordinary build/VCS/filesystem/interpreter work, allowlisted
 egress, near-miss commands that merely *mention* secrets, and seven families of
 attack (direct egress, untrusted fetch, secret read, file write, reverse shell,
 interpreter egress, and evasion). By provenance: 50 entries came from external
-review, 17 are internal red-team regressions written during a review of the
-rules, and the remaining 112 were authored alongside the detector.
+review, 32 are internal red-team regressions written during a review of the
+rules, and the remaining 114 were authored alongside the detector.
 
 ## Results
 
-Figures below are from CI run
-[33263104468](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), not
-from a local run. The mean eval cost is a range because it spans that run's three
-runners; an earlier version of this document said `~1.0 us/command`, taken on one
-machine with an unwarmed timer.
+Figures below are `npm run eval:policy` on the merged tree. Run it yourself
+rather than trusting this block — the whole point of the harness is that the
+number is cheap to reproduce.
 
 ```
-  Core detection      100.0%   (93/93 direct attacks caught)
-  Evasion resistance   88.9%   (8/9 obfuscated attacks caught)
-  False positives       1.3%   (1 legitimate commands blocked)
-  Precision            99.0%
-  F1                   99.0%
-  External-review recall 100.0%   (27 attacks written without reading the rules)
+  Core detection      100.0%   (101/101 direct attacks caught)
+  Evasion resistance  100.0%   (13/13 obfuscated attacks caught)
+  False positives       1.2%   (1 legitimate commands blocked)
+  Precision            99.1%
+  F1                   99.6%
+  External-review recall 100.0%   (29 attacks written without reading the rules)
   External-review FPR      0.0%   (23 legitimate reviewer cases)
-  Internal red-team          17   (authored while reading the rules; retained, not independent)
-  Mean eval cost      31.2 us/command
+  Internal red-team          32   (authored while reading the rules; retained, not independent)
+  Mean eval cost      22.3 us/command
 ```
 
 (Mean eval cost is machine- and load-dependent; the rest is deterministic.)
@@ -85,7 +83,17 @@ machine with an unwarmed timer.
 The single false positive is `npm run build -- --base https://cdn.example.com/assets`
 — a URL passed as a build-time constant, not fetched. It is documented in the
 corpus as a known over-block and is the honest cost of the destination-based
-egress rule. The one remaining evasion miss is the fully base64-encoded command.
+egress rule. It has been left in rather than relabelled: `npm run` executes an
+arbitrary package script, so exempting it would open a real channel, and
+relabelling a benign entry to improve a metric is exactly the move this document
+exists to prevent.
+
+Evasion resistance reaching 100% is a change in what the engine reaches, not a
+change in what text analysis can guarantee. The base64 residual that sat here
+for most of the project's life is closed because the engine now materialises
+what a command's own decoder would produce — and that works only because the
+decoder is named and the payload is literal. See the README's Limitations for
+what is still open.
 
 These figures are the *result* of the harness, not its justification. Reviewer
 findings are marked in the corpus, but once a detector is changed in response

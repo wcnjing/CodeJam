@@ -243,18 +243,25 @@ export const THREAT_REGISTER: Threat[] = [
       {
         id: "CTRL-FILE-WRITE-DENY",
         description:
-          "FILE_WRITE requests resolved against the write roots the runner declares (container: /workspace + the container-local /tmp, /var/tmp; host process: the workspace path only); any write outside them is hard-denied, never reviewable",
+          "FILE_WRITE requests resolved against the write roots the runner declares (container: /workspace + the container-local /tmp, /var/tmp; host process: the workspace path only); a target that DEMONSTRABLY lands outside them is hard-denied, never reviewable",
         where: "capabilities.ts extractCapabilities, command-policy.ts file-write-outside-workspace",
+      },
+      {
+        id: "CTRL-FILE-WRITE-ASK",
+        description:
+          "A target built from an expansion the engine cannot value ($OUT_DIR, $(date +%s)) is neither allowed nor hard-denied: it is held for a human, who can answer the question the text cannot. Deterministic expansions are settled first ($(pwd)/$PWD to the workspace root, $TMPDIR to scratch, ~/$HOME to outside), so only genuine ambiguity reaches a person",
+        where: "capabilities.ts classifyWriteTarget, command-policy.ts file-write-unresolved-target",
       },
     ],
     residual: { likelihood: 3, impact: 3 },
     residualNote:
-      "This is NOT the egress rules' obfuscation limit; the gap is far more basic. Only shell redirects (>, >>, >|) and a five-tool list (cp, mv, tee, rm, mkdir) are inspected, so any other write-capable tool passes unseen — `touch /etc/x`, `dd of=/etc/x`, `sed -i s/a/b/ /etc/hosts`, `install -m 755 payload /usr/local/bin/x`, `ln -s`, `chmod 777 /etc/passwd`, and interpreter writes (python3 -c \"open('/etc/passwd','w')\") are all allowed today, verified by hand. That is tool-name matching, the exact pattern red-teaming already found inadequate for egress (POLICY_EVALUATION.md finding 10), which is why the egress rule was moved to destination matching. Likelihood is therefore NOT reduced below inherent: the rule stops the common redirect/copy shapes a looping agent produces, not an actor that picks a different binary. A destination-based FILE_WRITE model (resolve the target, not the tool) is the tracked follow-up.",
+      "This is NOT the egress rules' obfuscation limit; the gap is far more basic. Only shell redirects (>, >>, >|) and a five-tool list (cp, mv, tee, rm, mkdir) are inspected, so any other write-capable tool passes unseen — `touch /etc/x`, `dd of=/etc/x`, `sed -i s/a/b/ /etc/hosts`, `install -m 755 payload /usr/local/bin/x`, `ln -s`, `chmod 777 /etc/passwd`, and interpreter writes (python3 -c \"open('/etc/passwd','w')\") are all allowed today, verified by hand. That is tool-name matching, the exact pattern red-teaming already found inadequate for egress (POLICY_EVALUATION.md finding 10), which is why the egress rule was moved to destination matching. Likelihood is therefore NOT reduced below inherent: the rule stops the common redirect/copy shapes a looping agent produces, not an actor that picks a different binary. A destination-based FILE_WRITE model (resolve the target, not the tool) is the tracked follow-up. Separately, the rule originally rejected ANY target with a leading `$`, which hard-denied ordinary work (`npm run build > $(pwd)/build.log`) against a rule no operator could approve; deterministic expansions are now settled and genuinely unresolvable ones are held rather than blocked, which narrows what this control claims to what it can actually demonstrate.",
     owner: "runtime-team",
     status: "mitigated",
     reviewTriggers: [
       "a new write-shaped tool added to the runtime image",
       "before the write rule is claimed to be destination-based rather than tool-based",
+      "a new expansion added to the settled list — each one is a claim about how the runners invoke the container, and is only as true as that invocation",
     ],
   },
   {

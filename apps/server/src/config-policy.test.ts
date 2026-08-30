@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { codexConfigToml, loadConfig } from "./config.js";
+import {
+  guardedEvaluate,
+  policyContextFrom,
+  REVIEWABLE_RULES,
+} from "./command-policy.js";
 
 const base = { NODE_ENV: "test", ARK_API_KEY: "k", ARK_MODEL: "ep-test" } as const;
 
@@ -49,5 +54,63 @@ describe("Codex shell credential isolation", () => {
     // would leave the explicit rule inert.
     expect(toml).toContain('exclude = ["ARK_API_KEY"]');
     expect(toml).not.toContain("[shell_environment_policy.filters]");
+  });
+});
+
+/**
+ * @covers TM-AGENT-005
+ * The three safety invariants, asserted INDEPENDENTLY.
+ *
+ * Ported from the finding in PR #3's review rather than from PR #3's code. Its
+ * harness checked the same three invariants in one function that returned early
+ * on the first failure, and compared the reviewable set against a joined string
+ * literal. When 06bd51a legitimately added `network-egress-denied-implicit`,
+ * the literal stopped matching, invariant 1 failed for every case, and the
+ * early return meant invariants 2 and 3 — config rejects a secret rule, and
+ * evaluation fails CLOSED — silently stopped executing. A real security fix
+ * disabled the fail-closed test, with no conflict and nothing to announce it.
+ *
+ * Two properties follow from that, and both are structural rather than
+ * incidental: each invariant gets its own `it` block, so one failing cannot
+ * prevent another from running; and membership is asserted by set semantics
+ * rather than by a serialized literal, so growing the reviewable set for a good
+ * reason does not look identical to breaking it.
+ */
+describe("safety invariants hold independently of one another", () => {
+  it("keeps every rule that must never be human-approved out of the set", () => {
+    for (const rule of [
+      "secret-exfiltration",
+      "protected-secret-access",
+      "file-write-outside-workspace",
+      "policy-error",
+    ]) {
+      expect(REVIEWABLE_RULES, rule).not.toContain(rule);
+    }
+  });
+
+  it("keeps the rules that must stay reviewable in the set", () => {
+    for (const rule of ["network-egress-denied", "network-egress-denied-implicit"]) {
+      expect(REVIEWABLE_RULES, rule).toContain(rule);
+    }
+  });
+
+  it("rejects a configuration naming a rule outside that set", () => {
+    // Asserted here as well as above, so this invariant survives a failure of
+    // either membership check rather than sharing their fate.
+    expect(() =>
+      loadConfig({ ...base, POLICY_REVIEW_RULES: "network-egress-denied,protected-secret-access" }),
+    ).toThrow();
+  });
+
+  it("denies rather than allows when evaluation throws", () => {
+    const violation = guardedEvaluate(
+      { agentId: "invariant", threadId: null },
+      "npm install",
+      policyContextFrom("https://ark.cn-beijing.volces.com/api/v3"),
+      () => {
+        throw new Error("boom");
+      },
+    );
+    expect(violation?.rule).toBe("policy-error");
   });
 });
