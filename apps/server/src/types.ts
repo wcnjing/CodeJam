@@ -92,7 +92,10 @@ export interface ApprovalRequest {
   hosts: string[];
   status: ApprovalStatus;
   requestedAt: string;
-  /** Named human who resolved it. No real identity in this POC — a label. */
+  /**
+   * Id of the authenticated principal that resolved it, derived from the
+   * credential presented on the request. Never client-supplied.
+   */
   resolvedBy: string | null;
   /** Why the human approved or denied. Recorded to detect rubber-stamping. */
   decisionReason: string | null;

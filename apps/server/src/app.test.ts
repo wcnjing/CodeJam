@@ -84,4 +84,72 @@ describe("HTTP boundary", () => {
     expect(oversized.statusCode).toBe(413);
     await app.close();
   });
+
+  it("takes the approver from the credential and refuses a client-supplied actor", async () => {
+    const calls: unknown[] = [];
+    const recording = {
+      listAgents: () => [],
+      systemInfo: async () => ({}),
+      resolveApproval: async (
+        id: string,
+        decision: string,
+        principal: { id: string },
+        reason: string,
+      ) => {
+        calls.push({ id, decision, principal, reason });
+        return {
+          approval: { id, status: "approved", resolvedBy: principal.id },
+          continuationRun: null,
+        };
+      },
+    } as unknown as AgentService;
+    const app = await createApp(
+      loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
+      recording,
+    );
+    const approvalId = "11111111-1111-4111-8111-111111111111";
+    const url = "/api/approvals/" + approvalId;
+    const headers = { authorization: "Bearer " + ALICE };
+
+    // A client still sending `actor` is rejected outright, not silently stripped:
+    // stripping would hide the vulnerability rather than remove it.
+    const spoofed = await app.inject({
+      method: "POST",
+      url,
+      headers,
+      payload: { decision: "approve", reason: "ok", actor: "someone-else" },
+    });
+    expect(spoofed.statusCode).toBe(400);
+    expect(calls).toHaveLength(0);
+
+    const accepted = await app.inject({
+      method: "POST",
+      url,
+      headers,
+      payload: { decision: "approve", reason: "npm registry is trusted" },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(calls).toEqual([
+      {
+        id: approvalId,
+        decision: "approve",
+        principal: { id: "alice" },
+        reason: "npm registry is trusted",
+      },
+    ]);
+    expect(accepted.json().approval.resolvedBy).toBe("alice");
+    await app.close();
+  });
+
+  it("refuses an approval when no principal backs the request", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/approvals/11111111-1111-4111-8111-111111111111",
+      payload: { decision: "approve", reason: "ok" },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error).toMatch(/APP_PRINCIPALS/);
+    await app.close();
+  });
 });

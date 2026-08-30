@@ -21,6 +21,7 @@ import type {
   PolicyObservation,
   UpdateAgentInput,
 } from "./types.js";
+import type { Principal } from "./principals.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const now = () => new Date().toISOString();
@@ -196,13 +197,11 @@ export class AgentService {
   async resolveApproval(
     id: string,
     decision: "approve" | "deny",
-    actor: string,
+    principal: Principal,
     reason: string,
   ): Promise<{ approval: ApprovalRequest; continuationRun: AgentRun | null }> {
-    const trimmedActor = actor.trim();
-    if (!trimmedActor) {
-      throw new HttpError(400, "An approver name is required to record the decision");
-    }
+    // No "approver name required" guard: the caller is a resolved Principal, so
+    // an anonymous decision is unrepresentable rather than merely rejected.
     const trimmedReason = reason.trim();
     if (!trimmedReason) {
       throw new HttpError(400, "A reason is required so every decision records why");
@@ -216,7 +215,7 @@ export class AgentService {
           throw new HttpError(409, "This request was already " + approval.status);
         }
         approval.status = "denied";
-        approval.resolvedBy = trimmedActor;
+        approval.resolvedBy = principal.id;
         approval.decisionReason = trimmedReason;
         approval.resolvedAt = now();
         return structuredClone(approval);
@@ -266,7 +265,7 @@ export class AgentService {
       agent.lastError = null;
       agent.updatedAt = timestamp;
       approval.status = "approved";
-      approval.resolvedBy = trimmedActor;
+      approval.resolvedBy = principal.id;
       approval.decisionReason = trimmedReason;
       approval.resolvedAt = now();
       approval.continuationRunId = run.id;

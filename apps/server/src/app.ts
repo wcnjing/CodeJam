@@ -19,12 +19,16 @@ declare module "fastify" {
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
 const approvalIdParams = z.object({ id: z.string().uuid() });
-const approvalDecisionBody = z.object({
-  decision: z.enum(["approve", "deny"]),
-  actor: z.string().trim().min(1).max(120),
-  // Required: the audit trail claims every decision records why, so enforce it.
-  reason: z.string().trim().min(1).max(2000),
-});
+// .strict() is load-bearing: Zod strips unknown keys by default, so a client
+// still sending `actor` would be silently ignored — the hole hidden rather than
+// closed. Strict mode fails the request and says the field is gone.
+const approvalDecisionBody = z
+  .object({
+    decision: z.enum(["approve", "deny"]),
+    // Required: the audit trail claims every decision records why, so enforce it.
+    reason: z.string().trim().min(1).max(2000),
+  })
+  .strict();
 const createAgentBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().max(500).optional(),
@@ -154,13 +158,18 @@ export async function createApp(
 
   app.post("/api/approvals/:id", async (request, reply) => {
     const { id } = approvalIdParams.parse(request.params);
+    // Identity before content: an unattributable decision is refused before the
+    // body is even considered.
+    const principal = request.principal;
+    if (!principal) {
+      return reply.code(401).send({
+        error:
+          "Resolving an approval requires an authenticated principal. Set APP_PRINCIPALS " +
+          "and present that principal's token.",
+      });
+    }
     const body = approvalDecisionBody.parse(request.body);
-    const result = await service.resolveApproval(
-      id,
-      body.decision,
-      body.actor,
-      body.reason,
-    );
+    const result = await service.resolveApproval(id, body.decision, principal, body.reason);
     return reply.code(200).send(result);
   });
 
