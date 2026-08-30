@@ -873,7 +873,7 @@ export default function App() {
         </button>
 
         <button
-          className="button button-primary create-button"
+          className="button button-primary create-button eval-nav"
           onClick={() => {
             setForm(emptyForm);
             setShowCreate(true);
