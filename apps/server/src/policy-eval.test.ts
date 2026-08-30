@@ -55,8 +55,18 @@ describe("command policy quality gates", () => {
     //
     // An absolute cannot be a performance gate across unknown hardware -- that
     // is why section 2.3 of the plan keeps absolutes to pinned platforms. This
-    // is a smoke check against catastrophic regression, at ~3x the CI figure.
-    expect(result.meanMicroseconds).toBeLessThan(100);
+    // is a smoke check against catastrophic regression, sized against the
+    // SLOWEST runner rather than the fastest. Three measurements now exist:
+    //
+    //   laptop            24 us
+    //   ubuntu CI         33 us
+    //   windows CI       102 us
+    //
+    // 100 was sized from ubuntu alone and failed on windows, taking that leg
+    // from 12 known failures to 13 -- and the failure COUNT is the only signal
+    // that leg carries, so breaking it is worse than a loose threshold. 200 is
+    // ~2x the slowest observed.
+    expect(result.meanMicroseconds).toBeLessThan(200);
   });
 
   it("evaluates a corpus large enough to be meaningful", () => {
