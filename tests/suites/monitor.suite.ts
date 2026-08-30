@@ -7,8 +7,8 @@
  * returns the violation as an observation instead of killing it.
  */
 
-import { CodexRunner } from "../../apps/server/src/runners/codex-runner.js";
-import { loadConfig } from "../../apps/server/src/core/config.js";
+import { CodexRunner } from "../../apps/server/src/codex-runner.js";
+import { loadConfig } from "../../apps/server/src/config.js";
 import { MONITOR_PROFILE, DEFAULT_ENV } from "../lib/wiring.js";
 import { runProfile } from "../lib/harness.js";
 import { loadCatalog } from "../lib/catalog.js";

@@ -12,6 +12,7 @@ workspaces/
 codex-home/
 coverage/
 
+bench-results.json
 *.log
 *.tsbuildinfo
 # The repo manages dependencies with npm; pnpm-lock.yaml is a foreign lockfile.
@@ -24,3 +25,4 @@ tests/scores/
 AGENTS.md
 .vscode
 .skills
+.worktrees/

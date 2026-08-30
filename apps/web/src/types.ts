@@ -43,16 +43,26 @@ export interface AgentRun {
     cachedInputTokens?: number;
     outputTokens?: number;
   } | null;
+  startedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
 }
 
 /** What an action would do, in the vocabulary the policy decides on. */
 export interface CapabilityRequest {
-  capability: "NETWORK_EGRESS" | "SECRET_READ";
-  /** A hostname, or the label of the protected material. */
+  capability: "NETWORK_EGRESS" | "SECRET_READ" | "FILE_WRITE";
+  /** A hostname, the label of the protected material, or a write target. */
   resource: string;
   trusted: boolean;
-  via: "network-tool" | "interpreter" | "destination-only" | "protected-material";
+  via:
+    | "network-tool"
+    | "interpreter"
+    | "destination-only"
+    | "protected-material"
+    | "file-write"
+    | "file-write-unresolved";
+  /** Recovered from a payload the command would decode or pipe into a shell. */
+  decoded?: true;
 }
 
 export interface PolicyDecision {
@@ -112,7 +122,10 @@ export interface EvaluationSummary {
     precision: number;
     f1: number;
   };
-  latency: { p50: number; p95: number; mean: number };
+  // Mirrors apps/server/src/evaluation-summary.ts. Hand-duplicated: there is no
+  // shared import, so nothing here is checked against the server at build time.
+  // p99 is optional on both sides deliberately — see the note on the server copy.
+  latency: { p50: number; p95: number; mean: number; p99?: number };
   families: { family: string; attacks: number; escaped: number }[];
   escapes: { id: string; family: string }[];
 }
@@ -175,7 +188,14 @@ export interface SystemInfo {
   arkModel: string | null;
   codexAvailable: boolean;
   codexSandboxMode: string;
-  runtimeProvider: "local-process" | "container";
+  /** "enforce" | "monitor" — in monitor mode nothing is blocked or held at all. */
+  policyEnforcement: string;
+  /** Rules whose denials pause for a human instead of blocking outright. */
+  policyReviewRules: string[];
+  // Mirrors apps/server/src/config.ts. Hand-duplicated with no shared import,
+  // so a provider added there and not here is wrong at runtime with a green
+  // build - the same hazard documented on EvaluationSummary.latency.
+  runtimeProvider: "local-process" | "container" | "replay";
   containerEngine: string | null;
   runtime: string;
 }

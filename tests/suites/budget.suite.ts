@@ -13,9 +13,9 @@
  *          TM-AGENT-004).
  */
 
-import { CodexRunner } from "../../apps/server/src/runners/codex-runner.js";
-import { loadConfig } from "../../apps/server/src/core/config.js";
-import { BudgetExceededError } from "../../apps/server/src/core/errors.js";
+import { CodexRunner } from "../../apps/server/src/codex-runner.js";
+import { loadConfig } from "../../apps/server/src/config.js";
+import { BudgetExceededError } from "../../apps/server/src/errors.js";
 import { BUDGET_PROFILE, DEFAULT_ENV } from "../lib/wiring.js";
 import { runProfile } from "../lib/harness.js";
 import { loadCatalog } from "../lib/catalog.js";

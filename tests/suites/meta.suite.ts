@@ -15,8 +15,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { POLICY_CORPUS } from "../../apps/server/src/evaluation/policy-corpus.js";
-import { THREAT_REGISTER } from "../../apps/server/src/threat/threat-model.js";
+import { POLICY_CORPUS } from "../../apps/server/src/policy-corpus.js";
+import { THREAT_REGISTER } from "../../apps/server/src/threat-model.js";
 import { gitRevision } from "../lib/harness.js";
 import type { SuiteModule } from "./suite.js";
 import type { CaseVerdict } from "../lib/types.js";

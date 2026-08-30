@@ -1,0 +1,217 @@
+name: CI
+
+# Makes the README's "thresholds asserted in CI" true.
+#
+# The numeric gates already live in vitest — policy-eval.test.ts,
+# security-benchmark.test.ts and threat-model.test.ts assert core recall, false
+# positive rate, evasion recall, escape rate, secret leaks and threat coverage,
+# and `npm run test` runs them. What was missing was a machine that runs it on
+# every push. That is all this file adds; it introduces no new thresholds.
+#
+# The eval CLIs run after the gates as reporting output. They print the scorecard
+# for a human to read in the job log; they are not a second set of thresholds to
+# keep in sync with the first.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # BLOCKING. This is the job that closes the POSIX pass claim in
+  # docs/EVALUATION_RELIABILITY_PLAN.md §0, which until now rested on a single
+  # run on one contributor's machine.
+  #
+  # The node 22/24 matrix is not redundancy. §0 records that the POSIX and
+  # Windows baselines differed in TWO variables — platform and Node major — so
+  # the attribution of the failures to platform was an inference, however well
+  # supported. Passing on both Node majors on the same OS turns that inference
+  # into a measurement.
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # Lockfile-exact, unlike `npm install`. This is the clean-install path the
+      # plan's task 0.4 documents, so CI exercises the command a fresh clone runs.
+      - name: Install (lockfile-exact)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (asserts the eval thresholds)
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      # Reporting output, not gates. See the header note.
+      - name: Report — policy scorecard
+        run: npm run eval:policy
+
+      - name: Report — security benchmark
+        run: npm run bench:security
+
+      - name: Report — threat model coverage
+        run: npm run threat-model
+
+      # Produces the store-write overhead curve on a clean runner. The figures in
+      # docs/EVALUATION_RELIABILITY_PLAN.md §2.3 were taken on contributors'
+      # laptops; this is the same fix CI applied to the test counts. Reporting
+      # only — no gate, because the gate design (§2.3: slope not absolute) waits
+      # on task 1.5.
+      - name: Report — store-write overhead curve
+        run: npm run bench:store
+
+      # The front door a reviewer without a key runs first. Its three
+      # constituents are exercised above, but the wrapper itself never was --
+      # a wrapper whose parts pass while it is never invoked is exactly what CI
+      # should catch. Needs no ARK_API_KEY, no engine and no network, which is
+      # precisely the CI runner's situation.
+      # GATE, not a report: exits non-zero on a bypass that is not a documented
+      # residual. Wired here by task 1.4, which the note removed above was
+      # waiting for.
+      - name: Adversarial probe sweep (gate)
+        run: npm run redteam
+
+      # One entry point over everything above, emitting bench-results.json with
+      # git SHA, node, OS/arch, corpus size and policy hash, and every proportion
+      # as numerator / denominator / confidence interval. Uploaded below so a
+      # number can be attributed to a build and diffed against the previous one.
+      - name: Benchmark (JSON + human report)
+        run: npm run bench
+
+      # ubuntu only. Its decision A/B is cross-platform, but the run wall-clock
+      # and the teardown window spawn the shebang stand-in, which Windows cannot
+      # dispatch. The harness detects that and skips those two sections rather
+      # than reporting a wrong number, so running it here is where the teardown
+      # figure - the containment race window - actually gets measured.
+      - name: Overhead and containment window
+        run: npm run bench:overhead
+
+      # GATE. Bulk tier (thousands of generated variants through evaluateCommand)
+      # runs everywhere; the token tier through the real Runtime runs here, and
+      # is the half that proves the container dies rather than that a regex
+      # matched. Fails on a bypass signature that is not already documented.
+      - name: Generated attack bank (gate)
+        run: npm run bench:generate
+
+      - name: Zero-config front door
+        run: npm run demo:offline
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-node${{ matrix.node }}
+          path: bench-results.json
+          if-no-files-found: warn
+
+      #       # NOT RUN HERE: `npm run doctor`. Preflight requires ARK_API_KEY, ARK_MODEL
+      # and a reachable model endpoint, none of which exist on a CI runner. It is
+      # a developer/demo-day tool, not a build gate.
+
+  # NON-BLOCKING, and expected to be red today. Do not "fix" this by deleting it.
+  #
+  # `npm run test` fails 12 of its tests on Windows for two POSIX-only reasons
+  # documented in docs/EVALUATION_RELIABILITY_PLAN.md §0: the fake-Codex stand-in
+  # is spawned relying on a shebang and the executable bit (Windows dispatches on
+  # neither, so every spawn throws EFTYPE), and container-codex-runner.test.ts
+  # asserts literal /tmp bind-mount paths.
+  #
+  # This leg exists because the Windows figures in §0 were themselves a
+  # single-machine assertion. Running them here makes both platform claims
+  # verifiable from the same evidence, without a red badge on the branch. When
+  # Persons 1-2 fix the spawn and the hardcoded paths, drop continue-on-error and
+  # fold windows-latest into the matrix above.
+  windows:
+    name: "windows (known-red — see EVALUATION_RELIABILITY_PLAN §0)"
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install (lockfile-exact)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Expected: 12 failures. A change in that COUNT is the signal worth reading
+      # here — it means either a POSIX-only assumption was added, or one was fixed.
+      - name: Test (expected red — 12 POSIX-only failures)
+        run: npm run test
+
+      # Everything below carries `if: always()`. Without it a failing test step
+      # aborts the job, which is what happened on the first CI run: Build and
+      # every step after it were skipped, so this leg verified typecheck and test
+      # and nothing else. The 12 test failures are known and expected; they must
+      # not also hide whether the build and the CLIs work on Windows.
+
+      - name: Build
+        if: always()
+        run: npm run build
+
+      - name: Report — policy scorecard
+        if: always()
+        run: npm run eval:policy
+
+      - name: Report — security benchmark
+        if: always()
+        run: npm run bench:security
+
+      - name: Report — threat model coverage
+        if: always()
+        run: npm run threat-model
+
+      - name: Report — store-write overhead curve
+        if: always()
+        run: npm run bench:store
+
+      # The front door a reviewer without a key runs first. Its three
+      # constituents are exercised above, but the wrapper itself never was --
+      # a wrapper whose parts pass while it is never invoked is exactly what CI
+      # should catch. Needs no ARK_API_KEY, no engine and no network, which is
+      # precisely the CI runner's situation.
+      - name: Adversarial probe sweep (gate)
+        if: always()
+        run: npm run redteam
+
+      - name: Benchmark (JSON + human report)
+        if: always()
+        run: npm run bench
+
+      # Bulk tier only here: the token tier detects that Windows cannot spawn the
+      # stand-in and skips itself with an explanation.
+      - name: Generated attack bank (gate)
+        if: always()
+        run: npm run bench:generate
+
+      - name: Zero-config front door
+        if: always()
+        run: npm run demo:offline

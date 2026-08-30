@@ -17,7 +17,7 @@ server's middleware functions and drives the real `CodexRunner` with fake
 *library* (case catalog, provider-agnostic middleware profiles, harness, perf,
 summary) lives HERE in `tests/` as the `@sentinel/evaluation` workspace package;
 the web application imports it (`apps/server` depends on `@sentinel/evaluation`,
-wires the real middleware in via `apps/server/src/core/evaluation-deps.ts`, and
+wires the real middleware in via `apps/server/src/evaluation-deps.ts`, and
 serves it at `GET /api/pentest` rendered on the Security Evaluation page).
 `tests/` also holds the CLI, the behavioral suites and the scores.
 
@@ -37,7 +37,7 @@ tests/                       # @sentinel/evaluation workspace package + CLI/CI h
     wiring.ts                # CLI-side binding of the real middleware into the library
     index.ts                 # package entry (built to tests/dist by tsconfig.lib.json)
   cases/
-    past-examples.json       # curated from policy-corpus.ts + redteam.ts (227 cases; header records corpusSize/revision)
+    past-examples.json       # curated from policy-corpus.ts + redteam.ts (254 cases; header records corpusSize/revision)
     generated-advanced.json  # deepseek-pro escalated red-team cases (70 cases)
   docs/
     regression-matrix.md     # Sol escalated: per-tag layer matrix + gap analysis
@@ -50,7 +50,7 @@ tests/                       # @sentinel/evaluation workspace package + CLI/CI h
   runner.ts                  # CLI entry point
   tsconfig.lib.json          # builds the library -> tests/dist (consumed by the app)
   Dockerfile                 # disposable test image
-apps/server/src/core/evaluation-deps.ts  # app-side binding of the real middleware
+apps/server/src/evaluation-deps.ts  # app-side binding of the real middleware
 docker-compose.tests.yml     # separate compose for the suite (repo root)
 ```
 
@@ -119,10 +119,10 @@ closed vocabulary in `tests/lib/tags.ts`: `egress`, `obfuscation`, `encoding`,
 Sources:
 
 - **past-examples.json** — the project's labeled corpus
-  (`apps/server/src/evaluation/policy-corpus.ts`: direct egress, secret reads, reverse
+  (`apps/server/src/policy-corpus.ts`: direct egress, secret reads, reverse
   shells, interpreter egress, evasion, alternate channels, live-observed
   `/bin/bash -lc` wrapped forms, red-team probes, review literals) plus all 56
-  named probes from `apps/server/redteam.ts`. This is the "past examples" the
+  named probes from `apps/server/src/redteam.ts`. This is the "past examples" the
   suite curates: every defect in `docs/POLICY_EVALUATION.md` is represented.
 - **generated-advanced.json** — 70 new adversarial cases produced by an
   **escalated deepseek-pro red-team pass** (base64/hex/ANSI-C/octal fully

@@ -70,9 +70,15 @@ describe("monitor profile semantics", () => {
   });
 });
 
-it("accepts the two egress rules as the reviewable set", () => {
+it("accepts the engine's reviewable set (egress x2 + unresolved write target)", () => {
   const [,,,,,, config] = createProfiles(
-    customDeps({ REVIEWABLE_RULES: ["network-egress-denied", "network-egress-denied-implicit"] }),
+    customDeps({
+      REVIEWABLE_RULES: [
+        "file-write-unresolved-target",
+        "network-egress-denied",
+        "network-egress-denied-implicit",
+      ],
+    }),
   );
   const outcome = config!.evaluate(MALICIOUS, env);
   expect(outcome.detail).toBeNull();

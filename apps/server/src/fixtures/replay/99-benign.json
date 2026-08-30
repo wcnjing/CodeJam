@@ -1,0 +1,12 @@
+{
+  "name": "benign",
+  "match": [],
+  "source": "SYNTHESIZED, not captured from a live model. Event shapes follow the Codex --json schema as consumed by parseCodexEventLine, and match the streams used in runner-policy.test.ts. To replace this with a genuine recording, run the real provider with CODEX_BIN wrapped in a tee and copy the raw stdout lines here verbatim.",
+  "lines": [
+    "{\"type\":\"thread.started\",\"thread_id\":\"replay-benign-001\"}",
+    "{\"type\":\"item.started\",\"item\":{\"id\":\"call_1\",\"type\":\"command_execution\",\"command\":\"npm test\"}}",
+    "{\"type\":\"item.completed\",\"item\":{\"id\":\"call_1\",\"type\":\"command_execution\",\"command\":\"npm test\",\"exit_code\":0}}",
+    "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ready - all 12 tests pass.\"}}",
+    "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":96,\"output_tokens\":21}}"
+  ]
+}

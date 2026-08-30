@@ -118,12 +118,12 @@ export function runPerf(options: PerfOptions): PerfReport {
 
   // 1. Command policy — plain evaluateCommand.
   measure("command-policy", "Command policy", "evaluateCommand per case", (c) =>
-    deps.evaluateCommand(c.wrapped ? wrapped(c.command) : c.command, env.policyContext),
+    deps.evaluateCommand(env.actor, c.wrapped ? wrapped(c.command) : c.command, env.policyContext),
     true,
   );
   // 2. Command policy — guarded (fail-closed wrapper, the runner's actual call).
   measure("command-policy", "Command policy", "guardedEvaluate per case", (c) =>
-    deps.guardedEvaluate(c.wrapped ? wrapped(c.command) : c.command, env.policyContext),
+    deps.guardedEvaluate(env.actor, c.wrapped ? wrapped(c.command) : c.command, env.policyContext),
   );
   // 3. Redaction.
   measure("redaction", "Evidence redaction", "redactCommand per case", (c) =>
@@ -146,7 +146,7 @@ export function runPerf(options: PerfOptions): PerfReport {
     const wallStart = process.hrtime.bigint();
     for (let r = 0; r < runs; r += 1) {
       const t0 = process.hrtime.bigint();
-      deps.scanCommands(stream, 0, env.policyContext);
+      deps.scanCommands(env.actor, stream, 0, env.policyContext);
       const elapsed = Number(process.hrtime.bigint() - t0);
       runSamples.push(elapsed / 1000 / stream.length); // µs per command, one sample per batch
     }

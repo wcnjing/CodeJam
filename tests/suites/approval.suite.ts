@@ -9,8 +9,8 @@
  * checks verify the reviewable set and the config rejection loudly.
  */
 
-import { loadConfig } from "../../apps/server/src/core/config.js";
-import { REVIEWABLE_RULES, isReviewableRule } from "../../apps/server/src/middleware/command-policy.js";
+import { loadConfig } from "../../apps/server/src/config.js";
+import { REVIEWABLE_RULES, isReviewableRule } from "../../apps/server/src/command-policy.js";
 import { APPROVAL_PROFILE, DEFAULT_ENV } from "../lib/wiring.js";
 import { runProfile } from "../lib/harness.js";
 import { loadCatalog } from "../lib/catalog.js";
@@ -26,21 +26,38 @@ export const APPROVAL_SUITE: SuiteModule = {
 
     const extraVerdicts: CaseVerdict[] = [];
 
-    // Invariant: the reviewable set is exactly network-egress-denied.
+    // Invariant: the reviewable set contains exactly the engine's designated
+    // reviewable rules — membership-based, so a legitimate engine change
+    // (e.g. a new reviewable rule) fails LOUDLY here instead of silently
+    // skipping this check (the Critical-1 pattern).
     {
-      const ok =
-        REVIEWABLE_RULES.length === 1 && REVIEWABLE_RULES[0] === "network-egress-denied";
+      const required = [
+        "file-write-unresolved-target",
+        "network-egress-denied",
+        "network-egress-denied-implicit",
+      ];
+      const missing = required.filter((rule) => !REVIEWABLE_RULES.includes(rule));
+      const unexpected = REVIEWABLE_RULES.filter((rule) => !required.includes(rule));
+      const ok = missing.length === 0 && unexpected.length === 0;
       extraVerdicts.push({
         caseId: "approval-invariant-reviewable-set",
         decision: "n/a",
         rule: null,
         matchesExpected: ok,
-        note: ok ? "REVIEWABLE_RULES = [network-egress-denied]" : "REVIEWABLE_RULES changed: " + REVIEWABLE_RULES.join(","),
+        note: ok
+          ? "REVIEWABLE_RULES = " + REVIEWABLE_RULES.join(",")
+          : "reviewable-set drift: missing=" + missing.join(",") + " unexpected=" + unexpected.join(","),
       });
     }
 
     // Invariant: no rule except the reviewable one may be human-approved.
-    for (const rule of ["secret-exfiltration", "protected-secret-access", "policy-error"]) {
+    for (const rule of [
+      "secret-exfiltration",
+      "protected-secret-access",
+      "policy-error",
+      "encoded-exfiltration",
+      "file-write-outside-workspace",
+    ]) {
       const ok = !isReviewableRule(rule);
       extraVerdicts.push({
         caseId: "approval-invariant-not-reviewable-" + rule,
