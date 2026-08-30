@@ -96,6 +96,8 @@ export function selectFixture(
 }
 
 export class ReplayRunner implements AgentRunner {
+  /** Agents with a run in flight. Cancel only latches for these. */
+  private readonly active = new Set<string>();
   private readonly cancelled = new Set<string>();
   private fixtures: LoadedFixture[] | null = null;
 
@@ -114,6 +116,15 @@ export class ReplayRunner implements AgentRunner {
   }
 
   async cancel(agentId: string): Promise<boolean> {
+    // Only cancels a run that is actually in flight.
+    //
+    // This used to latch the id unconditionally and clear it only in `run()`'s
+    // finally, so cancelling an IDLE agent poisoned its next run. That is not a
+    // hypothetical path: `AgentService` calls `cancel()` on every `stopAgent`
+    // and `deleteAgent`, so a user who pressed Stop and then sent a message got
+    // a spuriously cancelled run. `CodexRunner.cancel()` returns false and
+    // mutates nothing when there is no active run; this now matches it.
+    if (!this.active.has(agentId)) return false;
     this.cancelled.add(agentId);
     return true;
   }
@@ -124,6 +135,7 @@ export class ReplayRunner implements AgentRunner {
   }
 
   async run(request: RunnerRequest): Promise<RunnerResult> {
+    this.active.add(request.agentId);
     const fixtures = await this.load();
     const fixture = selectFixture(fixtures, request.prompt);
     if (!fixture) {
@@ -197,6 +209,7 @@ export class ReplayRunner implements AgentRunner {
       throw error;
     } finally {
       this.cancelled.delete(request.agentId);
+      this.active.delete(request.agentId);
     }
   }
 }

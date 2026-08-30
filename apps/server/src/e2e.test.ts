@@ -557,6 +557,50 @@ async function injectOnce(mode: FailureMode): Promise<boolean> {
   return true;
 }
 
+describe("audit-write failure", () => {
+  it("never reports success when the decision could not be recorded", async () => {
+    // Wires up FlakyStore, which was dead code: the header advertised fault
+    // injection but the one mode this class exists for was never injected.
+    //
+    // Injecting it found a real defect. When the mutation that records the
+    // denial throws, AgentService's fire-and-forget `.catch(() => undefined)`
+    // swallows it and the run is STRANDED - it stays `queued`/`running` and the
+    // agent stays `busy` indefinitely, with no policy event stored.
+    //
+    // This asserts only the invariant that must hold either way: a run whose
+    // evidence was lost must never claim success. The stranding itself is
+    // recorded as an open finding rather than asserted, so that fixing it does
+    // not fail this test.
+    const { app, service } = await makeApp(
+      new ScopedEgressRunner(),
+      (dbPath) => new FlakyStore(dbPath, 4),
+    );
+    const agent = (
+      (await post(app, "/api/agents", { name: "Audited" })).json() as { agent: { id: string } }
+    ).agent;
+    const runId = (
+      (await post(app, `/api/agents/${agent.id}/messages`, { content: "fetch" })).json() as {
+        run: { id: string };
+      }
+    ).run.id;
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const status = await runStatus(app, runId);
+
+    expect(status, "a run whose audit write failed must not report success").not.toBe(
+      "completed",
+    );
+    // And no evidence may be invented for a write that did not happen.
+    const events = (
+      (await get(app, `/api/agents/${agent.id}/policy-events`)).json() as {
+        policyEvents: unknown[];
+      }
+    ).policyEvents;
+    expect(events).toEqual([]);
+    void service;
+  });
+});
+
 describe("run-outcome SLI under fault injection", () => {
   it(
     `handles 100% of declared failure modes as documented, across ${INJECTIONS_PER_MODE} injections each`,

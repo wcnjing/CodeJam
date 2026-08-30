@@ -1,6 +1,5 @@
 import { timeSweep } from "./bench/metrics.js";
 import { policyWorkload } from "./bench/policy-workload.js";
-import { POLICY_CORPUS } from "./policy-corpus.js";
 import { runBenchmark } from "./security-benchmark.js";
 
 const pct = (v: number) => (v * 100).toFixed(1) + "%";

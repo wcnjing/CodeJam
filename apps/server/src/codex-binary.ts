@@ -71,10 +71,22 @@ function pathEntries(): string[] {
  * has to run.
  */
 function searchPath(name: string): string | null {
-  const directories = [process.cwd(), ...pathEntries()];
-  const extensions = [...DIRECTLY_SPAWNABLE, ...SHELL_ONLY];
-  for (const extension of extensions) {
-    for (const directory of directories) {
+  // Directory-major, PATHEXT order within each directory - the order Windows
+  // itself uses.
+  //
+  // This was extension-major and searched `process.cwd()` first, which could
+  // resolve to a DIFFERENT executable than the platform would run: with
+  // `PATH=C:\\npm;C:\\other`, a real `C:\\npm\\codex.cmd` shim lost to an
+  // unrelated `C:\\other\\codex.exe`, and a `codex.exe` dropped in the server's
+  // working directory shadowed the installed one entirely. This module's whole
+  // contract is "never a silently wrong executable", and that resolved silently
+  // to one.
+  //
+  // The `.exe`-over-`.cmd` preference the original ordering was reaching for
+  // still holds where it is actually wanted - within a single directory - which
+  // is also where Windows applies it.
+  for (const directory of pathEntries()) {
+    for (const extension of [...DIRECTLY_SPAWNABLE, ...SHELL_ONLY]) {
       const candidate = path.join(directory, name + extension);
       if (isFile(candidate)) return candidate;
     }

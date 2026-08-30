@@ -155,11 +155,38 @@ async function startReplayServer() {
     if (await portBound(SELF_HOST_PORT)) return { child, dataRoot };
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  // Gave up waiting. Kill the child AND drop the temp dir - returning the path
+  // with no child left nothing to clean it up later.
   child.kill();
-  return { child: null, dataRoot };
+  await rm(dataRoot, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined);
+  return { child: null, dataRoot: null };
 }
 
 let selfHosted = null;
+
+/**
+ * Tears down anything this script started. Safe to call more than once.
+ *
+ * Extracted because the "server is not reachable" early exit below skipped it
+ * and orphaned the self-hosted server: port 3099 stayed held, so the next
+ * demo:check:replay attached to a stale process, and the mkdtemp'd data
+ * directory was never removed. Node does not reap children on exit, so nothing
+ * cleaned it up afterwards either.
+ */
+async function teardown() {
+  if (selfHosted?.child) {
+    selfHosted.child.kill();
+    selfHosted.child = null;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (selfHosted?.dataRoot) {
+    await rm(selfHosted.dataRoot, { recursive: true, force: true, maxRetries: 5 }).catch(
+      () => undefined,
+    );
+    selfHosted.dataRoot = null;
+  }
+}
+
 if (SELF_HOST) {
   selfHosted = await startReplayServer();
 }
@@ -193,6 +220,7 @@ try {
 if (!serverUp) {
   console.log("");
   console.log("Server is not reachable; the remaining checks cannot run.");
+  await teardown();
   console.log(`Total: ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
   process.exit(1);
 }
@@ -434,15 +462,7 @@ if (agent) {
 
 // ------------------------------------------------------------------ verdict
 
-if (selfHosted?.child) {
-  selfHosted.child.kill();
-  await new Promise((resolve) => setTimeout(resolve, 200));
-}
-if (selfHosted?.dataRoot) {
-  await rm(selfHosted.dataRoot, { recursive: true, force: true, maxRetries: 5 }).catch(
-    () => undefined,
-  );
-}
+await teardown();
 
 const seconds = (Date.now() - startedAt) / 1000;
 const warnings = results.filter((result) => result.status === "warn").length;

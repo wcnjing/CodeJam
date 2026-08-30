@@ -154,10 +154,26 @@ describe("replay enforcement decisions", () => {
     }
   });
 
-  it("cancels", async () => {
+  it("cancels a run that is in flight, and only that run", async () => {
+    // This test previously cancelled an IDLE agent and asserted the NEXT run was
+    // rejected, which encoded the bug two reviewers found rather than the
+    // contract. `AgentService` calls cancel() on every stopAgent/deleteAgent, so
+    // that behaviour meant pressing Stop poisoned the next message.
     const runner = new ReplayRunner(config());
-    await runner.cancel("replay-agent");
-    await expect(runner.run(request("say hello"))).rejects.toBeInstanceOf(RunCancelledError);
+
+    // Idle: nothing to cancel, nothing latched. Mirrors CodexRunner.cancel().
+    await expect(runner.cancel("replay-agent")).resolves.toBe(false);
+    await expect(runner.run(request("say hello"))).resolves.toMatchObject({
+      threadId: "replay-benign-001",
+    });
+
+    // In flight: the run is cancelled, and the agent is usable again after.
+    const inFlight = runner.run(request("say hello"));
+    await expect(runner.cancel("replay-agent")).resolves.toBe(true);
+    await inFlight.catch(() => undefined);
+    await expect(runner.run(request("say hello"))).resolves.toMatchObject({
+      threadId: "replay-benign-001",
+    });
   });
 });
 
