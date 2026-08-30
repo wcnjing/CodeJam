@@ -36,7 +36,8 @@ export type CapabilityEvidence =
   | "interpreter"       // a language runtime's networking API
   | "destination-only"  // a destination with no recognised tool: hidden binary
   | "protected-material" // a path or dereference naming protected material
-  | "file-write";        // a write-shaped target (redirect, cp/mv/tee/rm/mkdir)
+  | "file-write"         // a write-shaped target that resolves to a literal path
+  | "file-write-unresolved"; // a write target whose destination text cannot settle
 
 /**
  * One capability an action requests, against one resource.
@@ -347,30 +348,81 @@ function writeTargets(command: string): string[] {
  *    out of the container's `/tmp` scratch root is no better. `..` is not
  *    resolved and re-checked because the target is text, not a resolved path —
  *    a symlink under the root would make any resolution we did here a guess.
- *  - A leading `~` or `$` (`~/.ssh/authorized_keys`, `$HOME/.bashrc`,
- *    `${HOME}/x`). Where those expand is invisible to text-based analysis, and
- *    neither has a leading "/" or a `..` segment, so both used to be read as
- *    ordinary workspace-relative paths. `~/.ssh/authorized_keys` is the sharp
- *    one: it is SSH persistence and matches no protected-secret pattern.
+ *  - A leading `~` or an expansion that does not settle. `~/.ssh/authorized_keys`
+ *    and `$HOME/.bashrc` are the sharp ones: SSH persistence and shell
+ *    persistence, matching no protected-secret pattern, and neither carries a
+ *    leading "/" or a `..` segment, so both would otherwise read as ordinary
+ *    workspace-relative paths.
+ *
+ * A leading `$` is NOT by itself a walk out of the sandbox, and treating it as
+ * one hard-denied `npm run build > $(pwd)/build.log`, `cp dist/app $OUT_DIR/app`
+ * and `npm test > $TMPDIR/test.log` — ordinary work, against a rule no operator
+ * may approve. Three outcomes are now distinguished, because they are three
+ * different facts:
+ *
+ *  - `settled` — the expansion is deterministic and resolves to a literal path.
+ *    `$(pwd)`/`$PWD` is the process cwd, which for both runners IS the workspace
+ *    root; `$TMPDIR` is the scratch dir. Resolved, then tested like any literal.
+ *  - `outside` — the expansion is deterministic and resolves OUTSIDE every
+ *    declared root. `~` and `$HOME` are the home directory wherever the run
+ *    executes. Denied, non-reviewably, exactly as before.
+ *  - `unresolved` — the expansion is a name we cannot value (`$OUT_DIR`,
+ *    `$(date +%s)`). Neither "inside" nor "outside" is a fact here, and
+ *    asserting either would be a guess. Reported as its own state so the policy
+ *    can ask a human rather than pretend to know — see
+ *    `file-write-unresolved-target`.
  *
  * Otherwise: an absolute path is trusted only when it is one of the declared
  * roots or under one — with no declared roots, nothing absolute can be
  * verified, so nothing absolute is trusted — and a plain relative path is
  * trusted, because the container's cwd IS the workspace root.
  */
-function isInsideWriteRoots(target: string, writeRoots: readonly string[]): boolean {
-  const cleaned = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
-  if (cleaned.split("/").includes("..")) return false;
-  if (cleaned.startsWith("~") || cleaned.startsWith("$")) return false;
+export type WriteTargetVerdict = "inside" | "outside" | "unresolved";
+
+/**
+ * Expansions whose value is fixed by how the runners invoke the container, not
+ * by the command. Both runners set the process cwd to the workspace root and
+ * neither overrides TMPDIR, so these are facts about the runtime rather than
+ * guesses about the command.
+ */
+const SETTLED_EXPANSIONS: [RegExp, string][] = [
+  [/^\$\(pwd\)|^`pwd`|^\$\{PWD\}|^\$PWD\b/, "."],
+  [/^\$\{TMPDIR\}|^\$TMPDIR\b/, "/tmp"],
+];
+
+/** Expansions that deterministically land outside every declared write root. */
+const OUTSIDE_EXPANSIONS = /^~|^\$\{HOME\}|^\$HOME\b/;
+
+function classifyWriteTarget(
+  target: string,
+  writeRoots: readonly string[],
+): WriteTargetVerdict {
+  let cleaned = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
+
+  if (OUTSIDE_EXPANSIONS.test(cleaned)) return "outside";
+  for (const [pattern, replacement] of SETTLED_EXPANSIONS) {
+    if (pattern.test(cleaned)) {
+      cleaned = cleaned.replace(pattern, replacement).replace(/^\.\//, "");
+      break;
+    }
+  }
+  // A `..` walk is checked AFTER settling, so `$(pwd)/../etc/passwd` is still
+  // caught: settling must not become a way to smuggle a traversal past it.
+  if (cleaned.split("/").includes("..")) return "outside";
+  // Any expansion still standing is a name we cannot value.
+  if (cleaned.includes("$") || cleaned.includes("`")) return "unresolved";
+  if (!cleaned || cleaned === ".") return "inside";
+
   if (cleaned.startsWith("/")) {
-    return writeRoots.some((writeRoot) => {
+    const inside = writeRoots.some((writeRoot) => {
       if (!writeRoot) return false;
       const root = writeRoot.replace(/\/+$/, "");
       if (!root) return false;
       return cleaned === root || cleaned.startsWith(root + "/");
     });
+    return inside ? "inside" : "outside";
   }
-  return true;
+  return "inside";
 }
 
 /**
@@ -430,11 +482,15 @@ export function extractCapabilities(
   for (const target of writeTargets(command)) {
     const resource = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
     if (!resource) continue;
+    const verdict = classifyWriteTarget(resource, context.writeRoots);
+    // `trusted` stays a two-state field the rules can read directly; the third
+    // state rides on `via`, so an unresolved target is never silently counted
+    // as either a confirmed escape or a confirmed workspace write.
     requests.push({
       capability: "FILE_WRITE",
       resource,
-      trusted: isInsideWriteRoots(resource, context.writeRoots),
-      via: "file-write",
+      trusted: verdict === "inside",
+      via: verdict === "unresolved" ? "file-write-unresolved" : "file-write",
     });
   }
 

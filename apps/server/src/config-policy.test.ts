@@ -25,10 +25,15 @@ describe("POLICY_REVIEW_RULES invariant", () => {
     expect(config.policyReviewRules).toEqual(["network-egress-denied"]);
   });
 
-  it("defaults to egress-only", () => {
+  it("defaults to the rules where a human genuinely adds information", () => {
+    // Egress to a plausibly-legitimate host, and a write whose destination the
+    // text cannot settle. Both are cases where the operator knows something the
+    // engine does not. Secret access and demonstrated sandbox escapes are
+    // absent and cannot be added — parseReviewRules rejects them.
     expect(loadConfig(base).policyReviewRules).toEqual([
       "network-egress-denied",
       "network-egress-denied-implicit",
+      "file-write-unresolved-target",
     ]);
   });
 });

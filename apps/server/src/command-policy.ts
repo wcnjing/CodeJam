@@ -190,9 +190,33 @@ const POLICY_RULES: Policy[] = [
     statement: "FILE_WRITE is permitted only inside the run's workspace.",
     action: "FILE_WRITE",
     reviewable: false,
-    when: (resource) => !resource.trusted,
+    // Only targets that DEMONSTRABLY land outside. A target whose expansion
+    // could not be valued is not a demonstrated escape and is handled by
+    // `file-write-unresolved-target` below, which a human may approve.
+    when: (resource) => !resource.trusted && resource.via !== "file-write-unresolved",
     detail: (resources) =>
       "Command writes outside the workspace: " + resources.map((r) => r.value).join(", ") + ".",
+  },
+  {
+    id: "file-write-unresolved-target",
+    statement:
+      "A FILE_WRITE whose destination cannot be settled from the command text " +
+      "is neither permitted nor refused on the engine's own authority.",
+    action: "FILE_WRITE",
+    // Reviewable, and this is the whole point of separating it from
+    // `file-write-outside-workspace`. `cp dist/app $OUT_DIR/app` may be
+    // perfectly ordinary or may be an escape; the text cannot say which. The
+    // engine's honest answer is "I cannot tell", and the honest handling of
+    // "I cannot tell" is to ask the human who can, not to guess in either
+    // direction. Guessing ALLOW is a hole; guessing DENY hard-blocks ordinary
+    // work against a rule nobody may approve, which is what this replaced.
+    reviewable: true,
+    when: (resource) => resource.via === "file-write-unresolved" && !resource.trusted,
+    detail: (resources) =>
+      "Command writes to a target whose destination cannot be resolved from the " +
+      "command text: " +
+      resources.map((r) => r.value).join(", ") +
+      ". It may be inside the workspace or outside it; the text does not say.",
   },
   {
     id: "network-egress-denied",

