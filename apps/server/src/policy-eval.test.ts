@@ -41,21 +41,22 @@ describe("command policy quality gates", () => {
   });
 
   it("adds negligible per-command overhead", () => {
-    // 250, not 50. This is the first branch to run this gate on CI hardware --
-    // the workflow did not exist before it -- and the capability engine measures
-    // 85 us/command on a 4-cpu GitHub runner against 24 us on a developer
-    // laptop. The 50 was calibrated on laptop hardware and is not achievable on
-    // the runner; it is not a regression, it is a threshold that had never met
-    // the machine it now runs on.
+    // 100, not 50. This branch is the first to run the gate on CI hardware -- the
+    // workflow did not exist before it -- and the capability engine measures
+    // 33 us/command on a 4-cpu GitHub runner against 24 us on a laptop. The 50
+    // was calibrated on laptop hardware against the old regex engine and leaves
+    // ~1.5x headroom on a metric whose run-to-run CV is over 20%.
     //
-    // Verified the measurement method is not the cause: main's own timing loop
-    // and this one agree within noise on identical hardware (23.5-25.1 vs 24.5).
+    // It first measured 85 us on CI, which is why an earlier version of this
+    // comment set 250 and said warmup was not the cause. That was wrong: the
+    // warmup was too short for a structural parser, and a laptop was already
+    // warm enough to hide it. Sizing the warmup properly took CI from 85 to 33,
+    // and 250 was headroom bought against a number that no longer exists.
     //
-    // An absolute like this cannot be a performance gate across unknown
-    // hardware - that is why the plan's section 2.3 keeps absolutes to pinned
-    // platforms. Treat it as a smoke check against catastrophic regression, at
-    // ~3x the slowest figure observed.
-    expect(result.meanMicroseconds).toBeLessThan(250);
+    // An absolute cannot be a performance gate across unknown hardware -- that
+    // is why section 2.3 of the plan keeps absolutes to pinned platforms. This
+    // is a smoke check against catastrophic regression, at ~3x the CI figure.
+    expect(result.meanMicroseconds).toBeLessThan(100);
   });
 
   it("evaluates a corpus large enough to be meaningful", () => {
