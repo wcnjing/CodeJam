@@ -39,6 +39,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   policyContextFrom,
+  type Actor,
   scanCommands,
   type DetectedViolation,
 } from "./command-policy.js";
@@ -148,10 +149,15 @@ export class ReplayRunner implements AgentRunner {
     // Identical construction to CodexRunner: same config fields, same
     // run-scoped grant, same secret redaction list.
     const parsed = emptyParsedEvents(request.threadId);
+    const actor: Actor = { agentId: request.agentId, threadId: request.threadId };
     const policyContext = policyContextFrom(
       this.config.arkBaseUrl,
       [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
       [this.config.arkApiKey],
+      // Same write roots CodexRunner declares: the parity test compares the two
+      // runners' decisions, so a different boundary here would make them differ
+      // for a reason that has nothing to do with the replay.
+      [request.workspacePath],
     );
 
     const observations: DetectedViolation[] = [];
@@ -164,7 +170,7 @@ export class ReplayRunner implements AgentRunner {
     // budget is enforced regardless of monitor mode, and only the FIRST denial
     // arms the kill while every denial is still recorded as evidence.
     const applyPolicy = (): void => {
-      const found = scanCommands(parsed.commands, scannedCommands, policyContext);
+      const found = scanCommands(actor, parsed.commands, scannedCommands, policyContext);
       scannedCommands = parsed.commands.length;
       if (!budgetExceeded && parsed.commands.length > this.config.policyMaxCommands) {
         budgetExceeded = true;

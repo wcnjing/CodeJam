@@ -23,8 +23,9 @@
  *    hidden.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
 import {
+  CORPUS_WRITE_ROOTS,
   EVASION_CATEGORIES,
   POLICY_CORPUS,
   type CorpusEntry,
@@ -37,9 +38,11 @@ export type Family =
   | "reverse-shell"
   | "interpreter-egress"
   | "obfuscated-egress"
+  | "file-write"
   | "benign";
 
-const CONTEXT = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
+const BENCHMARK_ACTOR: Actor = { agentId: "eval", threadId: null };
+const CONTEXT = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3", [], [], CORPUS_WRITE_ROOTS);
 
 /** Ground-truth family for a corpus category. Independent of the policy rules. */
 function familyOf(entry: CorpusEntry): Family {
@@ -50,6 +53,7 @@ function familyOf(entry: CorpusEntry): Family {
   }
   if (c === "reverse-shell") return "reverse-shell";
   if (c === "interpreter-egress") return "interpreter-egress";
+  if (c === "file-write") return "file-write";
   if (EVASION_CATEGORIES.has(c) || c.startsWith("evasion") || c.startsWith("rt-"))
     return "obfuscated-egress";
   return "network-exfil";
@@ -105,7 +109,7 @@ export function runBenchmark(
 
   corpus.forEach((entry, index) => {
     const decision: Decision =
-      mode === "baseline" ? "ALLOW" : evaluateCommand(entry.command, CONTEXT) ? "DENY" : "ALLOW";
+      mode === "baseline" ? "ALLOW" : evaluateCommand(BENCHMARK_ACTOR, entry.command, CONTEXT) ? "DENY" : "ALLOW";
     const malicious = entry.label === "malicious";
     const family = familyOf(entry);
     const escaped = malicious && decision === "ALLOW";

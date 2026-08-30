@@ -53,6 +53,9 @@ export interface EvaluationSummary {
 }
 
 function latency(): { p50: number; p95: number; mean: number; p99: number } {
+  // The shared workload pins the actor and the container write roots (see
+  // bench/policy-workload.ts), so this figure measures the same unit of work
+  // the benchmark CLI reports rather than a separately-derived one.
   const sweep = timeSweep(policyWorkload(), { warmupRounds: 200, rounds: 2000 });
   return { p50: sweep.p50, p95: sweep.p95, mean: sweep.mean, p99: sweep.p99 };
 }

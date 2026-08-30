@@ -227,6 +227,37 @@ export const THREAT_REGISTER: Threat[] = [
     reviewTriggers: ["multi-user identity added", "store backend changed"],
   },
   {
+    id: "TM-AGENT-007",
+    title: "Agent writes outside the sandboxed workspace",
+    methodology: ["STRIDE: Tampering", "OWASP Agentic: Excessive Agency"],
+    assets: ["host filesystem", "other agents' workspaces", "container writable surface"],
+    actor: "a looping or manipulated agent reaching past its own workspace",
+    trustBoundary: "agent execution -> filesystem writes",
+    entryPoint: "any shell command with a write-shaped target (redirect, cp/mv/tee/rm/mkdir)",
+    attackPath: [
+      "agent (directly, or via injected instruction) issues a command whose write target resolves outside its mounted workspace",
+      "the write lands on host-adjacent or another agent's storage the agent was never granted",
+    ],
+    inherent: { likelihood: 3, impact: 3 },
+    controls: [
+      {
+        id: "CTRL-FILE-WRITE-DENY",
+        description:
+          "FILE_WRITE requests resolved against the write roots the runner declares (container: /workspace + the container-local /tmp, /var/tmp; host process: the workspace path only); any write outside them is hard-denied, never reviewable",
+        where: "capabilities.ts extractCapabilities, command-policy.ts file-write-outside-workspace",
+      },
+    ],
+    residual: { likelihood: 3, impact: 3 },
+    residualNote:
+      "This is NOT the egress rules' obfuscation limit; the gap is far more basic. Only shell redirects (>, >>, >|) and a five-tool list (cp, mv, tee, rm, mkdir) are inspected, so any other write-capable tool passes unseen — `touch /etc/x`, `dd of=/etc/x`, `sed -i s/a/b/ /etc/hosts`, `install -m 755 payload /usr/local/bin/x`, `ln -s`, `chmod 777 /etc/passwd`, and interpreter writes (python3 -c \"open('/etc/passwd','w')\") are all allowed today, verified by hand. That is tool-name matching, the exact pattern red-teaming already found inadequate for egress (POLICY_EVALUATION.md finding 10), which is why the egress rule was moved to destination matching. Likelihood is therefore NOT reduced below inherent: the rule stops the common redirect/copy shapes a looping agent produces, not an actor that picks a different binary. A destination-based FILE_WRITE model (resolve the target, not the tool) is the tracked follow-up.",
+    owner: "runtime-team",
+    status: "mitigated",
+    reviewTriggers: [
+      "a new write-shaped tool added to the runtime image",
+      "before the write rule is claimed to be destination-based rather than tool-based",
+    ],
+  },
+  {
     id: "TM-OPS-001",
     title: "Unbounded audit-log growth",
     methodology: ["LINDDUN: Non-compliance", "OWASP: secret leakage through logs"],
@@ -242,15 +273,21 @@ export const THREAT_REGISTER: Threat[] = [
     controls: [
       {
         id: "CTRL-REDACT-ONLY",
-        description: "Records are redacted before storage, but retention/access/deletion are not yet bounded",
+        description: "Records are redacted before storage, so a leaked record carries no secret material",
         where: "command-policy.ts redactCommand",
       },
+      {
+        id: "CTRL-RETENTION-BOUND",
+        description:
+          "policyEvents and resolved approvals are pruned once older than AUDIT_RETENTION_DAYS on every store mutation. A still-pending approval is exempt regardless of age — it's live state, not history",
+        where: "store.ts JsonStore.prune",
+      },
     ],
-    residual: { likelihood: 3, impact: 2 },
+    residual: { likelihood: 1, impact: 2 },
     residualNote:
-      "OPEN: redaction reduces exposure per-record but growth is unbounded. Now quantified, not just asserted: `npm run bench:store` measures the cost of recording one decision as O(events already stored) — fixed cost plus ~2.3 us per stored event, r-squared 0.9998, reaching ~11.7 ms at 5000 events against ~2.3 us for the policy decision itself. So unbounded growth is a live performance regression as well as an audit-surface risk. Still OPEN and deliberately so: the candidate fixes are scoped in docs/EVALUATION_RELIABILITY_PLAN.md section 2.3, and the two cheap ones discard audit evidence, which is a governance decision rather than a performance one. Retention policy remains the tracked next step (see OPERATIONAL_GOVERNANCE.md).",
+      "Bounded, where it was previously OPEN. The cost of the unbounded case was measured before it was fixed: `npm run bench:store` showed recording one decision cost O(events already stored) - a fixed cost plus ~2.3 us per stored event, r-squared 0.9998, reaching ~11.7 ms at 5000 events against ~2.3 us for the policy decision itself - so unbounded growth was a live performance regression as well as an audit-surface risk. AUDIT_RETENTION_DAYS now caps how long records accumulate and redaction still bounds per-record exposure. The residual is a misconfiguration (retention set far too high) rather than unbounded growth, and the store-overhead harness remains the way to detect it.",
     owner: "runtime-team",
-    status: "open",
-    reviewTriggers: ["before any non-POC deployment"],
+    status: "mitigated",
+    reviewTriggers: ["before any non-POC deployment", "AUDIT_RETENTION_DAYS default changed"],
   },
 ];

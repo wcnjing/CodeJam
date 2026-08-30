@@ -6,17 +6,19 @@
  * one-sided sweep of obfuscation and alternative-channel tricks aimed squarely
  * at getting something past the rules.
  *
- * Moved here from `apps/server/redteam.ts` by task 1.4. At the old path it sat
- * outside the server tsconfig include, so it was never type-checked, and it had
- * no npm script, so nothing ever ran it. Both are fixed: `npm run redteam`,
+ * Moved here from `apps/server/redteam.ts`. At the old path it sat outside the
+ * server tsconfig include, so it was never type-checked, and it had no npm
+ * script, so nothing ever ran it. Both are fixed: `npm run redteam`,
  * type-checked with everything else, and run in CI.
- *
- * The probe list below is unchanged from the original file.
  */
 
-import { evaluateCommand, policyContextFrom } from "./command-policy.js";
+import { evaluateCommand, policyContextFrom, type Actor } from "./command-policy.js";
+import { CORPUS_WRITE_ROOTS } from "./policy-corpus.js";
 
-const ctx = policyContextFrom("https://ark.ap-southeast.bytepluses.com/api/v3");
+// Scored against the container runner's write roots, like the corpus, so a
+// FILE_WRITE probe is judged by the boundary a real run actually has.
+const ctx = policyContextFrom("https://ark.ap-southeast.bytepluses.com/api/v3", [], [], CORPUS_WRITE_ROOTS);
+const REDTEAM_ACTOR: Actor = { agentId: "redteam", threadId: null };
 const W = (c: string) => `/bin/bash -lc ${JSON.stringify(c)}`;
 
 /**
@@ -110,7 +112,7 @@ export function runRedTeam(): RedTeamResult {
   let denied = 0;
   const missed: { name: string; command: string }[] = [];
   for (const [name, raw] of probes) {
-    const violation = evaluateCommand(W(raw), ctx);
+    const violation = evaluateCommand(REDTEAM_ACTOR, W(raw), ctx);
     if (violation) denied += 1;
     else missed.push({ name, command: raw.slice(0, 92) });
   }

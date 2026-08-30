@@ -5,6 +5,8 @@ import { runBenchmark } from "./security-benchmark.js";
 const pct = (v: number) => (v * 100).toFixed(1) + "%";
 
 // Security overhead: policy evaluation latency, measured apart from model time.
+// Same shared workload the scorecard and the dashboard use, so all three
+// report one number for one unit of work.
 const policyLatency = () => timeSweep(policyWorkload(), { warmupRounds: 200, rounds: 2000 });
 
 const protectedRun = runBenchmark("protected");

@@ -14,7 +14,7 @@ that lens, crediting real coverage and naming the gaps.
 | **Incident & near-miss handling** | **Strong.** Enforced denials are incidents; monitor-mode observations are recorded near-misses; evidence is redacted and preserved; rollback (container destroyed, workspace intact) is automatic. | `policyEvents` (`enforced` flag), monitor mode |
 | **Explicit use boundaries** | Partial. Tool/host boundaries enforced at the Runtime; not yet re-triggered on environment change (see gaps). | allowlist, `.secrets/`, `AGENTS.md` |
 | **Change-management triggers** | Partial. CI ratchets fail on policy-rule regressions. But the policy's correctness depends on the Runtime image's toolset (curl absent, node present) and the model — neither is a governed trigger. | `policy-eval.test.ts` |
-| **Data & log governance** | Partial. Redaction is enforced before storage/display. Retention, access, and deletion of `policyEvents`/`approvals` are **not** yet bounded — the logs grow unbounded, the very problem redaction was meant to avoid. | `redactCommand` |
+| **Data & log governance** | Strong. Redaction is enforced before storage/display, and `policyEvents`/resolved `approvals` are now pruned past `AUDIT_RETENTION_DAYS` on every store write. Access/deletion controls beyond retention are still out of scope for the POC. | `redactCommand`, `JsonStore.prune` |
 | **Post-deployment monitoring** | Partial. The substrate exists (persisted decisions, enforce-vs-monitor, override records); no drift/subgroup/rate dashboard yet. | `policyEvents`, `approvals` |
 | **Appeal & redress** | Partial. The approval workflow is a structured reconsideration path for a held run. There is no path for an already-hard-blocked run. | `resolveApproval` |
 | **Supply-chain, decommissioning, independent challenge** | Minor / out of scope. Pinned runtime image and `POLICY_ENFORCEMENT` off-switch exist; the rest is contractual or organizational, not a POC concern. | `Dockerfile.runtime`, config |
@@ -25,10 +25,17 @@ Not every denial is reviewable. Only the egress rules — `network-egress-denied
 (a named tool reaching a host outside the allowlist) and
 `network-egress-denied-implicit` (the same destination, with no recognised
 tool naming it) — reach a legitimate need often enough (a package registry) to
-be held for a human. `secret-exfiltration` and `protected-secret-access` are
-**always hard-denied and never subject to approval**, so no operator can be
-socially-engineered or fatigued into waving through the theft of a protected
-secret. The reviewable set is `POLICY_REVIEW_RULES`, defaulting to egress only.
+be held for a human. `secret-exfiltration`, `protected-secret-access` and
+`file-write-outside-workspace` are **always hard-denied and never subject to
+approval**, so no operator can be socially-engineered or fatigued into waving
+through the theft of a protected secret or a write past the sandbox boundary.
+The reviewable set is `POLICY_REVIEW_RULES`, defaulting to egress only.
+
+That third rule is why the container runner declares `/tmp` and `/var/tmp` as
+write roots alongside `/workspace`: its container is `--rm` with two bind mounts,
+so a scratch write there escapes nothing, and a rule with no appeal path must not
+kill an ordinary run over `git diff > /tmp/patch.diff`. The host-process runner,
+where `/tmp` is the real host `/tmp`, declares only the workspace path.
 
 The granted exception is **scoped to the exact hosts named and consumed by a
 single run** — proven live: after an approval let one task reach the npm
@@ -37,9 +44,9 @@ a standing allowlist change.
 
 ## Named, honest gaps
 
-1. **Unbounded logs.** `policyEvents` and `approvals` accumulate forever with no
-   retention or access rule. We redact secrets *into* the log, then never bound
-   it — the second privacy problem the discipline warns about. Next.
+1. **No access control on the audit store.** `policyEvents` and `approvals` are
+   now time-bounded (`AUDIT_RETENTION_DAYS`), but who can *read* the store once
+   it's persisted is still ungoverned — this POC has no access-control layer.
 2. **Ungoverned environment changes.** The policy assumes a specific runtime
    image and model. Adding `curl` to the image, or swapping the model, shifts the
    risk surface with nothing to re-trigger evaluation.
@@ -48,4 +55,12 @@ a standing allowlist change.
    plug an identity provider in exactly here (the "Bouncer" track this project
    did not take).
 4. **Hard-blocked runs have no appeal.** Only held (reviewable) runs can be
-   reconsidered; a `secret-exfiltration` block is final by design.
+   reconsidered; a `secret-exfiltration`, `protected-secret-access` or
+   `file-write-outside-workspace` block is final by design.
+5. **The write boundary is enforced by tool name, not destination.**
+   `file-write-outside-workspace` is a governance claim (no operator may approve
+   it) resting on a detector that inspects only redirects and
+   `cp`/`mv`/`tee`/`rm`/`mkdir`; `touch`, `dd`, `sed -i`, `install`, `ln`,
+   `chmod` and interpreter writes are not seen. The authority limit is real; its
+   coverage is first-pass. Recorded as unreduced residual likelihood on
+   TM-AGENT-007 rather than as a solved control.

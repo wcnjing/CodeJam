@@ -24,9 +24,9 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 | Policy-predicted over an authored corpus | No middleware | Sentinel |
 | --- | ---: | ---: |
 | Attacks the policy would allow | 100% | **1.0%** |
-| Secret-channel attacks allowed | 39/39 | **0/39** |
-| Legitimate tasks blocked | 0% | 1.4% |
-| Added per-command decision latency (p95) | — | **~24 µs** |
+| Secret-channel attacks allowed | 40/40 | **0/40** |
+| Legitimate tasks blocked | 0% | 1.3% |
+| Added per-command decision latency (p95) | — | **tens of µs** |
 
 *Figures from CI run
 [33294916979](https://github.com/wcnjing/CodeJam/actions/runs/33294916979); ranges
@@ -285,8 +285,9 @@ never drift from what actually enforces. It reports the **policy-predicted escap
 rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
 drops from 100% (no middleware) to 1.0% (one documented base64 residual, named
-not hidden), secret-channel attacks allowed from 39/39 to 0/39, with a p95
-decision latency of ~24 µs in the latest CLI run.
+not hidden), secret-channel attacks allowed from 40/40 to 0/40, with a p95
+decision latency in the tens of microseconds (hardware-dependent; run the CLI on
+your own machine for the figure that applies to it).
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
@@ -595,7 +596,8 @@ Recorded honestly, because each one is a real gap:
   has bridge networking. True default-deny egress needs network-layer
   enforcement, deliberately deferred — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
 - **Single process.** Policy decisions live in the same single-writer JSON store
-  as everything else, with no retention bound (tracked as TM-OPS-001).
+  as everything else, now pruned past `AUDIT_RETENTION_DAYS` (TM-OPS-001,
+  mitigated) — access control on the store itself remains out of scope.
 
 ## Screenshots
 

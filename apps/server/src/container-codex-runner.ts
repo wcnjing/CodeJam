@@ -7,7 +7,7 @@ import {
   parseCodexEventLine,
 } from "./codex-runner.js";
 import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
-import { policyContextFrom, scanCommands, type DetectedViolation } from "./command-policy.js";
+import { policyContextFrom, scanCommands, type Actor, type DetectedViolation } from "./command-policy.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -164,10 +164,20 @@ export class ContainerCodexRunner implements AgentRunner {
     this.active.set(request.agentId, active);
 
     const parsed = emptyParsedEvents(request.threadId);
+    const actor: Actor = { agentId: request.agentId, threadId: request.threadId };
     const policyContext = policyContextFrom(
       this.config.arkBaseUrl,
       [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
       [this.config.arkApiKey],
+      // The container runs with `--rm` and exactly two bind mounts
+      // (workspacePath -> /workspace, codexHome -> /codex-home). Everything
+      // else in this filesystem — /tmp and /var/tmp included — is
+      // container-local and destroyed when the container exits, so a write
+      // there escapes nothing and reaches no host path. Declaring the scratch
+      // dirs keeps ordinary work (`git diff > /tmp/patch.diff`) out of a rule
+      // that is hard-denied and terminates the run with no operator appeal.
+      // Anything else absolute (/etc, /usr, /codex-home) stays untrusted.
+      ["/workspace", "/tmp", "/var/tmp"],
     );
     let stdout = "";
     let stderr = "";
@@ -198,7 +208,7 @@ export class ContainerCodexRunner implements AgentRunner {
     // container on the first. Declared here so the final stdout flush (below)
     // is evaluated too — a command in the last unterminated line must not escape.
     const applyPolicy = () => {
-      const violations = scanCommands(parsed.commands, scannedCommands, policyContext);
+      const violations = scanCommands(actor, parsed.commands, scannedCommands, policyContext);
       scannedCommands = parsed.commands.length;
       // Step budget is a hard resource limit: enforced regardless of monitor
       // mode, because a runaway loop must be stopped whether or not command

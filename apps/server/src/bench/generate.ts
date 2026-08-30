@@ -28,10 +28,12 @@
  * author attacks for the labeled set.
  */
 
+import { BENCHMARK_ACTOR, BENCHMARK_CONTEXT } from "./policy-workload.js";
 import { evaluateCommand, policyContextFrom } from "../command-policy.js";
 import { wilson } from "./metrics.js";
 
-const CONTEXT = policyContextFrom("https://ark.cn-beijing.volces.com/api/v3");
+const CONTEXT = BENCHMARK_CONTEXT;
+const ACTOR = BENCHMARK_ACTOR;
 
 /** The allowlisted host, used to build the confusable forms. */
 const ALLOWED = "ark.cn-beijing.volces.com";
@@ -247,7 +249,7 @@ export function runBulk(variants: Variant[] = generateVariants()): BulkResult {
   const detectedIds = new Set<string>();
   const missed: Variant[] = [];
   for (const variant of variants) {
-    if (evaluateCommand(variant.command, CONTEXT)) detectedIds.add(variant.id);
+    if (evaluateCommand(ACTOR, variant.command, CONTEXT)) detectedIds.add(variant.id);
     else missed.push(variant);
   }
   const elapsedMilliseconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000;

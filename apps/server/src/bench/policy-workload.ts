@@ -13,8 +13,13 @@
  * `evaluateCommand` directly, so the migration is one file.
  */
 
-import { evaluateCommand, policyContextFrom, type PolicyContext } from "../command-policy.js";
-import { POLICY_CORPUS } from "../policy-corpus.js";
+import {
+  evaluateCommand,
+  policyContextFrom,
+  type Actor,
+  type PolicyContext,
+} from "../command-policy.js";
+import { CORPUS_WRITE_ROOTS, POLICY_CORPUS } from "../policy-corpus.js";
 
 /**
  * The context every benchmark evaluates against. Pinned to one allowlisted host
@@ -22,7 +27,20 @@ import { POLICY_CORPUS } from "../policy-corpus.js";
  */
 export const BENCHMARK_CONTEXT: PolicyContext = policyContextFrom(
   "https://ark.cn-beijing.volces.com/api/v3",
+  [],
+  [],
+  // The container runner's write roots. Without these every corpus redirect
+  // would evaluate against an empty root list, which fails closed — so the
+  // benchmark would time the FILE_WRITE denial path rather than the mix of
+  // paths a real run takes.
+  CORPUS_WRITE_ROOTS,
 );
+
+/**
+ * The actor every benchmark evaluates as. Pinned for the same reason the
+ * context is: a latency figure must not depend on which agent happened to run.
+ */
+export const BENCHMARK_ACTOR: Actor = { agentId: "benchmark", threadId: null };
 
 /** Every command in the corpus, in corpus order. */
 export const BENCHMARK_COMMANDS: readonly string[] = POLICY_CORPUS.map((entry) => entry.command);
@@ -40,11 +58,12 @@ export const BENCHMARK_COMMANDS: readonly string[] = POLICY_CORPUS.map((entry) =
 export function policyWorkload(
   commands: readonly string[] = BENCHMARK_COMMANDS,
   context: PolicyContext = BENCHMARK_CONTEXT,
+  actor: Actor = BENCHMARK_ACTOR,
 ): () => void {
   if (commands.length === 0) return () => {};
   let cursor = 0;
   return () => {
-    evaluateCommand(commands[cursor]!, context);
+    evaluateCommand(actor, commands[cursor]!, context);
     cursor = cursor + 1 < commands.length ? cursor + 1 : 0;
   };
 }

@@ -4,7 +4,12 @@ import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
 import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
 import { resolveCodexBinary } from "./codex-binary.js";
-import { policyContextFrom, scanCommands, type DetectedViolation } from "./command-policy.js";
+import {
+  policyContextFrom,
+  scanCommands,
+  type Actor,
+  type DetectedViolation,
+} from "./command-policy.js";
 import type {
   AgentRunner,
   RunUsage,
@@ -204,10 +209,15 @@ export class CodexRunner implements AgentRunner {
     this.active.set(request.agentId, active);
 
     const parsed = emptyParsedEvents(request.threadId);
+    const actor: Actor = { agentId: request.agentId, threadId: request.threadId };
     const policyContext = policyContextFrom(
       this.config.arkBaseUrl,
       [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
       [this.config.arkApiKey],
+      // No container here: the Agent runs directly on the developer's machine,
+      // so /tmp is the real host /tmp and genuinely outside the workspace. The
+      // workspace path is the only trusted root.
+      [request.workspacePath],
     );
     let stdout = "";
     let stderr = "";
@@ -242,7 +252,7 @@ export class CodexRunner implements AgentRunner {
     // kill on the first. Declared here so the final stdout flush (below) is
     // evaluated too — a command in the last unterminated line must not escape.
     const applyPolicy = () => {
-      const violations = scanCommands(parsed.commands, scannedCommands, policyContext);
+      const violations = scanCommands(actor, parsed.commands, scannedCommands, policyContext);
       scannedCommands = parsed.commands.length;
       // Step budget is a hard resource limit: enforced regardless of monitor
       // mode, because a runaway loop must be stopped whether or not command

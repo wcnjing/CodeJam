@@ -55,6 +55,9 @@ const envSchema = z.object({
   // Step budget: max shell commands one run may execute before it is killed as
   // runaway. Enforced by the platform, not the agent, and always on.
   POLICY_MAX_COMMANDS: z.coerce.number().int().positive().default(50),
+  // How long policyEvents/approvals survive in the store (TM-OPS-001). A
+  // pending approval is exempt regardless of age; only resolved history ages out.
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
 
@@ -104,6 +107,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     policyEnforcement: env.POLICY_ENFORCEMENT,
     policyMaxCommands: env.POLICY_MAX_COMMANDS,
     policyReviewRules: parseReviewRules(env.POLICY_REVIEW_RULES),
+    auditRetentionDays: env.AUDIT_RETENTION_DAYS,
     nodeEnv: env.NODE_ENV,
   };
 }

@@ -9,9 +9,10 @@
  */
 
 import { timeSweep } from "./bench/metrics.js";
-import { BENCHMARK_CONTEXT, policyWorkload } from "./bench/policy-workload.js";
+import { BENCHMARK_ACTOR, BENCHMARK_CONTEXT, policyWorkload } from "./bench/policy-workload.js";
 import { evaluateCommand } from "./command-policy.js";
 import {
+  CORPUS_WRITE_ROOTS,
   EVASION_CATEGORIES,
   POLICY_CORPUS,
   type CorpusEntry,
@@ -59,10 +60,14 @@ export interface EvaluationResult {
   meanMicroseconds: number;
 }
 
+// The scorecard evaluates as the same pinned actor and against the same pinned
+// context as every other harness, so its rule counts and its latency figure
+// describe one engine configuration rather than two.
+const EVAL_ACTOR = BENCHMARK_ACTOR;
 const DEFAULT_CONTEXT = BENCHMARK_CONTEXT;
 
 function isBlocked(entry: CorpusEntry, context = DEFAULT_CONTEXT): string | null {
-  const violation = evaluateCommand(entry.command, context);
+  const violation = evaluateCommand(EVAL_ACTOR, entry.command, context);
   return violation ? violation.rule : null;
 }
 

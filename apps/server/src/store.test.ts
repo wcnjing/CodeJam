@@ -53,4 +53,88 @@ describe("JsonStore", () => {
       "queue recovered",
     ]);
   });
+
+  // @covers TM-OPS-001
+  it("prunes policyEvents older than retentionDays on the next mutation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    temporaryDirectories.push(root);
+    const store = new JsonStore(path.join(root, "db.json"), 1);
+    await store.initialize();
+
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    await store.mutate((database) => {
+      database.policyEvents.push({
+        id: "event-1",
+        agentId: "agent-1",
+        runId: "run-1",
+        rule: "network-egress-denied",
+        command: "curl https://attacker.example",
+        detail: "non-allowlisted host",
+        enforced: true,
+        decidedAt: twoDaysAgo,
+      });
+    });
+
+    expect(store.snapshot().policyEvents).toEqual([]);
+  });
+
+  it("never prunes a pending approval, however old its requestedAt is", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    temporaryDirectories.push(root);
+    const store = new JsonStore(path.join(root, "db.json"), 1);
+    await store.initialize();
+
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    await store.mutate((database) => {
+      database.approvals.push({
+        id: "approval-1",
+        agentId: "agent-1",
+        runId: "run-1",
+        prompt: "resume the task",
+        rule: "network-egress-denied",
+        command: "curl https://registry.npmjs.org/react",
+        detail: "non-allowlisted host",
+        hosts: ["registry.npmjs.org"],
+        status: "pending",
+        requestedAt: twoDaysAgo,
+        resolvedBy: null,
+        decisionReason: null,
+        resolvedAt: null,
+        continuationRunId: null,
+      });
+    });
+
+    expect(store.snapshot().approvals.map((approval) => approval.id)).toEqual([
+      "approval-1",
+    ]);
+  });
+
+  it("prunes a resolved approval once resolvedAt is older than retentionDays", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    temporaryDirectories.push(root);
+    const store = new JsonStore(path.join(root, "db.json"), 1);
+    await store.initialize();
+
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    await store.mutate((database) => {
+      database.approvals.push({
+        id: "approval-2",
+        agentId: "agent-1",
+        runId: "run-1",
+        prompt: "resume the task",
+        rule: "network-egress-denied",
+        command: "curl https://registry.npmjs.org/react",
+        detail: "non-allowlisted host",
+        hosts: ["registry.npmjs.org"],
+        status: "approved",
+        requestedAt: twoDaysAgo,
+        resolvedBy: "operator",
+        decisionReason: "known-good registry",
+        resolvedAt: twoDaysAgo,
+        continuationRunId: null,
+      });
+    });
+
+    expect(store.snapshot().approvals).toEqual([]);
+  });
 });

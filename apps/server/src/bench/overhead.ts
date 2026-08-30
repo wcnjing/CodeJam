@@ -41,6 +41,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { CodexRunner } from "../codex-runner.js";
 import { policyContextFrom, scanCommands, scanCommandsWith } from "../command-policy.js";
+import { BENCHMARK_ACTOR } from "./policy-workload.js";
 import { loadConfig } from "../config.js";
 import { PolicyViolationError } from "../errors.js";
 import { timeSweep, type SweepResult } from "./metrics.js";
@@ -92,14 +93,14 @@ export interface ScanDelta {
  */
 export function measureScanDelta(commandsPerRun: number): ScanDelta {
   const commands = commandsFor(commandsPerRun);
-  const policyOn = timeSweep(() => void scanCommands(commands, 0, CONTEXT), {
+  const policyOn = timeSweep(() => void scanCommands(BENCHMARK_ACTOR, commands, 0, CONTEXT), {
     warmupRounds: 50,
     rounds: 500,
   });
-  const policyOff = timeSweep(() => void scanCommandsWith(commands, 0, CONTEXT, () => null), {
-    warmupRounds: 50,
-    rounds: 500,
-  });
+  const policyOff = timeSweep(
+    () => void scanCommandsWith(BENCHMARK_ACTOR, commands, 0, CONTEXT, () => null),
+    { warmupRounds: 50, rounds: 500 },
+  );
   return {
     commandsPerRun,
     policyOn,

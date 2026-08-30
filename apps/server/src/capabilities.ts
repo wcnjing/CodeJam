@@ -28,14 +28,15 @@ import {
 } from "./shell-parse.js";
 
 /** What an action would do, independent of the syntax that requested it. */
-export type Capability = "NETWORK_EGRESS" | "SECRET_READ";
+export type Capability = "NETWORK_EGRESS" | "SECRET_READ" | "FILE_WRITE";
 
 /** How the capability was established, kept for evidence and for rule tuning. */
 export type CapabilityEvidence =
   | "network-tool"      // a recognised binary in command position
   | "interpreter"       // a language runtime's networking API
   | "destination-only"  // a destination with no recognised tool: hidden binary
-  | "protected-material"; // a path or dereference naming protected material
+  | "protected-material" // a path or dereference naming protected material
+  | "file-write";        // a write-shaped target (redirect, cp/mv/tee/rm/mkdir)
 
 /**
  * One capability an action requests, against one resource.
@@ -59,6 +60,20 @@ export interface PolicyContext {
    * it back into storage, the API, or the browser.
    */
   secretValues?: string[];
+  /**
+   * Every directory tree this run may write into, for resolving FILE_WRITE
+   * targets as inside or outside the sandbox. A list rather than a single root
+   * because "inside the sandbox" is a property of the runner, not of the
+   * workspace: the container runner's `/tmp` is container-local scratch that
+   * dies with the container, while the host runner's `/tmp` is the developer's
+   * real one. Each runner declares what it actually knows.
+   *
+   * Required, not optional, and an empty list fails closed: a run with no
+   * declared roots must not silently make every write "unverifiable, so allow
+   * it" — every absolute write target is untrusted unless it resolves under a
+   * declared root.
+   */
+  writeRoots: string[];
 }
 
 // Tools that reach the network only for particular subcommands. Treating all of
@@ -270,6 +285,94 @@ export function extractHosts(command: string): string[] {
 
   return [...hosts];
 }
+// Tools whose write target(s) can be inspected in argument position. cp/mv take
+// a source and a destination — only the destination is written to, so those two
+// are handled separately from tee/rm/mkdir, which write/touch every argument.
+const WRITE_DESTINATION_TOOLS = new Set(["cp", "mv"]);
+const WRITE_EVERY_ARGUMENT_TOOLS = new Set(["tee", "rm", "mkdir"]);
+
+function writeTargetsFromInvocation(tool: string, args: string[]): string[] {
+  const positional = args.filter((argument) => !argument.startsWith("-"));
+  if (WRITE_DESTINATION_TOOLS.has(tool)) {
+    return positional.length > 0 ? [positional[positional.length - 1]!] : [];
+  }
+  if (WRITE_EVERY_ARGUMENT_TOOLS.has(tool)) {
+    return positional;
+  }
+  return [];
+}
+
+// Pseudo-devices that discard or re-emit a stream rather than writing a file.
+// `cmd > /dev/null 2>&1` is among the commonest shell idioms there is and
+// escapes nothing, but as an absolute path it resolves outside any workspace
+// root — so extracting it as a write target would hard-deny ordinary work with
+// no operator override. Matched exactly, so real writable locations that merely
+// share the prefix (`/dev/shm/payload`, `/devops/deploy.sh`) stay governed.
+//
+// Deliberately NOT extended to /dev/tcp/* or /dev/udp/*: those are sockets, and
+// a write to one is real egress that must stay denied.
+const DISCARD_TARGET = /^\/dev\/(?:null|stdout|stderr|fd\/\d+)$/;
+
+function isDiscardedStream(target: string): boolean {
+  return DISCARD_TARGET.test(target.replace(/^['"]+/, "").replace(/['"]+$/, ""));
+}
+
+/** Every write-shaped target in a command: shell redirects plus write-tool arguments. */
+function writeTargets(command: string): string[] {
+  const targets: string[] = [];
+  // `>`, `>>`, and `>|` — the last overrides `set -o noclobber`, and is a
+  // redirect like any other. Missing it let `echo x >| /etc/passwd` be read as
+  // a command with no write target at all.
+  for (const match of command.matchAll(/>>?\|?\s*([^\s;&|<>]+)/g)) {
+    if (match[1]) targets.push(match[1]);
+  }
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    targets.push(...writeTargetsFromInvocation(invocation.tool, invocation.args));
+  }
+  // Applied to both sources: `tee /dev/null` discards just as a redirect does.
+  return targets.filter((target) => !isDiscardedStream(target));
+}
+
+/**
+ * Whether a write target resolves inside one of the run's declared write roots.
+ *
+ * A write root is a *prefix* claim about where a path lands, and a prefix test
+ * is only sound on a path that is both normalised and fully literal. Two things
+ * therefore disqualify a target before the prefix test is even reached:
+ *
+ *  - Any `..` segment, absolute or relative. `/workspace/../etc/cron.d/backdoor`
+ *    has a declared root as its literal prefix and lands in /etc; the same walk
+ *    out of the container's `/tmp` scratch root is no better. `..` is not
+ *    resolved and re-checked because the target is text, not a resolved path —
+ *    a symlink under the root would make any resolution we did here a guess.
+ *  - A leading `~` or `$` (`~/.ssh/authorized_keys`, `$HOME/.bashrc`,
+ *    `${HOME}/x`). Where those expand is invisible to text-based analysis, and
+ *    neither has a leading "/" or a `..` segment, so both used to be read as
+ *    ordinary workspace-relative paths. `~/.ssh/authorized_keys` is the sharp
+ *    one: it is SSH persistence and matches no protected-secret pattern.
+ *
+ * Otherwise: an absolute path is trusted only when it is one of the declared
+ * roots or under one — with no declared roots, nothing absolute can be
+ * verified, so nothing absolute is trusted — and a plain relative path is
+ * trusted, because the container's cwd IS the workspace root.
+ */
+function isInsideWriteRoots(target: string, writeRoots: readonly string[]): boolean {
+  const cleaned = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
+  if (cleaned.split("/").includes("..")) return false;
+  if (cleaned.startsWith("~") || cleaned.startsWith("$")) return false;
+  if (cleaned.startsWith("/")) {
+    return writeRoots.some((writeRoot) => {
+      if (!writeRoot) return false;
+      const root = writeRoot.replace(/\/+$/, "");
+      if (!root) return false;
+      return cleaned === root || cleaned.startsWith(root + "/");
+    });
+  }
+  return true;
+}
+
 /**
  * The capabilities a command would exercise, resolved against the run's context.
  *
@@ -321,6 +424,17 @@ export function extractCapabilities(
       resource: secret,
       trusted: false,
       via: "protected-material",
+    });
+  }
+
+  for (const target of writeTargets(command)) {
+    const resource = target.replace(/^['"]+/, "").replace(/['"]+$/, "");
+    if (!resource) continue;
+    requests.push({
+      capability: "FILE_WRITE",
+      resource,
+      trusted: isInsideWriteRoots(resource, context.writeRoots),
+      via: "file-write",
     });
   }
 

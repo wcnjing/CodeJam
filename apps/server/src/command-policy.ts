@@ -13,13 +13,89 @@
 import {
   extractCapabilities,
   isTextualUrlOnly,
-  untrustedDestinations,
   type Capability,
   type CapabilityRequest,
   type PolicyContext,
 } from "./capabilities.js";
 
 export type { PolicyContext, Capability, CapabilityRequest };
+
+/** Who issued the command — the run/agent identity, not the human approver. */
+export interface Actor {
+  agentId: string;
+  threadId: string | null;
+}
+
+/** One capability request, reshaped as the resource half of a decision tuple. */
+export interface Resource {
+  kind: "host" | "secret" | "path";
+  value: string;
+  trusted: boolean;
+  via: CapabilityRequest["via"];
+}
+
+/** Everything a decision needs beyond the action+resource: run-scoped facts. */
+export interface DecisionContext extends PolicyContext {
+  /** A URL that is being written as text rather than fetched. Per-command, not per-resource. */
+  textualOnly: boolean;
+}
+
+export type Decision =
+  | { effect: "ALLOW" }
+  | {
+      effect: "DENY";
+      rule: string;
+      detail: string;
+      reviewable: boolean;
+      hosts?: string[];
+    };
+
+/**
+ * A policy scoped to exactly one capability, reading as a statement about the
+ * tuple: "this action on this resource, in this context, is denied because...".
+ *
+ * `detail`/`hosts` take every resource that matched `when` in one command, not
+ * just the one passed to `decide()`: `evaluateCommand` calls `decide()` per
+ * resource and then hands the matching policy all of the resources it claimed,
+ * so "Command contacts non-allowlisted host(s): a, b, c" keeps listing every
+ * host, not just the first.
+ */
+export interface Policy {
+  id: string;
+  statement: string;
+  action: Capability;
+  reviewable: boolean;
+  when: (resource: Resource, context: DecisionContext, actor: Actor) => boolean;
+  detail: (resources: Resource[], context: DecisionContext) => string;
+  /** Present only when a human could grant a scoped exception (the egress rules). */
+  hosts?: (resources: Resource[]) => string[];
+}
+
+/**
+ * Decide one action on one resource. Pure: no extraction, no aggregation across
+ * a command's other resources — see `Policy`'s doc comment for where the
+ * aggregation happens.
+ */
+export function decide(
+  actor: Actor,
+  action: Capability,
+  resource: Resource,
+  context: DecisionContext,
+  policies: Policy[],
+): Decision {
+  for (const policy of policies) {
+    if (policy.action !== action) continue;
+    if (!policy.when(resource, context, actor)) continue;
+    return {
+      effect: "DENY",
+      rule: policy.id,
+      detail: policy.detail([resource], context),
+      reviewable: policy.reviewable,
+      ...(policy.hosts ? { hosts: policy.hosts([resource]) } : {}),
+    };
+  }
+  return { effect: "ALLOW" };
+}
 
 export interface PolicyViolation {
   rule: string;
@@ -34,122 +110,192 @@ export interface PolicyViolation {
   capabilities?: CapabilityRequest[];
 }
 
-/**
- * The ONLY rules a human may ever be asked to approve. This is a code-level
- * invariant, not a config value: a non-allowlisted egress can be a legitimate
- * need (a package registry), so it is reviewable — but reading or exfiltrating a
- * protected secret is never something an operator can wave through, no matter
- * what `POLICY_REVIEW_RULES` is set to. Config is intersected with this set and
- * rejected if it names anything outside it (see config.ts).
- */
-
-export const REVIEWABLE_RULES: readonly string[] = [
-  "network-egress-denied",
-  "network-egress-denied-implicit",
-];
-
-/** True only for rules a human is permitted to approve. */
-
-export function isReviewableRule(rule: string): boolean {
-  return REVIEWABLE_RULES.includes(rule);
+/** Maps a capability request onto the `kind` a Resource carries. */
+function toResource(request: CapabilityRequest): Resource {
+  const kind: Resource["kind"] =
+    request.capability === "NETWORK_EGRESS"
+      ? "host"
+      : request.capability === "SECRET_READ"
+        ? "secret"
+        : "path";
+  return { kind, value: request.resource, trusted: request.trusted, via: request.via };
 }
 
 /**
- * A rule states which capability combination is governed and how. Order is
- * significant: the first match decides, most-severe first.
+ * Cross-capability rules don't fit a single actor+action+resource tuple — they
+ * govern the *set* of actions an actor takes in one command. Evaluated before
+ * the per-tuple POLICY_RULES pass (see the module's CombinationPolicy pass
+ * below), so secret-exfiltration keeps the top priority it has today.
  */
-interface CapabilityRule {
+export interface CombinationPolicy {
   id: string;
-  /** Prose statement of the invariant, shown in the threat model and docs. */
   statement: string;
-  matches: (facts: PolicyFacts) => boolean;
-  detail: (facts: PolicyFacts) => string;
-  /** Destinations a human could grant a scoped exception for. */
-  hosts?: (facts: PolicyFacts) => string[];
+  reviewable: boolean;
+  when: (requests: CapabilityRequest[], context: DecisionContext) => boolean;
+  detail: (requests: CapabilityRequest[]) => string;
 }
 
-interface PolicyFacts {
-  requests: CapabilityRequest[];
-  /** Destinations outside the run's allowlist. */
-  untrusted: string[];
-  /** The protected material named, if any. */
-  secret: string | null;
-  /** Egress established by a named tool or interpreter, not merely a URL. */
-  activeEgress: boolean;
-  /** A URL that is being written as text rather than fetched. */
-  textualOnly: boolean;
-}
-
-const POLICY_RULES: CapabilityRule[] = [
+const COMBINATION_POLICIES: CombinationPolicy[] = [
   {
     id: "secret-exfiltration",
-    statement:
-      "An actor holding SECRET_READ may not also exercise NETWORK_EGRESS.",
-    matches: (f) => f.activeEgress && f.secret !== null,
-    detail: (f) =>
-      "Command combines network egress with access to " + f.secret + ".",
+    statement: "An actor holding SECRET_READ may not also exercise NETWORK_EGRESS.",
+    reviewable: false,
+    when: (requests) =>
+      requests.some((r) => r.capability === "SECRET_READ") &&
+      requests.some(
+        (r) =>
+          r.capability === "NETWORK_EGRESS" && (r.via === "network-tool" || r.via === "interpreter"),
+      ),
+    detail: (requests) => {
+      const secret = requests.find((r) => r.capability === "SECRET_READ")?.resource ?? "";
+      return "Command combines network egress with access to " + secret + ".";
+    },
+  },
+];
+
+/**
+ * Per-capability policies. Order is significant in two different ways.
+ *
+ * Between groups it is a security boundary: the first policy with any matching
+ * resource decides the whole command, and an approved command is rerun verbatim
+ * with no re-evaluation, so a reviewable rule ordered ahead of a hard denial
+ * would let an operator wave through an action they were never shown. EVERY
+ * non-reviewable rule must therefore precede EVERY reviewable one — the
+ * `protected-secret-access` and `file-write-outside-workspace` pair ahead of
+ * both egress rules. A test pins this.
+ *
+ * Within the non-reviewable group it is only about attribution, and
+ * `protected-secret-access` leads: when a command both reads protected material
+ * and writes it somewhere outside the sandbox, the finding is the credential,
+ * not the destination. Either rule denies, so nothing is let through by getting
+ * this wrong — the operator is just told about a filesystem mishap when what
+ * happened was a credential read.
+ *
+ * `network-egress-denied` / `network-egress-denied-implicit` stay mutually
+ * exclusive per resource via `via` — a resource with `via ===
+ * "destination-only"` can only match the implicit rule, never the named-tool
+ * rule, which is what keeps an obfuscated destination reporting the correct id.
+ */
+const POLICY_RULES: Policy[] = [
+  {
+    id: "protected-secret-access",
+    statement: "SECRET_READ on protected material is denied on its own.",
+    action: "SECRET_READ",
+    reviewable: false,
+    when: () => true,
+    detail: (resources) => "Command reads " + resources[0]?.value + ".",
+  },
+  {
+    id: "file-write-outside-workspace",
+    statement: "FILE_WRITE is permitted only inside the run's workspace.",
+    action: "FILE_WRITE",
+    reviewable: false,
+    when: (resource) => !resource.trusted,
+    detail: (resources) =>
+      "Command writes outside the workspace: " + resources.map((r) => r.value).join(", ") + ".",
   },
   {
     id: "network-egress-denied",
-    statement:
-      "NETWORK_EGRESS is permitted only to destinations on the run's allowlist.",
-    matches: (f) => f.activeEgress && f.untrusted.length > 0,
-    detail: (f) =>
-      "Command contacts non-allowlisted host(s): " + f.untrusted.join(", ") + ".",
-    hosts: (f) => f.untrusted,
+    statement: "NETWORK_EGRESS is permitted only to destinations on the run's allowlist.",
+    action: "NETWORK_EGRESS",
+    reviewable: true,
+    when: (resource) => !resource.trusted && resource.via !== "destination-only",
+    detail: (resources) =>
+      "Command contacts non-allowlisted host(s): " +
+      resources.map((r) => r.value).join(", ") +
+      ".",
+    hosts: (resources) => resources.map((r) => r.value),
   },
   {
     id: "network-egress-denied-implicit",
     statement:
       "A destination with no recognised network tool is still NETWORK_EGRESS: " +
       "an obfuscated command can hide its binary but not where it connects.",
-    matches: (f) => !f.activeEgress && f.untrusted.length > 0 && !f.textualOnly,
-    detail: (f) =>
+    action: "NETWORK_EGRESS",
+    reviewable: true,
+    when: (resource, context) =>
+      !resource.trusted && resource.via === "destination-only" && !context.textualOnly,
+    detail: (resources) =>
       "Command references non-allowlisted host(s) without a recognised " +
       "network tool, which is how an obfuscated command hides its binary: " +
-      f.untrusted.join(", ") + ".",
-    hosts: (f) => f.untrusted,
+      resources.map((r) => r.value).join(", ") +
+      ".",
+    hosts: (resources) => resources.map((r) => r.value),
   },
-  {
-    id: "protected-secret-access",
-    statement: "SECRET_READ on protected material is denied on its own.",
-    matches: (f) => f.secret !== null,
-    detail: (f) => "Command reads " + f.secret + ".",
-  },
+];
+
+/** True only for rules a human is permitted to approve. */
+export function isReviewableRule(rule: string): boolean {
+  return REVIEWABLE_RULES.includes(rule);
+}
+
+/**
+ * The ONLY rules a human may ever be asked to approve. Derived from the policy
+ * table's own `reviewable` flag rather than hand-maintained separately, so the
+ * two can never drift apart. This stays a code-level invariant, not a config
+ * value: a non-allowlisted egress can be a legitimate need (a package
+ * registry), so it is reviewable — but reading or exfiltrating a protected
+ * secret, or writing outside the sandbox, is never something an operator can
+ * wave through, no matter what `POLICY_REVIEW_RULES` is set to. Config is
+ * intersected with this set and rejected if it names anything outside it (see
+ * config.ts).
+ */
+export const REVIEWABLE_RULES: readonly string[] = [
+  ...POLICY_RULES.filter((policy) => policy.reviewable).map((policy) => policy.id),
+  ...COMBINATION_POLICIES.filter((policy) => policy.reviewable).map((policy) => policy.id),
 ];
 
 /**
  * Decide whether a command may run.
  *
  * Returns the first matching rule, or null when every capability the command
- * requests is permitted in this context.
+ * requests is permitted in this context. Combination policies are checked
+ * first (secret-exfiltration's priority today), then every resource is settled
+ * by `decide()` and the denials are reported in POLICY_RULES order — for each
+ * rule, every resource in the command it claimed is aggregated into one
+ * violation, not just the first (see Policy's doc comment).
  */
 export function evaluateCommand(
+  actor: Actor,
   command: string,
   context: PolicyContext,
 ): PolicyViolation | null {
   if (!command.trim()) return null;
 
   const requests = extractCapabilities(command, context);
-  const facts: PolicyFacts = {
-    requests,
-    untrusted: untrustedDestinations(requests),
-    secret:
-      requests.find((r) => r.capability === "SECRET_READ")?.resource ?? null,
-    activeEgress: requests.some(
-      (r) =>
-        r.capability === "NETWORK_EGRESS" &&
-        (r.via === "network-tool" || r.via === "interpreter"),
-    ),
-    textualOnly: isTextualUrlOnly(command),
-  };
+  const decisionContext: DecisionContext = { ...context, textualOnly: isTextualUrlOnly(command) };
 
-  for (const rule of POLICY_RULES) {
-    if (!rule.matches(facts)) continue;
-    const hosts = rule.hosts?.(facts);
+  for (const combination of COMBINATION_POLICIES) {
+    if (!combination.when(requests, decisionContext)) continue;
     return {
-      rule: rule.id,
-      detail: rule.detail(facts),
+      rule: combination.id,
+      detail: combination.detail(requests),
+      capabilities: requests,
+    };
+  }
+
+  // decide() settles each resource on its own; this loop only groups the
+  // denials by the rule that produced them, so a rule's detail/hosts still see
+  // every resource it matched rather than the first. Going through the
+  // primitive is the point: the thing under test is the thing enforced.
+  const denied = new Map<string, Resource[]>();
+  for (const request of requests) {
+    const resource = toResource(request);
+    const decision = decide(actor, request.capability, resource, decisionContext, POLICY_RULES);
+    if (decision.effect === "ALLOW") continue;
+    denied.set(decision.rule, [...(denied.get(decision.rule) ?? []), resource]);
+  }
+
+  for (const policy of POLICY_RULES) {
+    const matching = denied.get(policy.id);
+    if (!matching) continue;
+    // Not decide()'s own `hosts`: that is per-resource, and it is present even
+    // when empty. Aggregated here across every resource the rule matched, and
+    // omitted when there is no scoped exception to offer.
+    const hosts = policy.hosts?.(matching);
+    return {
+      rule: policy.id,
+      detail: policy.detail(matching, decisionContext),
       ...(hosts && hosts.length > 0 ? { hosts } : {}),
       capabilities: requests,
     };
@@ -169,9 +315,17 @@ export function describeCapabilities(
   return command.trim() ? extractCapabilities(command, context) : [];
 }
 
-/** The invariants the rule set enforces, for the threat model and docs. */
+/**
+ * The invariants the rule set enforces, for the threat model and docs. Covers
+ * both passes evaluateCommand runs, in the order it runs them: a combination
+ * rule such as secret-exfiltration is as much a documented invariant as a
+ * per-tuple one, and listing only POLICY_RULES would silently drop it.
+ */
 export function policyStatements(): { rule: string; statement: string }[] {
-  return POLICY_RULES.map((r) => ({ rule: r.id, statement: r.statement }));
+  return [...COMBINATION_POLICIES, ...POLICY_RULES].map((r) => ({
+    rule: r.id,
+    statement: r.statement,
+  }));
 }
 
 export function allowedHostsFrom(arkBaseUrl: string): string[] {
@@ -250,12 +404,13 @@ export interface DetectedViolation extends PolicyViolation {
  */
 
 export function guardedEvaluate(
+  actor: Actor,
   command: string,
   context: PolicyContext,
-  evaluate: (command: string, context: PolicyContext) => PolicyViolation | null = evaluateCommand,
+  evaluate: (actor: Actor, command: string, context: PolicyContext) => PolicyViolation | null = evaluateCommand,
 ): PolicyViolation | null {
   try {
-    return evaluate(command, context);
+    return evaluate(actor, command, context);
   } catch {
     return {
       rule: "policy-error",
@@ -274,11 +429,12 @@ export function guardedEvaluate(
  */
 
 export function scanCommands(
+  actor: Actor,
   commands: readonly string[],
   startIndex: number,
   context: PolicyContext,
 ): DetectedViolation[] {
-  return scanCommandsWith(commands, startIndex, context, guardedEvaluate);
+  return scanCommandsWith(actor, commands, startIndex, context, guardedEvaluate);
 }
 
 /**
@@ -300,16 +456,17 @@ export function scanCommands(
  * callers passing a raw evaluator should wrap it themselves.
  */
 export function scanCommandsWith(
+  actor: Actor,
   commands: readonly string[],
   startIndex: number,
   context: PolicyContext,
-  evaluate: (command: string, context: PolicyContext) => PolicyViolation | null,
+  evaluate: (actor: Actor, command: string, context: PolicyContext) => PolicyViolation | null,
 ): DetectedViolation[] {
   const found: DetectedViolation[] = [];
   for (let index = startIndex; index < commands.length; index += 1) {
     const command = commands[index];
     if (!command) continue;
-    const violation = evaluate(command, context);
+    const violation = evaluate(actor, command, context);
     if (violation) {
       found.push({ ...violation, command: redactCommand(command, context.secretValues) });
     }
@@ -331,9 +488,11 @@ export function policyContextFrom(
   arkBaseUrl: string,
   extraHosts: readonly string[] = [],
   secretValues: readonly string[] = [],
+  writeRoots: readonly string[] = [],
 ): PolicyContext {
   return {
     allowedHosts: [...allowedHostsFrom(arkBaseUrl), ...LOOPBACK_HOSTS, ...extraHosts],
     secretValues: [...secretValues],
+    writeRoots: [...writeRoots],
   };
 }
