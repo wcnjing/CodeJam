@@ -10,6 +10,7 @@ import {
 import { isReviewableRule } from "./command-policy.js";
 import { JsonStore } from "./store.js";
 import type {
+  Database,
   Agent,
   AgentRun,
   AgentRunner,
@@ -368,13 +369,66 @@ export class AgentService {
     };
   }
 
+  /**
+   * Writes a run's terminal state, and guarantees the run does not stay in
+   * flight if that write fails.
+   *
+   * The evidence write is the last thing a run does. If it threw, the exception
+   * propagated out of `executeRun` into the caller's `.catch(() => undefined)`
+   * and the run was STRANDED: status stuck at `running`, agent stuck at `busy`,
+   * and every later `sendMessage` rejected 409 for the life of the process. A
+   * liveness bug in the middleware's own evidence path.
+   *
+   * On failure this retries with the smallest write that unwedges the agent:
+   * mark the run failed, surface the reason, release the agent. That is enough
+   * for the common case, a transient write failure. If the store is unusable the
+   * second write fails too and nothing more can be persisted -- but the run is
+   * then failing loudly rather than silently hanging, and the original error is
+   * rethrown rather than swallowed here.
+   */
+  private async settleRun(
+    runId: string,
+    agentId: string,
+    apply: (database: Database) => void,
+  ): Promise<void> {
+    try {
+      await this.store.mutate(apply);
+    } catch (writeError) {
+      const reason =
+        "Run outcome could not be recorded: " +
+        (writeError instanceof Error ? writeError.message : String(writeError));
+      try {
+        await this.store.mutate((database) => {
+          const storedRun = database.runs.find((item) => item.id === runId);
+          if (storedRun && (storedRun.status === "running" || storedRun.status === "queued")) {
+            storedRun.status = "failed";
+            storedRun.error = reason;
+            storedRun.completedAt = now();
+          }
+          const agent = database.agents.find((item) => item.id === agentId);
+          if (agent && agent.status === "busy") {
+            agent.status = "error";
+            agent.lastError = reason;
+            agent.updatedAt = now();
+          }
+        });
+      } catch {
+        // Store unusable. Nothing further can be persisted; rethrow below.
+      }
+      throw writeError;
+    }
+  }
+
   private async executeRun(
     agentAtStart: Agent,
     run: AgentRun,
     extraAllowedHosts: string[] = [],
     isGrantRun = false,
   ): Promise<void> {
-    await this.store.mutate((database) => {
+    // The OPENING write needs the same guarantee as the terminal one. If it
+    // fails the run never leaves `queued` while the agent is already `busy`,
+    // which is the same stranding by a different route.
+    await this.settleRun(run.id, agentAtStart.id, (database) => {
       const storedRun = database.runs.find((item) => item.id === run.id);
       if (storedRun) {
         storedRun.status = "running";
@@ -393,7 +447,7 @@ export class AgentService {
         extraAllowedHosts,
       });
       const completedAt = now();
-      await this.store.mutate((database) => {
+      await this.settleRun(run.id, agentAtStart.id, (database) => {
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (!storedRun || !agent) return;
@@ -447,7 +501,7 @@ export class AgentService {
         !isGrantRun;
       const blocked = policyDenied && !held;
       const message = error instanceof Error ? error.message : String(error);
-      await this.store.mutate((database) => {
+      await this.settleRun(run.id, agentAtStart.id, (database) => {
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (storedRun) {

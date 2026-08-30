@@ -425,6 +425,8 @@ describe("audit completeness", () => {
 interface FailureMode {
   name: string;
   runner: () => AgentRunner;
+  /** Optional store injector, for modes that fault the evidence path itself. */
+  makeStore?: (dbPath: string) => JsonStore;
   /** The documented, expected outcome. */
   runStatus: string;
   /**
@@ -496,6 +498,22 @@ const FAILURE_MODES: FailureMode[] = [
     policyEventRule: "secret-exfiltration",
   },
   {
+    // The mode FlakyStore was written for and never used. It is declared here so
+    // it is GATED, not merely fixed: the SLI now fails if a failed audit write
+    // stops producing the documented outcome.
+    //
+    // Before the fix in agent-service.ts this stranded -- run stuck `running`,
+    // agent stuck `busy`, every later message rejected 409 for the life of the
+    // process. `settleRun` now guarantees the run leaves flight even when its
+    // own evidence write fails.
+    name: "audit write fails mid-decision",
+    runner: () => new ScopedEgressRunner(),
+    makeStore: (dbPath) => new FlakyStore(dbPath, 5),
+    runStatus: "failed",
+    agentStatus: "error",
+    agentLastError: true,
+  },
+  {
     name: "reviewable denial (network egress)",
     runner: () => new ScopedEgressRunner(),
     runStatus: "held",
@@ -508,7 +526,7 @@ const FAILURE_MODES: FailureMode[] = [
 const INJECTIONS_PER_MODE = 3;
 
 async function injectOnce(mode: FailureMode): Promise<boolean> {
-  const { app } = await makeApp(mode.runner());
+  const { app } = await makeApp(mode.runner(), mode.makeStore);
   const agent = (
     (await post(app, "/api/agents", { name: "Faulted" })).json() as { agent: { id: string } }
   ).agent;
@@ -590,6 +608,13 @@ describe("audit-write failure", () => {
     expect(status, "a run whose audit write failed must not report success").not.toBe(
       "completed",
     );
+    // And it must not be stranded either. Before `settleRun` this stayed
+    // `running` with the agent `busy` indefinitely; the run must leave flight.
+    expect(["failed", "blocked", "held", "terminated", "cancelled"]).toContain(status);
+    const agentAfter = (
+      (await get(app, "/api/agents/" + agent.id)).json() as { agent: { status: string } }
+    ).agent;
+    expect(agentAfter.status, "the agent must not be left busy").not.toBe("busy");
     // And no evidence may be invented for a write that did not happen.
     const events = (
       (await get(app, `/api/agents/${agent.id}/policy-events`)).json() as {
@@ -639,7 +664,13 @@ describe("run-outcome SLI under fault injection", () => {
           run: { id: string };
         }
       ).run.id;
-      await expect.poll(() => runStatus(app, runId)).toBe(mode.runStatus);
+      // Any terminal state, not a specific one. This test is about RECOVERY --
+      // that a second message is accepted afterwards. The audit-write mode's
+      // exact outcome depends on which write the fault lands on, and pinning it
+      // here would make the test about fault placement instead.
+      await expect
+        .poll(async () => !["queued", "running"].includes(await runStatus(app, runId)))
+        .toBe(true);
 
       // A second message must be accepted, not rejected with 409 busy.
       const second = await post(app, `/api/agents/${agent.id}/messages`, { content: "again" });

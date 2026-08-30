@@ -666,7 +666,8 @@ A replayed denial proves the decision, the evidence and the approval loop. It
 proves nothing about containment, because there is no process to kill.
 Containment is measured elsewhere and separately: `bench:generate`'s token tier
 terminates the real Runtime for 24/24 generated attacks, and `bench:overhead`
-measures the teardown window at p50 2–3 ms. Both spawn for real, both run on
+measures the teardown window at p50 1–2 ms, with an uncharacterised tail (one
+of eight observations reported 92 ms). Both spawn for real, both run on
 ubuntu CI. The smoke check prints this caveat at the end of every replay run.
 
 **Fixture provenance.** The three shipped fixtures are labelled SYNTHESIZED, not

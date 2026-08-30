@@ -63,7 +63,7 @@ to a control here and to an entry in
 | --- | --- |
 | Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
 | Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/33 secret-channel attacks allowed |
-| Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–2 ms |
+| Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–2 ms, tail not well characterised |
 | Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
 | Runaway execution | Step budget enforced by the platform, independent of policy mode |
 | Sensitive trace capture | Redaction before the audit store; unbounded-growth risk tracked as TM-OPS-001 |
@@ -312,8 +312,18 @@ contributor's laptop.
 > of links is not the same as a document full of verified links.
 
 **Containment is measured, not asserted.** From the denied command being emitted
-to the Runtime process being dead: **p50 1–2 ms, max 2 ms** across the run's
-two POSIX jobs. That window is the
+to the Runtime process being dead: **p50 1–2 ms** across the run's two POSIX
+ jobs.
+
+> **The tail is not well characterised, and for a containment window the tail is
+> the number that matters.** Across eight observations from three CI runs, seven
+> report p50 1–2 ms. One reported **p50 92 ms, max 104 ms**
+> ([run 33294050866](https://github.com/wcnjing/CodeJam/actions/runs/33294050866)).
+> Whether that is runner contention or a real stall is not established: the
+> samples per run are small — 5 in `bench:overhead`, 24 in the token tier — which
+> is enough for a median and not enough for a tail. Quote the median as the
+> typical case, not as the worst case.
+ That window is the
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
 ([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), `npm run bench:overhead`)
@@ -495,7 +505,7 @@ in ~3 s on any platform.
 
 **Replay does not prove containment**, and says so at the end of every run.
 Containment is proven separately, spawning for real: **24/24 generated attacks
-terminated the Runtime**, teardown p50 1–2 ms, max 5 ms
+terminated the Runtime**, teardown p50 1–2 ms (see the tail caveat above)
 ([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468)). A parity
 test feeds the same recorded bytes to the real runner and to the replay runner
 and requires the same outcome, so the two cannot drift. Fixtures are labelled

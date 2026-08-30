@@ -111,9 +111,11 @@ Every figure is from a CI run on a clean runner, linked so it can be checked.
 > indistinguishable from a real regression. A document full of links is not the
 > same as a document full of verified links.
 
-- **Containment window: p50 1–2 ms, max 2 ms** — from the denied command being
-  emitted to the Runtime process being dead. This is the README's own containment
-  race, previously unquantified.
+- **Containment window: p50 1–2 ms** — from the denied command being emitted to
+  the Runtime process being dead. This is the README's own containment race,
+  previously unquantified. **The tail is not characterised**: seven of eight CI
+  observations report 1–2 ms and one reported 92 ms, on 5–24 samples per run.
+  Enough for a median, not for a worst case.
 - **Store-write cost is O(events already stored)** — 0.29–0.99 ms at zero
   events, **10.05–17.87 ms at 5,000**, against 4.15–5.05 µs for a policy
   decision. Growth is linear
