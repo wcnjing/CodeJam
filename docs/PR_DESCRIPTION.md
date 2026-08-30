@@ -1,10 +1,10 @@
 # Evaluation & reliability lane
 
 `feat/evaluation-reliability` → `main` · CI green:
-[run 33265492084](https://github.com/wcnjing/CodeJam/actions/runs/33265492084)
+[run 33294916979](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)
 
 Measurements quoted below are from
-[run 33263104468](https://github.com/wcnjing/CodeJam/actions/runs/33263104468) —
+[run 33294916979](https://github.com/wcnjing/CodeJam/actions/runs/33294916979) —
 the last run before the final documentation commits, and the one whose log every
 figure was checked against. The commits since are documentation only and change
 no measurement.
@@ -111,28 +111,28 @@ Every figure is from a CI run on a clean runner, linked so it can be checked.
 > indistinguishable from a real regression. A document full of links is not the
 > same as a document full of verified links.
 
-- **Containment window: p50 1–2 ms** — from the denied command being emitted to
+- **Containment window: p50 1–3 ms** — from the denied command being emitted to
   the Runtime process being dead. This is the README's own containment race,
   previously unquantified. **The tail is not characterised**: seven of eight CI
-  observations report 1–2 ms and one reported 92 ms, on 5–24 samples per run.
+  observations report 1–3 ms and one reported 92 ms, on 5–24 samples per run.
   Enough for a median, not for a worst case.
-- **Store-write cost is O(events already stored)** — 0.29–0.99 ms at zero
-  events, **10.05–17.87 ms at 5,000**, against 4.15–5.05 µs for a policy
+- **Store-write cost is O(events already stored)** — 0.34–1.13 ms at zero
+  events, **12.92–16.79 ms at 5,000**, against 45.7–59.4 µs for a policy
   decision. Growth is linear
-  at **r² 0.9984–0.9999 across three independent runners**, so it is a property of
+  at **r² 0.9995–1.0000 across three independent runners**, so it is a property of
   the code, not of a machine. *The fix is scoped and deliberately not built*: the
   two cheap options cap the log by discarding audit records, which for a project
   whose thesis is trustworthy evidence is a liability rather than a fix, and the
   cap does not even remove the linear term. Tracked as **TM-OPS-001**, open on
   purpose.
 - **Zero-rates carry denominators and intervals.** "0 secret leaks" is not
-  evidence the rate is zero: **0/33 is reported as ≤ 8.7% (95%, one-sided
-  exact)**. Likewise 1/73 escapes (1.4%, CI 0.2–7.4%), 72/73 blocked, 1/47 false
-  positives, 55/56 red-team probes denied.
+  evidence the rate is zero: **0/39 is reported as ≤ 7.4% (95%, one-sided
+  exact)**. Likewise 1/104 escapes (1.0%, CI 0.2–5.2%), 103/104 blocked, 1/75
+  false positives, 55/56 red-team probes denied.
 - **Containment proven separately from detection.** A detection rate proves the
   classifier fired; it does not prove the container died. A 24-variant sample
   through the real runner terminated the Runtime **24/24**.
-- **CI: 157 tests green** on ubuntu-latest, Node 22 and 24. The matrix separates
+- **CI: 175 tests green** on ubuntu-latest, Node 22 and 24. The matrix separates
   platform from runtime version, which an earlier comparison had confounded.
 
 ---

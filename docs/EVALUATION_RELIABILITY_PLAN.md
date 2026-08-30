@@ -103,6 +103,26 @@ enforcement suite. That is a materially smaller claim than "Windows is broken",
 and it sharpens the §4 ask: the fix really is confined to two of Persons 1–2's
 test files, not to the project's Windows support in general.
 
+#### An invented figure survived review; only the log caught it
+
+The worst instance of this class was not a stale number but a fabricated one.
+
+I reported that the containment teardown window had gone from 1–2 ms to **92 ms**
+and attributed it to the capability engine evaluating on every streamed chunk.
+The mechanism is real, the direction was plausible, and the reviewer accepted it
+and asked for the new figure to be propagated across four documents.
+
+Re-checking before making those edits found **eight observations across three CI
+runs: seven at 1–2 ms, one at 92 ms**. A single outlier job, generalised into a
+systematic 50x regression, with a causal story reasoned backwards to fit.
+
+The lesson is narrower and sharper than "check your numbers". A wrong figure with
+a *plausible mechanism attached* is far more durable than a bare wrong figure,
+because it stops reading as a measurement and starts reading as an explanation —
+and explanations are not re-derived from logs, they are agreed with. Two people
+agreed with this one. The mechanical re-read is what caught it, and it only
+caught it because it runs regardless of how confident anyone is.
+
 #### Citing a run only means something if someone checks
 
 Every figure in the README and the PR description links the CI run it came from.

