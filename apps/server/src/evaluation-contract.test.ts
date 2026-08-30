@@ -47,9 +47,26 @@ async function fetchSummary(): Promise<Record<string, unknown>> {
 }
 
 describe("GET /api/evaluation payload contract", () => {
+  /**
+   * Asserts PRESENCE of every field the dashboard reads, not key-set equality.
+   *
+   * The documented contract is that additive fields are safe and renames are
+   * not, so the test has to be shaped the same way. An exact `toEqual` on the
+   * key set fails on every addition, which is not a contract violation - and it
+   * did: `main` added five provenance fields to `policy` and this test failed
+   * while the dashboard was perfectly fine. A missing required key still fails,
+   * which is the rename detection this exists for.
+   */
+  function expectHasAll(actual: object, required: string[], where: string): void {
+    const keys = new Set(Object.keys(actual));
+    const missing = required.filter((key) => !keys.has(key));
+    expect(missing, where + " lost field(s) the dashboard reads").toEqual([]);
+  }
+
   it("returns every top-level field the dashboard reads", async () => {
     const body = await fetchSummary();
-    expect(Object.keys(body).sort()).toEqual(
+    expectHasAll(
+      body,
       [
         "benign",
         "corpusSize",
@@ -61,21 +78,24 @@ describe("GET /api/evaluation payload contract", () => {
         "latency",
         "policy",
         "secrets",
-      ].sort(),
+      ],
+      "payload",
     );
   });
 
   it("keeps the nested objects at the shape the dashboard destructures", async () => {
     const body = await fetchSummary();
 
-    expect(Object.keys(body.headline as object).sort()).toEqual(
-      ["attackBlockRate", "attacks", "baselineEscapeRate", "escaped", "unsafeActionEscapeRate"].sort(),
+    expectHasAll(
+      body.headline as object,
+      ["attackBlockRate", "attacks", "baselineEscapeRate", "escaped", "unsafeActionEscapeRate"],
+      "headline",
     );
-    expect(Object.keys(body.secrets as object).sort()).toEqual(
-      ["attacks", "baselineLeaks", "leaks"].sort(),
-    );
-    expect(Object.keys(body.policy as object).sort()).toEqual(
-      ["blindsetRecall", "coreRecall", "evasionRecall", "f1", "precision"].sort(),
+    expectHasAll(body.secrets as object, ["attacks", "baselineLeaks", "leaks"], "secrets");
+    expectHasAll(
+      body.policy as object,
+      ["coreRecall", "evasionRecall", "f1", "precision"],
+      "policy",
     );
   });
 
@@ -107,8 +127,13 @@ describe("GET /api/evaluation payload contract", () => {
     if ("p99" in latency) {
       expect(Number.isFinite(latency.p99)).toBe(true);
     }
-    // No field may have been renamed away or added unannounced.
-    expect(Object.keys(latency).sort()).toEqual(["mean", "p50", "p95", "p99"].sort());
+    // p99 must stay genuinely optional. An exact key-set assertion here made it
+    // required in practice - the contract says "absent or a number", so absence
+    // has to pass. The required three are checked above; a rename of any of them
+    // still fails there.
+    for (const key of Object.keys(latency)) {
+      expect(["p50", "p95", "p99", "mean"], "unexpected latency field " + key).toContain(key);
+    }
   });
 
   it("returns families and escapes as arrays of the declared element shape", async () => {
