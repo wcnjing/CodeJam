@@ -69,11 +69,16 @@ function splitSubstitutions(command: string): { outer: string; inner: string[] }
       continue;
     }
     const dollarParen = char === "$" && command[index + 1] === "(";
-    if (dollarParen || char === "`") {
-      const opened = dollarParen ? index + 1 : index;
-      const closed = dollarParen
-        ? matchingParen(command, opened)
-        : command.indexOf("`", opened + 1);
+    // Process substitution runs a command just as command substitution does:
+    // `cat <(nc host 4444)` executes the nc. It was not split out, so the
+    // inner command never became a segment and its destination was never seen.
+    const procSub = (char === "<" || char === ">") && command[index + 1] === "(";
+    if (dollarParen || procSub || char === "`") {
+      const opened = dollarParen || procSub ? index + 1 : index;
+      const closed =
+        dollarParen || procSub
+          ? matchingParen(command, opened)
+          : command.indexOf("`", opened + 1);
       if (closed > opened) {
         inner.push(command.slice(opened + 1, closed));
         outer += SUBSTITUTION_PLACEHOLDER;
@@ -309,6 +314,13 @@ function nestedCommands(segment: string): string[] {
   if (!invocation) return [];
   const { tool, args } = invocation;
 
+  // `eval "<command>"` runs its argument as a command, exactly as `sh -c`
+  // does. Without this the body was an opaque string and any destination in
+  // it was invisible.
+  if (tool === "eval") {
+    return args.filter((argument) => !argument.startsWith("-") && argument.trim().length > 0);
+  }
+
   // `sh -c '...'` anywhere, not just as the whole command.
   if (SHELL_NAMES.has(tool)) {
     for (let index = 0; index < args.length; index += 1) {
@@ -371,11 +383,37 @@ function nestedCommands(segment: string): string[] {
  * substitution, `sh -c` bodies, and exec-style wrappers.
  */
 
+/**
+ * Strips shell grouping that is punctuation rather than part of a command.
+ *
+ * `( nc host 4444 )` is the same invocation as `nc host 4444`, but the leading
+ * paren made `invocationFromSegment` read the tool as "" with `nc` as its first
+ * argument, so the segment was never recognised as a network tool and its
+ * destination was read as a bare word.
+ */
+function stripGrouping(segment: string): string {
+  let out = segment.trim();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    // Leading `(` or `{`, and the matching trailing `)` / `}` if present.
+    if (/^[({]\s/.test(out) || /^[({]$/.test(out.slice(0, 1))) {
+      const trimmed = out.replace(/^[({]+\s*/, "").replace(/\s*[)}]+;?$/, "").trim();
+      if (trimmed && trimmed !== out) {
+        out = trimmed;
+        changed = true;
+      }
+    }
+  }
+  return out;
+}
+
 export function executableSegments(command: string, depth = 0): string[] {
   if (depth > 6) return [];
   const { outer, inner } = splitSubstitutions(command);
   const segments: string[] = [];
-  for (const segment of commandSegments(outer)) {
+  for (const raw of commandSegments(outer)) {
+    const segment = stripGrouping(raw);
     segments.push(segment);
     for (const nested of nestedCommands(segment)) {
       segments.push(...executableSegments(nested, depth + 1));
