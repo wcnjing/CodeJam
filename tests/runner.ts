@@ -22,6 +22,7 @@ import { APPROVAL_SUITE } from "./suites/approval.suite.js";
 import { MONITOR_SUITE } from "./suites/monitor.suite.js";
 import { CONFIG_INVARIANTS_SUITE } from "./suites/config-invariants.suite.js";
 import { REGRESSION_SUITE } from "./suites/regression.suite.js";
+import { META_SUITE } from "./suites/meta.suite.js";
 import { runPerfSuite } from "./suites/perf.suite.js";
 import { SCORES_DIR, renderSuite, saveScore } from "./lib/report.js";
 import { pct } from "./lib/report.js";
@@ -36,6 +37,7 @@ const ALL_SUITES = [
   MONITOR_SUITE,
   CONFIG_INVARIANTS_SUITE,
   REGRESSION_SUITE,
+  META_SUITE,
 ];
 
 function parseArgs(argv: string[]): { suites: string[]; perf: boolean; out: string } {

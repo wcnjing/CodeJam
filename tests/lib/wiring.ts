@@ -4,7 +4,7 @@
  *
  * This is the only tests/-side module that imports the server sources; the
  * library itself (lib/) never does. The server app has its own equivalent
- * (apps/server/src/core/pentest-deps.ts) for /api/pentest.
+ * (apps/server/src/core/evaluation-deps.ts) for /api/pentest.
  */
 
 import {

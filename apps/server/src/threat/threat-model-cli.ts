@@ -13,6 +13,11 @@ function testsDirectory(): string {
     readdirSync(candidate);
     return candidate;
   } catch {
+    console.warn(
+      "threat-model-cli: no " + candidate + " (this happens in a built dist, " +
+        "which excludes tests). Falling back to " + here + " — mitigated threats " +
+        "with no @covers tag in reach will report NO.",
+    );
     return here;
   }
 }

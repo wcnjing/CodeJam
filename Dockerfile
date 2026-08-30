@@ -42,8 +42,12 @@ COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 # The @sentinel/evaluation workspace package is linked into node_modules via a
 # relative symlink to ../../tests; the built library (tests/dist) must be
-# present in the runtime image for /api/pentest.
-COPY --from=build /app/tests ./tests
+# present in the runtime image for /api/pentest. Copy only the built artifact
+# and package manifest — not the suite sources, generator scripts, or raw case
+# JSON — so the production image ships no pentest tooling beyond what the
+# endpoint needs (the catalog itself lives inside dist/cases, by design).
+COPY --from=build /app/tests/package.json ./tests/package.json
+COPY --from=build /app/tests/dist ./tests/dist
 
 RUN mkdir -p /app/data /app/workspaces /app/codex-home \
     && chown -R node:node /app

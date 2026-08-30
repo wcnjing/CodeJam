@@ -235,6 +235,9 @@ function EvaluationView({
  * layer individually and as a whole, plus measured operational cost. Backed by
  * /api/pentest, computed on demand from the code actually running.
  */
+// Layers that are not allow/deny classifiers: their block/detection/escape/FP
+// rates are meaningless and render as "n/a"; only the Pass rate is shown.
+const NON_CLASSIFIER_PROFILES = new Set(["redaction", "budget", "config"]);
 function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
   if (!pentest) {
     return (
@@ -270,6 +273,7 @@ function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
           <thead>
             <tr>
               <th>Middleware layer</th>
+              <th>Pass</th>
               <th>Block rate</th>
               <th>Detection</th>
               <th>Escape rate</th>
@@ -278,22 +282,31 @@ function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
             </tr>
           </thead>
           <tbody>
-            {pentest.suites.map((s) => (
-              <tr key={s.profileId} className={s.profileId === "all" ? "pentest-total" : undefined}>
-                <td>{s.profileName}</td>
-                <td>{pct(s.totals.attackBlockRate)}</td>
-                <td className={s.totals.detectionRate === 1 ? "pentest-good" : undefined}>
-                  {pct(s.totals.detectionRate)}
-                </td>
-                <td className={s.totals.escapeRate === 0 ? "pentest-good" : undefined}>
-                  {pct(s.totals.escapeRate)}
-                </td>
-                <td className={s.totals.falsePositiveRate === 0 ? "pentest-good" : undefined}>
-                  {pct(s.totals.falsePositiveRate)}
-                </td>
-                <td>{s.totals.cases}</td>
-              </tr>
-            ))}
+            {pentest.suites.map((s) => {
+              // Non-classifier layers (redaction, budget, config) are not
+              // allow/deny controls, so the block/detection/escape/FP columns
+              // are meaningless for them; their Pass rate is the measurement.
+              const classifier = !NON_CLASSIFIER_PROFILES.has(s.profileId);
+              return (
+                <tr key={s.profileId} className={s.profileId === "all" ? "pentest-total" : undefined}>
+                  <td>{s.profileName}</td>
+                  <td className={s.totals.passed === s.totals.cases ? "pentest-good" : undefined}>
+                    {pct(s.totals.passed / s.totals.cases)}
+                  </td>
+                  <td>{classifier ? pct(s.totals.attackBlockRate) : "n/a"}</td>
+                  <td className={s.totals.detectionRate === 1 ? "pentest-good" : undefined}>
+                    {classifier ? pct(s.totals.detectionRate) : "n/a"}
+                  </td>
+                  <td className={s.totals.escapeRate === 0 ? "pentest-good" : undefined}>
+                    {classifier ? pct(s.totals.escapeRate) : "n/a"}
+                  </td>
+                  <td className={s.totals.falsePositiveRate === 0 ? "pentest-good" : undefined}>
+                    {classifier ? pct(s.totals.falsePositiveRate) : "n/a"}
+                  </td>
+                  <td>{s.totals.cases}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

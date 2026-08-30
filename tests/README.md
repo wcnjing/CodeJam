@@ -17,7 +17,7 @@ server's middleware functions and drives the real `CodexRunner` with fake
 *library* (case catalog, provider-agnostic middleware profiles, harness, perf,
 summary) lives HERE in `tests/` as the `@sentinel/evaluation` workspace package;
 the web application imports it (`apps/server` depends on `@sentinel/evaluation`,
-wires the real middleware in via `apps/server/src/core/pentest-deps.ts`, and
+wires the real middleware in via `apps/server/src/core/evaluation-deps.ts`, and
 serves it at `GET /api/pentest` rendered on the Security Evaluation page).
 `tests/` also holds the CLI, the behavioral suites and the scores.
 
@@ -37,7 +37,7 @@ tests/                       # @sentinel/evaluation workspace package + CLI/CI h
     wiring.ts                # CLI-side binding of the real middleware into the library
     index.ts                 # package entry (built to tests/dist by tsconfig.lib.json)
   cases/
-    past-examples.json       # curated from policy-corpus.ts + redteam.ts (170 cases)
+    past-examples.json       # curated from policy-corpus.ts + redteam.ts (227 cases; header records corpusSize/revision)
     generated-advanced.json  # deepseek-pro escalated red-team cases (70 cases)
   docs/
     regression-matrix.md     # Sol escalated: per-tag layer matrix + gap analysis
@@ -50,7 +50,7 @@ tests/                       # @sentinel/evaluation workspace package + CLI/CI h
   runner.ts                  # CLI entry point
   tsconfig.lib.json          # builds the library -> tests/dist (consumed by the app)
   Dockerfile                 # disposable test image
-apps/server/src/core/pentest-deps.ts  # app-side binding of the real middleware
+apps/server/src/core/evaluation-deps.ts  # app-side binding of the real middleware
 docker-compose.tests.yml     # separate compose for the suite (repo root)
 ```
 

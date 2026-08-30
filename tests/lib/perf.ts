@@ -140,21 +140,27 @@ export function runPerf(options: PerfOptions): PerfReport {
       for (const c of cases) stream.push(c.wrapped ? wrapped(c.command) : c.command);
     }
     const runs = 20;
+    // Time each batch run separately so the p50/p95 columns report a real
+    // per-run distribution instead of echoing the aggregate mean.
+    const runSamples: number[] = [];
     const wallStart = process.hrtime.bigint();
     for (let r = 0; r < runs; r += 1) {
+      const t0 = process.hrtime.bigint();
       deps.scanCommands(stream, 0, env.policyContext);
+      const elapsed = Number(process.hrtime.bigint() - t0);
+      runSamples.push(elapsed / 1000 / stream.length); // µs per command, one sample per batch
     }
     const elapsed = Number(process.hrtime.bigint() - wallStart);
-    const perCommand = elapsed / 1000 / (stream.length * runs);
+    const timing = summarize(runSamples, elapsed / stream.length);
     samples.push({
       profileId: "command-policy",
       profileName: "Command policy",
       metric: "scanCommands per command (streamed batch)",
       samples: stream.length * runs,
-      meanMicroseconds: perCommand,
-      p50Microseconds: perCommand,
-      p95Microseconds: perCommand,
-      opsPerSecond: 1e9 / (elapsed / (stream.length * runs)),
+      meanMicroseconds: timing.mean,
+      p50Microseconds: timing.p50,
+      p95Microseconds: timing.p95,
+      opsPerSecond: timing.ops,
     });
   }
 

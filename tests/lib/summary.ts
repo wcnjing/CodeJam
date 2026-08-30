@@ -111,7 +111,7 @@ export async function runEvaluationSummary(options: EvaluationOptions): Promise<
     limitations: [
       "Computed locally against the middleware's pure functions over command text — no model is called, no API key is used, and no request leaves the machine.",
       "UI path runs the pure decision-layer passes only: step-budget behavioral tests (real CodexRunner driven by a fake codex script, still no model) and the project's own test gate run in the CLI/CI suite (tests/), not here.",
-      "The budget layer is a counter, not a classifier; its 100% escape figure means a single command never trips it.",
+      "The budget layer is a counter, not a classifier; a single command never trips it (over-budget behavioral tests drive the real CodexRunner in the CLI suite), so its classifier rates render as n/a.",
       "Catalog numbers are on an authored + escalated corpus, not an observed real-world bypass rate.",
     ],
   };

@@ -18,6 +18,13 @@ export function pct(value: number): string {
   return (value * 100).toFixed(1) + "%";
 }
 
+/**
+ * Layers that are not allow/deny classifiers: redaction (leak check), budget
+ * (counter) and config (invariants). Their block/detection/escape/FP lines are
+ * meaningless and print as n/a; the passed/failed line is their measurement.
+ */
+export const NON_CLASSIFIER_PROFILES = new Set(["redaction", "budget", "config", "meta"]);
+
 export function renderSuite(result: SuiteResult): string {
   const lines: string[] = [];
   lines.push("");
@@ -25,14 +32,19 @@ export function renderSuite(result: SuiteResult): string {
   lines.push("  revision            " + result.revision);
   lines.push("  cases               " + result.totals.cases);
   lines.push("  passed / failed     " + result.totals.passed + " / " + result.totals.failed);
-  lines.push("  attacks blocked     " + result.totals.maliciousBlocked + "/" + result.totals.malicious +
-    "  (" + pct(result.totals.attackBlockRate) + ")");
-  lines.push("  detection rate      " + pct(result.totals.detectionRate) +
-    "   (" + result.totals.detectedMalicious + "/" + result.totals.malicious + " malicious commands detected)");
-  lines.push("  escape rate         " + pct(result.totals.escapeRate) +
-    "   (" + result.totals.maliciousEscaped + " malicious commands allowed)");
-  lines.push("  false positives     " + pct(result.totals.falsePositiveRate) +
-    "   (" + result.totals.benignBlocked + " benign commands blocked)");
+  const classifier = !NON_CLASSIFIER_PROFILES.has(result.profileId);
+  if (classifier) {
+    lines.push("  attacks blocked     " + result.totals.maliciousBlocked + "/" + result.totals.malicious +
+      "  (" + pct(result.totals.attackBlockRate) + ")");
+    lines.push("  detection rate      " + pct(result.totals.detectionRate) +
+      "   (" + result.totals.detectedMalicious + "/" + result.totals.malicious + " malicious commands detected)");
+    lines.push("  escape rate         " + pct(result.totals.escapeRate) +
+      "   (" + result.totals.maliciousEscaped + " malicious commands allowed)");
+    lines.push("  false positives     " + pct(result.totals.falsePositiveRate) +
+      "   (" + result.totals.benignBlocked + " benign commands blocked)");
+  } else {
+    lines.push("  block / detection / escape / fp   n/a (not a classifier layer)");
+  }
   const tags = Object.entries(result.byTag).sort(([a], [b]) => a.localeCompare(b));
   if (tags.length > 0) {
     lines.push("  by tag:");
