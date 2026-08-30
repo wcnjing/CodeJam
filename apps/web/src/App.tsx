@@ -648,8 +648,11 @@ export default function App() {
         <form className="auth-card" onSubmit={unlock}>
           <div className="brand-mark">S</div>
           <span className="eyebrow">Sentinel</span>
-          <h1>Enter the access token</h1>
-          <p>This shared demo token is configured by the platform operator.</p>
+          <h1>Enter your access token</h1>
+          <p>
+            Your personal access token, issued by the platform operator. Approvals are
+            recorded under the principal it identifies.
+          </p>
           {error && <div className="error-banner" role="alert">{error}</div>}
           <label>
             Access token

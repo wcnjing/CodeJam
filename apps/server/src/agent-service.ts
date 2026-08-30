@@ -187,8 +187,8 @@ export class AgentService {
 
   /**
    * Resolves a held run. A human with the command and its reason in front of
-   * them approves or denies it; the decision and the named actor are recorded
-   * so override rates can be reviewed for rubber-stamping.
+   * them approves or denies it; the decision and the authenticated principal
+   * are recorded so override rates can be reviewed for rubber-stamping.
    *
    * Approval grants a run-scoped host grant for exactly the hosts the
    * denied command named, then resumes the original task as a new run. The

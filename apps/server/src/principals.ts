@@ -53,6 +53,12 @@ export class PrincipalRegistry {
           position + " has an invalid id; use 1-64 characters of [A-Za-z0-9._@-].",
         );
       }
+      if (token.length === 0) {
+        // Same paste-mistake shape as a missing colon ("tok_secret:"), so the id
+        // half is very likely the secret. Report it positionally rather than
+        // naming it, which would echo the token.
+        throw new Error(position + ' must look like "id:token"; the token half is empty.');
+      }
       if (!TOKEN_PATTERN.test(token)) {
         throw new Error(
           "The token for " + id + " must use 1-128 URL-safe characters ([A-Za-z0-9._~-]).",

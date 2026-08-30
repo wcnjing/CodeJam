@@ -35,6 +35,46 @@ describe("HTTP boundary", () => {
     await app.close();
   });
 
+  it("gates on the routed path, so a percent-encoded /api/ prefix cannot slip past", async () => {
+    // find-my-way routes on decodeURI(path), so `/%61pi/agents` reaches the
+    // `/api/agents` handler. A hook keyed on the raw URL string let that request
+    // through unauthenticated — reading every agent, and DELETE purging the
+    // audit evidence this product exists to protect.
+    const app = await createApp(
+      loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
+      service,
+    );
+    const encoded = await app.inject({ method: "GET", url: "/%61pi/agents" });
+    expect(encoded.statusCode).toBe(401);
+
+    const encodedWithToken = await app.inject({
+      method: "GET",
+      url: "/%61pi/agents",
+      headers: { authorization: "Bearer " + ALICE },
+    });
+    expect(encodedWithToken.statusCode).toBe(200);
+
+    // An unmatched path has no routed path, so 404 handling is untouched.
+    expect((await app.inject({ method: "GET", url: "/nope" })).statusCode).toBe(404);
+    await app.close();
+  });
+
+  it("keeps /api/health and /api/auth open while principals are configured", async () => {
+    // Without these exemptions the web UI could never discover that auth is
+    // required, and the unlock screen would never render.
+    const app = await createApp(
+      loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
+      service,
+    );
+    const health = await app.inject({ method: "GET", url: "/api/health" });
+    expect(health.statusCode).toBe(200);
+
+    const auth = await app.inject({ method: "GET", url: "/api/auth" });
+    expect(auth.statusCode).toBe(200);
+    expect(auth.json()).toEqual({ required: true });
+    await app.close();
+  });
+
   it("reports the authenticated principal on /api/me", async () => {
     const app = await createApp(
       loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
@@ -150,6 +190,17 @@ describe("HTTP boundary", () => {
     });
     expect(response.statusCode).toBe(401);
     expect(response.json().error).toMatch(/APP_PRINCIPALS/);
+
+    // Identity is checked before content, so a garbage id and a garbage body
+    // still answer 401 rather than 400. A valid payload alone would not pin the
+    // ordering: this is the assertion that keeps the guard ahead of the parse.
+    const garbage = await app.inject({
+      method: "POST",
+      url: "/api/approvals/not-a-uuid",
+      payload: { decision: "banana" },
+    });
+    expect(garbage.statusCode).toBe(401);
+    expect(garbage.json().error).toMatch(/APP_PRINCIPALS/);
     await app.close();
   });
 });

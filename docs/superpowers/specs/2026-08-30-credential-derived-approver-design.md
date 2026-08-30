@@ -89,7 +89,7 @@ APP_PRINCIPALS=alice:tok_alpha_at_least_24_chars,bob:tok_beta_at_least_24_chars
 | Rule | Behaviour |
 | --- | --- |
 | id charset | `^[A-Za-z0-9._@-]{1,64}$` — permits `alice` and `alice@example.com` |
-| token charset | `^[A-Za-z0-9._~-]{8,128}$`, matching today's URL-safe token rule |
+| token charset | `^[A-Za-z0-9._~-]{1,128}$`, matching today's URL-safe token rule. Charset and length are two layers: the pattern caps the length, and the minimum is enforced separately against `minTokenLength` (8 by default, raised to 24 for non-loopback production) so a caller can lift the floor without a second regex |
 | malformed entry (no `:`, empty id, empty token) | throw at startup |
 | duplicate id | throw — two humans behind one name defeats the point |
 | duplicate token across ids | throw — ambiguous identity is worse than no identity |

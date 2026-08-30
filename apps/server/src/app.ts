@@ -64,10 +64,17 @@ export async function createApp(
   app.decorateRequest("principal", null);
 
   app.addHook("onRequest", async (request, reply) => {
+    // Gate on the ROUTED path, not the raw URL. find-my-way matches on
+    // decodeURI(path), so `/%61pi/agents` reaches the `/api/agents` handler
+    // while its raw URL does not start with "/api/" — gating on the raw string
+    // let an unauthenticated caller read and delete agents. routeOptions.url is
+    // the route pattern (e.g. "/api/agents/:id") and is undefined when nothing
+    // matched, which leaves 404 handling alone.
+    const routePath = request.routeOptions?.url ?? "";
     if (
-      !request.url.startsWith("/api/") ||
-      request.url === "/api/health" ||
-      request.url === "/api/auth"
+      !routePath.startsWith("/api/") ||
+      routePath === "/api/health" ||
+      routePath === "/api/auth"
     ) {
       return;
     }
@@ -157,9 +164,8 @@ export async function createApp(
   });
 
   app.post("/api/approvals/:id", async (request, reply) => {
-    const { id } = approvalIdParams.parse(request.params);
     // Identity before content: an unattributable decision is refused before the
-    // body is even considered.
+    // approval id or the body is even considered.
     const principal = request.principal;
     if (!principal) {
       return reply.code(401).send({
@@ -168,6 +174,7 @@ export async function createApp(
           "and present that principal's token.",
       });
     }
+    const { id } = approvalIdParams.parse(request.params);
     const body = approvalDecisionBody.parse(request.body);
     const result = await service.resolveApproval(id, body.decision, principal, body.reason);
     return reply.code(200).send(result);

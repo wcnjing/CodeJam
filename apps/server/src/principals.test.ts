@@ -70,4 +70,12 @@ describe("PrincipalRegistry", () => {
       expect.objectContaining({ message: expect.not.stringContaining(ALICE) }),
     );
   });
+
+  it("never echoes a bare token pasted with a trailing colon", () => {
+    // Same paste mistake, one keystroke further: this parses as id=<the token>,
+    // token="", so any message naming the id would print the secret.
+    expect(() => PrincipalRegistry.parse(ALICE + ":")).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining(ALICE) }),
+    );
+  });
 });
