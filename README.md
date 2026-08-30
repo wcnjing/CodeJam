@@ -655,7 +655,8 @@ than reading figures off the image.</sub>
 ### Human approval — a held run awaiting a decision
 
 A reviewable egress denial pauses the run and shows the exact command, the rule,
-and requires a named approver + reason before it can continue or be denied.
+and requires an authenticated approver + reason before it can continue or be denied.
+The approver is taken from the credential on the request, so it cannot be typed in.
 
 ![A held run showing the Human approval required card with the network-egress-denied rule, the exact command, and approve/deny controls](docs/assets/held-approval.png)
 
@@ -801,7 +802,7 @@ Required values in `.env`:
 ```dotenv
 ARK_API_KEY=your-ark-api-key
 ARK_MODEL=ep-your-endpoint-id
-APP_AUTH_TOKEN=replace-with-at-least-24-random-characters
+APP_PRINCIPALS=alice:replace-with-24-plus-random-characters
 ```
 
 Start the application:
@@ -865,7 +866,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `ARK_API_KEY` | Required | Ark model API key. |
 | `ARK_MODEL` | Required | Responses-capable endpoint or model ID. |
 | `ARK_BASE_URL` | Beijing v3 endpoint | Ark OpenAI-compatible API URL. BytePlus accounts use a regional host, e.g. `https://ark.ap-southeast.bytepluses.com/api/v3` (see the note in *Reproducing the demo*). |
-| `APP_AUTH_TOKEN` | Empty on loopback | Shared demo token; use 24+ random characters remotely. |
+| `APP_PRINCIPALS` | Empty on loopback | Comma-separated `id:token` approver credentials. The id is recorded as the approver; required to approve anything, and required outright when the server listens beyond loopback. |
 | `RUNTIME_PROVIDER` | `local-process` | `container` for disposable local Runtime containers. |
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |

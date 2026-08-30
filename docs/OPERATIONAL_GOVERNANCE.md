@@ -50,10 +50,12 @@ a standing allowlist change.
 2. **Ungoverned environment changes.** The policy assumes a specific runtime
    image and model. Adding `curl` to the image, or swapping the model, shifts the
    risk surface with nothing to re-trigger evaluation.
-3. **Identity is a label.** "Approver" is a free-text name, not an authenticated
-   principal — this POC has no identity system. Real segregation of duties would
-   plug an identity provider in exactly here (the "Bouncer" track this project
-   did not take).
+3. **Authenticated, not authorized.** "Approver" is now an authenticated
+   principal resolved from the credential (`APP_PRINCIPALS`), so a decision can
+   no longer be recorded under a name the decider simply typed. What remains is
+   authorization: every principal may approve every held run, including one its
+   own request caused, and the registry is static — no roles, no rotation, no
+   segregation of duties.
 4. **Hard-blocked runs have no appeal.** Only held (reviewable) runs can be
    reconsidered; a `secret-exfiltration`, `protected-secret-access` or
    `file-write-outside-workspace` block is final by design.

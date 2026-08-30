@@ -198,7 +198,7 @@ export const THREAT_REGISTER: Threat[] = [
     ],
     residual: { likelihood: 2, impact: 3 },
     residualNote:
-      "Approver is a free-text label, not an authenticated principal (no identity system in this POC); automation bias is possible and override rates should be reviewed.",
+      "Approver is now an authenticated principal derived from the credential and cannot be asserted by a client, but authentication is not authorization: every configured principal may approve any held run, including one its own request caused; the registry is static (no roles, no rotation, no revocation without a restart); and automation bias remains, so override rates should still be reviewed.",
     owner: "runtime-security",
     status: "mitigated",
     reviewTriggers: ["reviewable rule set changed", "identity provider added"],
