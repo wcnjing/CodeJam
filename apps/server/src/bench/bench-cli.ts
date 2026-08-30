@@ -71,7 +71,7 @@ console.log("Classifier");
 rule();
 line("Core recall", results.classifier.coreRecall);
 line("Evasion recall", results.classifier.evasionRecall);
-line("Blind-set recall", results.classifier.holdoutRecall);
+line("External-review recall", results.classifier.externalReviewRecall);
 console.log("  " + "Precision".padEnd(26) + pct(results.classifier.precision).padStart(7));
 console.log("  " + "F1".padEnd(26) + pct(results.classifier.f1).padStart(7));
 

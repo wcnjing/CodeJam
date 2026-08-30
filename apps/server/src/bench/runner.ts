@@ -114,7 +114,7 @@ export interface BenchResults {
   classifier: {
     coreRecall: Proportion;
     evasionRecall: Proportion;
-    holdoutRecall: Proportion;
+    externalReviewRecall: Proportion;
     precision: number;
     f1: number;
   };
@@ -196,8 +196,12 @@ export async function runBench(options: BenchOptions = {}): Promise<BenchResults
   const classifier = evaluatePolicy();
   const redteam = runRedTeam();
 
-  const holdoutTotal = POLICY_CORPUS.filter(
-    (entry) => entry.holdout && entry.label === "malicious",
+  // `main` replaced the boolean `holdout` flag with a `source` provenance field
+  // and split the metric into external-review vs internal red-team. The
+  // externally-reviewed malicious cases are the ones that carry the
+  // independence claim, so they are what this reports.
+  const externalMaliciousTotal = POLICY_CORPUS.filter(
+    (entry) => entry.source === "external-review" && entry.label === "malicious",
   ).length;
 
   const mitigated = THREAT_REGISTER.filter((threat) => threat.status === "mitigated");
@@ -227,12 +231,12 @@ export async function runBench(options: BenchOptions = {}): Promise<BenchResults
     classifier: {
       coreRecall: proportion(classifier.coreDetected, classifier.coreTotal),
       evasionRecall: proportion(classifier.evasionDetected, classifier.evasionTotal),
-      // `EvaluationResult` exposes holdout recall as a rate without its counts.
-      // Recall is detected/total over integers, so multiplying back recovers the
-      // numerator exactly - this is reconstruction, not estimation.
-      holdoutRecall: proportion(
-        Math.round(classifier.holdoutRecall * holdoutTotal),
-        holdoutTotal,
+      // `EvaluationResult` exposes this as a rate without its counts. Recall is
+      // detected/total over integers, so multiplying back recovers the numerator
+      // exactly - reconstruction, not estimation.
+      externalReviewRecall: proportion(
+        Math.round(classifier.externalReviewRecall * externalMaliciousTotal),
+        externalMaliciousTotal,
       ),
       precision: classifier.precision,
       f1: classifier.f1,

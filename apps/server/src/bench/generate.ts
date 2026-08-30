@@ -127,6 +127,25 @@ const WRAPPERS: Wrapper[] = [
   { name: "timeout-prefix", wrap: (c) => `timeout 30 ${c}` },
   { name: "nohup", wrap: (c) => `nohup ${c} >/dev/null 2>&1` },
   { name: "pipe-through-cat", wrap: (c) => `${c} | cat` },
+
+  // --- forms the first version of this bank could not express ---
+  //
+  // An external reviewer found `echo hi $(...)` bypassing the policy while this
+  // bank reported 100.00% and the ratchet read 0. The bank was not wrong; it was
+  // measuring a space that excluded the live bypass, because every wrapper here
+  // was hand-chosen and nobody chose command substitution.
+  //
+  // That is the same lesson as the corpus one level up: a hand-authored corpus
+  // has blind spots, which is why the generator exists; a generator with
+  // hand-authored axes has blind spots too. The axes are the new hand-authored
+  // artefact, so they get the same scrutiny. These six were added by walking the
+  // shell's own list of ways to run a command without naming it first.
+  { name: "cmd-subst", wrap: (c) => `echo hi $(${c})` },
+  { name: "backtick-subst", wrap: (c) => "echo hi `" + c + "`" },
+  { name: "proc-subst", wrap: (c) => `cat <(${c})` },
+  { name: "eval-string", wrap: (c) => `eval "${c.replace(/"/g, '\\"')}"` },
+  { name: "newline-separator", wrap: (c) => `echo hi\n${c}` },
+  { name: "xargs", wrap: (c) => `echo go | xargs -I{} ${c}` },
 ];
 
 export interface Variant {

