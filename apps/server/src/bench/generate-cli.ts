@@ -164,6 +164,17 @@ rule();
 
 const sample = tokenSample(variants);
 const available = await runsRealRunner();
+/**
+ * Variants the classifier caught but the Runtime did not terminate.
+ *
+ * Declared out here because the GATE has to see it. It used to be scoped to the
+ * branch below, printed, and then dropped: the gate read only `bulk.missed`, so
+ * a variant that was detected but never contained printed "container NOT
+ * killed" and then "Gate passed", exit 0. A CI step labelled "(gate)" went green
+ * on a containment regression. Detection and containment are separate claims and
+ * the gate now fails on either.
+ */
+const survived: Variant[] = [];
 
 if (!available) {
   console.log(`  SKIPPED on ${process.platform}: spawning the fake-codex stand-in needs`);
@@ -173,7 +184,6 @@ if (!available) {
 } else {
   let blocked = 0;
   const teardowns: number[] = [];
-  const survived: Variant[] = [];
   for (const [index, variant] of sample.entries()) {
     const result = await spawnDeniedRun(variant.command, "gen-" + index);
     if (result.blocked) {
@@ -217,6 +227,21 @@ const newSignatures = [
       .filter((signature) => !DOCUMENTED_BYPASS_SIGNATURES.includes(signature)),
   ),
 ];
+
+// Containment failures are gated separately and absolutely: there is no ratchet
+// for a Runtime that did not die, and no documented-residual list either. A
+// detection residual is a known gap in a text classifier; a containment residual
+// means the control did not act.
+if (survived.length > 0) {
+  console.log("");
+  console.log("FAIL: the Runtime was NOT terminated for " + survived.length + " variant(s):");
+  for (const variant of survived) console.log("  ! " + variant.id);
+  console.log("");
+  console.log("These were detected by the policy engine but the container survived.");
+  console.log("Detection is not containment; this gate fails on either.");
+  await cleanup();
+  process.exit(1);
+}
 
 console.log("");
 if (newSignatures.length > 0) {

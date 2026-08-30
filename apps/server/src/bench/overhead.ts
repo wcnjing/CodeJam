@@ -268,6 +268,13 @@ export interface TeardownWindow {
  * happens on process close. Both use the same wall clock, so the difference is
  * the window during which a denied Agent was still executing.
  */
+/**
+ * Runner errors that mean "the run finished without policy stopping it" rather
+ * than "the harness broke". The stand-in deliberately emits no agent message, so
+ * a clean completion surfaces as this rejection.
+ */
+const NOT_A_DENIAL = /completed without an agent message|exited with code/i;
+
 export interface DeniedRun {
   /** True when the Runtime was actually terminated by policy. */
   blocked: boolean;
@@ -306,7 +313,20 @@ export async function spawnDeniedRun(command: string, label = "denied"): Promise
     });
   } catch (error) {
     if (error instanceof PolicyViolationError) blocked = true;
-    else throw error;
+    else if (error instanceof Error && NOT_A_DENIAL.test(error.message)) {
+      // The run reached the end without the policy stopping it. That IS the
+      // containment failure this function exists to report, so it returns
+      // `blocked: false` rather than throwing.
+      //
+      // It threw before, because the stand-in emits no `agent_message` and the
+      // runner rejects with "Codex completed without an agent message". In
+      // `bench:generate` that throw was unhandled: the token tier aborted, so
+      // the aggregate report, the survivor list and the gate never ran, and
+      // `cleanup()` never ran either, leaking temp directories. An operator saw
+      // an opaque parser error where the correct output is "the container was
+      // NOT killed".
+      blocked = false;
+    } else throw error;
   }
   const deadAt = Date.now();
   let emittedAt = Number.NaN;
