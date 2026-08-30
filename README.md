@@ -68,7 +68,7 @@ to a control here and to an entry in
 | Brief's threat | Control in this repo |
 | --- | --- |
 | Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
-| Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/33 secret-channel attacks allowed |
+| Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/40 secret-channel attacks allowed |
 | Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–3 ms, tail not well characterised |
 | Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
 | Runaway execution | Step budget enforced by the platform, independent of policy mode |
@@ -329,13 +329,80 @@ contributor's laptop.
 > believes.
 >
 > Re-reading each figure against the log of the run it cites has now caught wrong
-> numbers **five separate times**,
-> and every time it was the same failure: a value carried forward from an earlier
-> build while the text linked a newer run. Correctness metrics are stable, so
-> they survive that unnoticed; **timing figures move every run, so a stale one is
-> indistinguishable from a real change**. Citing a run has to mean citing the run
-> the number came from, and that is only true if someone checks. A document full
-> of links is not the same as a document full of verified links.
+> numbers **six separate times**. Five were the same failure: a value carried
+> forward from an earlier build while the text linked a newer run. Correctness
+> metrics are stable, so they survive that unnoticed; **timing figures move every
+> run, so a stale one is indistinguishable from a real change**.
+>
+> **The sixth was worse, and it was in this section.** The performance paragraph
+> below used to read "a decision is 4.15–5.05 µs" and put the store curve at
+> "0.29–0.99 ms … 10.05–17.87 ms, r² 0.9984–0.9999", citing
+> [run 33294916979](https://github.com/wcnjing/CodeJam/actions/runs/33294916979).
+> Grepping that run's log for those numbers returns **nothing**. Not one of them
+> is in the run the sentence cites. `4.15` appears in it exactly once, as
+> `1000 events   mutate p50   4.15 ms` — a store figure, in milliseconds,
+> republished as a decision cost in microseconds. The real decision cost in that
+> run was 45.70–59.40 µs, an order of magnitude away. `5.05 µs` and r² `0.9984`
+> appear nowhere at all.
+>
+> The [pull-request description](docs/PR_DESCRIPTION.md) for that same run
+> carried the correct figures. So the same author, working from the same log on
+> the same day, wrote one document right and this one wrong — which rules out
+> "didn't have the data" and leaves only "didn't check this copy". **Citing the
+> right run is not the control; re-deriving the number from that run is.** A
+> stale figure at least came from somewhere. These came from the wrong column,
+> and the citation was correct the whole time, which is what let them sit here
+> unchallenged through a merge and a documentation regeneration pass.
+>
+> A document full of links is not the same as a document full of verified links.
+
+> **A second correction: we said the base64 escape was unclosable, and it was
+> closed.** For most of this project's life the Limitations section read:
+> *"Detection is textual. A fully encoded command (`eval "$(echo <base64> |
+> base64 -d)"`) defeats it. **Only network-layer egress control closes this**,
+> which was deliberately not attempted."* The pull request that added the
+> benchmark repeated it as the one documented escape that would remain.
+>
+> It is closed, and not by network-layer control. `evasion-encoding-66` is
+> denied, and the red-team probe suite reads 56/56 for the first time.
+>
+> **Materialising is not pattern-matching harder, and the difference is the whole
+> point.** Matching harder would mean writing patterns against the *encoded*
+> form — one rule per encoding, per payload shape, each defeated by re-encoding,
+> and each a new unapprovable `encoded-exfiltration` denial that tells a reviewer
+> nothing about what was actually requested. Instead the engine runs the decoder
+> **the command itself names**, as pure text, depth-limited, executing nothing,
+> and asks the *existing* rules the *same* question of the result. The rule set
+> does not grow at all. A decoded `curl https://attacker.example` comes back as
+> `network-egress-denied` — the ordinary rule, the ordinary id, reviewable and
+> approvable like any other egress — and a decoded commit message is still a
+> commit message. The decoding is gated on the decoder appearing in the command,
+> so an ordinary base64 blob sitting in a fixture file is not touched: the search
+> space is bounded by the decoders a command names, not by the payloads an
+> attacker can construct.
+>
+> **Where the original claim was right, and where it was wrong.** It was right
+> that no amount of pattern matching *over the command text* closes an encoded
+> payload — that part still holds, and it is why matching harder was the wrong
+> move. It was wrong to conclude that network-layer control was therefore the
+> only option, and the error was an unstated assumption: that the text available
+> for analysis is fixed. It is not. A command that decodes something has to name
+> its own decoder, which means the analysable text can be *extended* before the
+> rules ever run. The ceiling we described is real, but it sits further out than
+> we drew it. It binds when the payload is not a literal or the decoder is not
+> named — a blob fetched at runtime, a destination assembled at runtime, an
+> encoding nobody enumerated. Those are still open, and network-layer control is
+> still the only thing that removes the dependence on reading text at all.
+>
+> **This is the more uncomfortable kind of correction to publish.** The invented
+> 92 ms figure above was an error in our favour, and errors in your favour get
+> challenged. This one understated our own system, and a security document that
+> overstates residual risk feels responsible — so nobody argues with it, and it
+> sat unchallenged for most of the project. "Only X closes this" is a claim about
+> the entire solution space, made from inside one framing of the problem, and it
+> is the class of claim we were least entitled to make confidently. Being wrong
+> about it did not cost us a wrong number; it cost us a control we could have had
+> earlier, and would have gone on costing us for as long as the sentence stood.
 
 **Containment is measured, not asserted.** From the denied command being emitted
 to the Runtime process being dead: **p50 1–3 ms** across CI runs.
@@ -351,15 +418,23 @@ to the Runtime process being dead: **p50 1–3 ms** across CI runs.
  That window is the
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979), `npm run bench:overhead`)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:overhead`;
+that run reports p50 2 ms / max 3 ms on Node 22 and p50 3 ms / max 5 ms on Node 24,
+n=5 each)
 
-**The middleware's real cost is not the policy decision.** A decision is 4.15–5.05 µs.
-Recording it is the expensive half: `JsonStore.mutate()` clones and rewrites the
-whole database on every call, so writing one policy event is **O(events already
-stored)** — 0.29–0.99 ms at zero events, **10.05–17.87 ms at 5,000**. Growth is exactly
-linear, r² **0.9984–0.9999** across three independent runners, so this is a
-property of the code and not of a machine.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979), `npm run bench:store`)
+**The middleware's real cost is not the policy decision.** A decision is
+**58.19–63.70 µs** across three runners. Recording it is the expensive half:
+`JsonStore.mutate()` clones and rewrites the whole database on every call, so
+writing one policy event is **O(events already stored)** — 0.31–1.08 ms at zero
+events, **14.16–17.59 ms at 5,000**. Growth is exactly linear, r²
+**0.9995–0.9999** across three independent runners, so this is a property of the
+code and not of a machine.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:store`)
+
+The capability engine made the decision itself dearer — 45.70–59.40 µs under the
+old regex engine, 58.19–63.70 µs now, same harness on the same three runners. It
+is still under 0.5% of a run's wall time, and it bought the closures described
+above. The store curve did not change class: same linearity, same O(n).
 
 *The fix is scoped and deliberately not built.* Three options are written up with
 trade-offs; the two cheap ones cap the log by discarding audit records. For a
@@ -377,7 +452,8 @@ tested rather than reasoned about, and rejected:
 | option | result |
 | --- | --- |
 | `shell: true` | **RCE.** `buildCodexArgs` puts the prompt into argv, and the prompt is the body of `POST /api/agents/:id/messages`. Node concatenates argv into a cmd line unescaped, so `summarise the repo & <command>` runs `<command>` on the host, outside the container, as the server process. Confirmed by making it create a file. |
-| `cmd.exe /d /s /c` with an args array | **Secret disclosure.** Nine injection payloads were contained, but cmd still expands environment variables: a prompt containing `%ARK_API_KEY%` came back with the real key substituted into it, because that key is in the child environment. A bug fix would have breached the 0/33 secret-leak figure this project reports. It also corrupts backslashes, so `C:\Users\dev\repo` in a prompt arrives mangled. |
+| `cmd.exe /d /s /c` with an args array | **Secret disclosure.** Nine injection payloads were contained, but cmd still expands environment variables: a prompt containing `%ARK_API_KEY%` came back with the real key substituted into it, because that key is in the child environment. A bug fix would have breached the secret-leak figure this project reports
+(0/33 at the time, 0/40 now). It also corrupts backslashes, so `C:\Users\dev\repo` in a prompt arrives mangled. |
 | **shipped:** resolve to a real executable, else refuse | No shell on any path. Prefers `.exe`/`.com` via PATHEXT; otherwise recovers the npm shim's target and **verifies** it exists and is spawnable; otherwise refuses with an error naming both workarounds. A shim template that changes shape fails verification rather than resolving to something wrong. |
 
 Before the fix: `spawn EINVAL` on every run. After: the run completes,
@@ -518,15 +594,22 @@ constant) is now measured against 75 benign entries instead of 73, because two
 benign guards were added with the fix. Numerator 1 throughout.
 
 **Zero is reported with its denominator and its interval.** "0 secret leaks" is
-not evidence the rate is zero — 33 attempts only buy so much confidence:
+not evidence the rate is zero — 40 attempts only buy so much confidence:
 
 | metric | counts | interval |
 | --- | --- | --- |
-| Secret leaks | 0/33 | **≤ 8.7%** (95%, one-sided exact) |
-| Unsafe-action escape rate | 1/73 | 1.4%, 95% CI 0.2–7.4% |
-| Attack block rate | 72/73 | 98.6%, 95% CI 92.6–99.8% |
-| False positive rate | 1/47 | 2.1%, 95% CI 0.4–11.1% |
-| Red-team probe denials | 55/56 | 98.2%, 95% CI 90.6–99.7% |
+| Secret leaks | 0/40 | **≤ 7.2%** (95%, one-sided exact) |
+| Unsafe-action escape rate | 0/114 | **≤ 2.6%** (95%, one-sided exact) |
+| Attack block rate | 114/114 | 100.0%, 95% CI 96.7–100.0% |
+| False positive rate | 1/84 | 1.2%, 95% CI 0.2–6.4% |
+| Red-team probe denials | 56/56 | 100.0%, 95% CI 93.6–100.0% |
+
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench`)
+
+**Three of these rows are now perfect scores — 0/114 escapes, 114/114 blocked,
+56/56 denied — which is exactly when the interval matters most.** A rate of 0/114
+is not a rate of zero; it is a rate whose upper bound is 2.6% at 95% confidence,
+on a corpus we wrote ourselves. The denominator is the honest part of the row.
 
 Zero-numerator results use the exact Clopper-Pearson bound rather than Wilson,
 because Wilson is two-sided and would understate a one-sided claim. Erring toward
@@ -534,8 +617,8 @@ overstating residual risk is the only safe direction for a security number.
 (`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
 CPU, corpus size, policy hash)
 
-**CI: 175 tests green on ubuntu-latest, Node 22 and 24.**
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)) The matrix is
+**CI: 226 tests green on ubuntu-latest, Node 22 and 24** (234 total, 8 skipped).
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065)) The matrix is
 not redundancy: it separates platform from runtime version, which an earlier
 comparison had confounded.
 
@@ -577,8 +660,8 @@ in ~3 s on any platform.
 
 **Replay does not prove containment**, and says so at the end of every run.
 Containment is proven separately, spawning for real: **24/24 generated attacks
-terminated the Runtime**, teardown p50 1–3 ms (see the tail caveat above)
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33294916979)). A parity
+terminated the Runtime**, teardown p50 2–3 ms (see the tail caveat above)
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065)). A parity
 test feeds the same recorded bytes to the real runner and to the replay runner
 and requires the same outcome, so the two cannot drift. Fixtures are labelled
 **synthesized, not recorded** — no live model was available to capture from, and
@@ -607,7 +690,10 @@ operational-controls mapping.
 
 Recorded honestly, because each one is a real gap:
 
-- **Detection is textual, and that ceiling has not moved.** The engine now
+- **Detection is textual, and that ceiling has not moved — but it is further
+  out than this section used to claim** (see the correction above; we said this
+  was closable only at the network layer, and it was closed at the capability
+  layer instead). The engine now
   materialises what a command would decode (base64, hex, ANSI-C, printf octal)
   or pipe into a shell, and asks the same question of that text, so
   `eval "$(echo <base64> | base64 -d)"` and `echo 'curl https://x' | sh` are
