@@ -9,20 +9,59 @@ const service = {
 } as unknown as AgentService;
 
 describe("HTTP boundary", () => {
-  it("protects API routes with the configured shared token", async () => {
+  const ALICE = "tok_alice_0123456789abcdef";
+
+  it("protects API routes with a configured principal token", async () => {
     const app = await createApp(
-      loadConfig({ NODE_ENV: "test", APP_AUTH_TOKEN: "a-strong-test-token" }),
+      loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
       service,
     );
     const denied = await app.inject({ method: "GET", url: "/api/agents" });
     expect(denied.statusCode).toBe(401);
 
+    const unknown = await app.inject({
+      method: "GET",
+      url: "/api/agents",
+      headers: { authorization: "Bearer tok_wrong_0123456789abcdef" },
+    });
+    expect(unknown.statusCode).toBe(401);
+
     const allowed = await app.inject({
       method: "GET",
       url: "/api/agents",
-      headers: { authorization: "Bearer a-strong-test-token" },
+      headers: { authorization: "Bearer " + ALICE },
     });
     expect(allowed.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it("reports the authenticated principal on /api/me", async () => {
+    const app = await createApp(
+      loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
+      service,
+    );
+    const me = await app.inject({
+      method: "GET",
+      url: "/api/me",
+      headers: { authorization: "Bearer " + ALICE },
+    });
+    expect(me.json()).toEqual({ principal: { id: "alice" } });
+
+    const anonymous = await app.inject({ method: "GET", url: "/api/me" });
+    expect(anonymous.statusCode).toBe(401);
+    await app.close();
+  });
+
+  it("leaves the API open when no principal is configured, and reports none", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), service);
+    const open = await app.inject({ method: "GET", url: "/api/agents" });
+    expect(open.statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/api/auth" })).json()).toEqual({
+      required: false,
+    });
+    expect((await app.inject({ method: "GET", url: "/api/me" })).json()).toEqual({
+      principal: null,
+    });
     await app.close();
   });
 

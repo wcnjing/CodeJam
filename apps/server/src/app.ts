@@ -1,13 +1,20 @@
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
-import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { buildEvaluationSummary } from "./evaluation-summary.js";
+import type { Principal } from "./principals.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    /** Resolved from the presented credential. Never client-supplied. */
+    principal: Principal | null;
+  }
+}
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -50,9 +57,10 @@ export async function createApp(
         : false,
   });
 
+  app.decorateRequest("principal", null);
+
   app.addHook("onRequest", async (request, reply) => {
     if (
-      !config.authToken ||
       !request.url.startsWith("/api/") ||
       request.url === "/api/health" ||
       request.url === "/api/auth"
@@ -60,13 +68,12 @@ export async function createApp(
       return;
     }
     const header = request.headers.authorization ?? "";
-    const candidate = header.startsWith("Bearer ") ? header.slice(7) : "";
-    const expectedBuffer = Buffer.from(config.authToken);
-    const candidateBuffer = Buffer.from(candidate);
-    const valid =
-      candidateBuffer.length === expectedBuffer.length &&
-      timingSafeEqual(candidateBuffer, expectedBuffer);
-    if (!valid) {
+    const token = header.startsWith("Bearer ") ? header.slice(7) : "";
+    request.principal = config.principals.resolve(token);
+    // With no principals configured the API stays open, exactly as it was with
+    // an empty APP_AUTH_TOKEN. Approvals refuse separately on a null principal,
+    // so an unattributable decision is impossible either way.
+    if (config.principals.size > 0 && !request.principal) {
       return reply.code(401).send({ error: "Authentication required" });
     }
   });
@@ -76,7 +83,11 @@ export async function createApp(
     service: "volc-agent-launchpad",
   }));
 
-  app.get("/api/auth", async () => ({ required: config.authToken.length > 0 }));
+  app.get("/api/auth", async () => ({ required: config.principals.size > 0 }));
+
+  // Lets the UI name the principal it is deciding as. This cannot fold into
+  // /api/auth, which is exempt from the hook and so has no principal to report.
+  app.get("/api/me", async (request) => ({ principal: request.principal }));
 
   app.get("/api/system", async () => service.systemInfo());
 

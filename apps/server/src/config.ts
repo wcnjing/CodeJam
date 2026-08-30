@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { REVIEWABLE_RULES } from "./command-policy.js";
+import { PrincipalRegistry } from "./principals.js";
 
 const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
@@ -34,12 +35,9 @@ const envSchema = z.object({
     .max(48)
     .regex(/^[a-zA-Z0-9_.-]+$/)
     .default("default"),
-  APP_AUTH_TOKEN: z
-    .string()
-    .trim()
-    .max(128)
-    .regex(/^[A-Za-z0-9._~-]*$/, "APP_AUTH_TOKEN must use URL-safe characters")
-    .optional(),
+  // Named approver credentials: comma-separated id:token pairs. The id is what
+  // an approval records, so it must come from here and never from a request body.
+  APP_PRINCIPALS: z.string().default(""),
   ARK_API_KEY: z.string().optional(),
   ARK_MODEL: z.string().optional(),
   ARK_BASE_URL: z
@@ -68,15 +66,23 @@ const envSchema = z.object({
 export type AppConfig = ReturnType<typeof loadConfig>;
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
+  if ((environment.APP_AUTH_TOKEN ?? "").trim().length > 0) {
+    throw new Error(
+      "APP_AUTH_TOKEN has been replaced by APP_PRINCIPALS. A shared token cannot be " +
+        "attributed to a person, so approvals no longer accept one. Set " +
+        'APP_PRINCIPALS="alice:<token>,bob:<token>" and remove APP_AUTH_TOKEN.',
+    );
+  }
   const env = envSchema.parse(environment);
-  const authToken = env.APP_AUTH_TOKEN?.trim() ?? "";
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
-  if (env.NODE_ENV === "production" && !loopbackHosts.has(env.HOST)) {
-    if (authToken.length < 24 || authToken.startsWith("replace-")) {
-      throw new Error(
-        "APP_AUTH_TOKEN must contain at least 24 characters for a non-loopback production server",
-      );
-    }
+  const remoteProduction = env.NODE_ENV === "production" && !loopbackHosts.has(env.HOST);
+  const principals = PrincipalRegistry.parse(env.APP_PRINCIPALS, {
+    minTokenLength: remoteProduction ? 24 : 8,
+  });
+  if (remoteProduction && principals.size === 0) {
+    throw new Error(
+      "APP_PRINCIPALS must configure at least one principal for a non-loopback production server",
+    );
   }
   const defaultContainerUser =
     typeof process.getuid === "function" && typeof process.getgid === "function"
@@ -101,7 +107,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerPidsLimit: env.CONTAINER_PIDS_LIMIT,
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
-    authToken,
+    principals,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",
     arkBaseUrl: env.ARK_BASE_URL.replace(/\/+$/, ""),
