@@ -329,10 +329,33 @@ contributor's laptop.
 > believes.
 >
 > Re-reading each figure against the log of the run it cites has now caught wrong
-> numbers **six separate times**. Five were the same failure: a value carried
+> claims **seven separate times**. Five were the same failure: a value carried
 > forward from an earlier build while the text linked a newer run. Correctness
 > metrics are stable, so they survive that unnoticed; **timing figures move every
 > run, so a stale one is indistinguishable from a real change**.
+>
+> **The seventh was not a wrong number but a wrong MECHANISM, which is the more
+> durable kind.** Reporting the materialisation bypasses below, we stated a rule:
+> *a URL always survives a rewrite, because `ANY_URL` matches anywhere in the
+> text; only a bare host can escape, because it is recoverable solely from a
+> recognised tool's argument position.* It explained the six cases in hand, it
+> was repeated back as an insight, and it is **false in general**. When the
+> textual carve-out is still live — because the write went through `tee` or
+> `dd of=` rather than a `>` redirect, so nothing recognised a write at all —
+> a URL escapes too:
+> `echo 'curl https://x' | tee /tmp/h.sh > /dev/null && sh /tmp/h.sh` is
+> ALLOWED. Enumerating the carriers is what exposed it; no amount of re-reading
+> the six original cases would have, because the rule fit all six.
+>
+> A wrong number is corrected by the next run that prints it. **A wrong mechanism
+> survives every run, because it is not a measurement — it is the story told
+> about measurements, and it keeps explaining new results plausibly.** This one
+> would have set the scope of the fix: "only bare hosts escape" makes
+> `writtenScriptPayloads` a redirect-only function, which would have closed
+> class A, left class B open, and reported the job done. The check that catches
+> a wrong number is re-reading the log. The check that catches a wrong mechanism
+> is widening the axis until the rule has to predict something it has not
+> already seen.
 >
 > **The sixth was worse, and it was in this section.** The performance paragraph
 > below used to read "a decision is 4.15–5.05 µs" and put the store curve at
@@ -708,8 +731,12 @@ Recorded honestly, because each one is a real gap:
   engine materialises two carriers — what a command decodes, and what it pipes
   into a shell. It does not materialise the third: **text written to a file that
   is then executed.** An injection benchmark
-  (`npm run bench:injection`, enforcement 2,104/2,250 = **93.51%**; the harness
-  itself lands on a separate branch, this is its first published result)
+  (`npm run bench:injection`, enforcement 2,104/2,250 = **93.51%** —
+  **measured locally, not from CI**, because the harness is not on `main` yet
+  and so no CI run has produced this figure; every other number on this page is
+  CI-derived and linked, and this one is labelled rather than left to pass as
+  the same kind of evidence. **Refresh it from the injection branch's first CI
+  run once that lands.**)
   enumerated every carrier the shell offers and found **146 variants across 49
   signatures and 17 of 30 carriers**, in three causes:
   `runsWrittenScript` withdraws the textual carve-out for `> file` but never
@@ -727,6 +754,11 @@ Recorded honestly, because each one is a real gap:
   time in this project that a class looked small because the axis could not
   express it. The `direct` class is 525/525, so this is a materialisation gap
   and not a regression in the ordinary rules.
+  <!-- LOAD-BEARING: the paragraph below stays. It is the one place the README
+       explains why three independent measurements can all read 100% and still
+       miss the same class, which is the argument the rest of this document
+       depends on. Reviewed and kept deliberately; if it is trimmed for length,
+       trim something else. -->
   **This does not contradict the 100% figures above, and the relationship is
   the point.** The generated bank reports 6,860/6,860 and the corpus reports
   0/114 escapes because neither has a carrier axis — every variant they generate
