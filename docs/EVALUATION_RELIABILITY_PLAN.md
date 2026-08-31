@@ -274,10 +274,15 @@ immediately. The gate encoded the defect's shape because the defect's shape was
 the thing under management.
 
 Then TM-OPS-001 was fixed, and the gate failed. Not because anything broke —
-because the growth it was asserting had been removed. The measured slope went
-from 2.65 µs/event to −0.04, r² from 0.9997 to 0.3870, and a test whose whole
-purpose was to insist on a clean linear fit could not survive its subject being
-deleted.
+because the growth it was asserting had been removed.
+
+<!-- figures: local reason="Before/after on one laptop in one sitting, which is the only place a controlled same-machine comparison of the two store implementations exists: the 'before' side is code that no longer exists on any branch, so it cannot appear in a current CI run. The CI-verified after-figures are cited in the TM-OPS-001 register entry." -->
+
+The measured slope went from 2.65 µs/event to −0.04, r² from 0.9997 to 0.3870,
+and a test whose whole purpose was to insist on a clean linear fit could not
+survive its subject being deleted.
+
+<!-- /figures -->
 
 **The distinguishing property is that nothing catches it, because it passes.**
 Every other entry on this list announces itself as a wrong value somewhere — a
