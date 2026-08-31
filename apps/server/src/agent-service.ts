@@ -189,22 +189,25 @@ export class AgentService {
   }
 
   /**
-   * Resolves a held run. A human with the command and its reason in front of
-   * them approves or denies it; the decision and the authenticated principal
-   * are recorded so override rates can be reviewed for rubber-stamping.
+   * Resolves a held run. Policy decisions require an authenticated principal
+   * and reason; command-allowance decisions use the separate continuation route
+   * and record the operator's Continue/Stop choice automatically.
    *
-   * Approval grants a run-scoped host grant for exactly the hosts the
-   * denied command named, then resumes the original task as a new run. The
-   * grant is never written to config and applies to that one run only.
+   * A policy approval grants exactly the named hosts to one continuation run.
+   * A budget continuation grants no capability and simply starts another
+   * bounded run in the same Codex thread.
    */
   async resolveApproval(
     id: string,
     decision: "approve" | "deny",
-    principal: Principal,
+    principal: Principal | null,
     reason: string,
   ): Promise<{ approval: ApprovalRequest; continuationRun: AgentRun | null }> {
-    // No "approver name required" guard: the caller is a resolved Principal, so
-    // an anonymous decision is unrepresentable rather than merely rejected.
+    const pendingRequest = this.getApproval(id);
+    const budgetContinuation = pendingRequest.rule === "step-budget-exceeded";
+    if (!principal && !budgetContinuation) {
+      throw new HttpError(401, "Resolving a policy approval requires an authenticated principal");
+    }
     const trimmedReason = reason.trim();
     if (!trimmedReason) {
       throw new HttpError(400, "A reason is required so every decision records why");
@@ -218,8 +221,8 @@ export class AgentService {
           throw new HttpError(409, "This request was already " + approval.status);
         }
         approval.status = "denied";
-        approval.resolvedBy = principal.id;
-        approval.resolvedByAttribution = "credential";
+        approval.resolvedBy = principal?.id ?? null;
+        approval.resolvedByAttribution = principal ? "credential" : null;
         approval.decisionReason = trimmedReason;
         approval.resolvedAt = now();
         return structuredClone(approval);
@@ -260,7 +263,10 @@ export class AgentService {
         throw new HttpError(409, "Start the Agent before approving");
       }
       run.agentId = approval.agentId;
-      run.prompt = approval.prompt;
+      const isBudgetContinuation = approval.rule === "step-budget-exceeded";
+      run.prompt = isBudgetContinuation
+        ? "Continue the previous task from where you left off."
+        : approval.prompt;
       database.runs.push(run);
       // No duplicate user message: the held run already recorded the operator's
       // request. The continuation is a system-initiated resume of that request.
@@ -269,16 +275,27 @@ export class AgentService {
       agent.lastError = null;
       agent.updatedAt = timestamp;
       approval.status = "approved";
-      approval.resolvedBy = principal.id;
-      approval.resolvedByAttribution = "credential";
+      approval.resolvedBy = principal?.id ?? null;
+      approval.resolvedByAttribution = principal ? "credential" : null;
       approval.decisionReason = trimmedReason;
       approval.resolvedAt = now();
       approval.continuationRunId = run.id;
-      return { approval: structuredClone(approval), agentSnapshot, hosts: approval.hosts };
+      return {
+        approval: structuredClone(approval),
+        agentSnapshot,
+        hosts: isBudgetContinuation ? [] : approval.hosts,
+        isGrantRun: !isBudgetContinuation,
+      };
     });
 
-    // Grant is scoped to this one run (isGrantRun=true), so a re-denial hard-blocks.
-    const execution = this.executeRun(committed.agentSnapshot, run, committed.hosts, true);
+    // Policy grants are scoped to one run, while budget continuations are normal
+    // runs and may ask for another allowance if they reach the cap again.
+    const execution = this.executeRun(
+      committed.agentSnapshot,
+      run,
+      committed.hosts,
+      committed.isGrantRun,
+    );
     this.activeExecutions.set(committed.agentSnapshot.id, execution);
     void execution
       .finally(() => {
@@ -289,6 +306,25 @@ export class AgentService {
       .catch(() => undefined);
 
     return { approval: committed.approval, continuationRun: run };
+  }
+
+  async resolveBudgetContinuation(
+    id: string,
+    decision: "continue" | "stop",
+    principal: Principal | null,
+  ): Promise<{ approval: ApprovalRequest; continuationRun: AgentRun | null }> {
+    const request = this.getApproval(id);
+    if (request.rule !== "step-budget-exceeded") {
+      throw new HttpError(409, "This request is not a command-allowance decision");
+    }
+    return this.resolveApproval(
+      id,
+      decision === "continue" ? "approve" : "deny",
+      principal,
+      decision === "continue"
+        ? "User granted another command allowance"
+        : "User stopped the task after its command allowance was exhausted",
+    );
   }
 
   async sendMessage(
@@ -517,13 +553,11 @@ export class AgentService {
         if (storedRun) {
           storedRun.status = cancelled
             ? "cancelled"
-            : held
+            : held || overBudget
               ? "held"
               : blocked
                 ? "blocked"
-                : overBudget
-                  ? "terminated"
-                  : "failed";
+                : "failed";
           storedRun.error = message;
           storedRun.completedAt = completedAt;
         }
@@ -537,6 +571,23 @@ export class AgentService {
             detail: error.message,
             enforced: true,
             decidedAt: completedAt,
+          });
+          database.approvals.push({
+            id: randomUUID(),
+            agentId: agentAtStart.id,
+            runId: run.id,
+            prompt: run.prompt,
+            rule: "step-budget-exceeded",
+            command: "(" + error.observed + " commands; limit " + error.limit + ")",
+            detail: error.message,
+            hosts: [],
+            status: "pending",
+            requestedAt: completedAt,
+            resolvedBy: null,
+            resolvedByAttribution: null,
+            decisionReason: null,
+            resolvedAt: null,
+            continuationRunId: null,
           });
         }
         if (error instanceof PolicyViolationError) {
@@ -598,10 +649,13 @@ export class AgentService {
           }
         }
         if (agent) {
+          if (overBudget && error.threadId) {
+            agent.codexThreadId = error.threadId;
+          }
           if (agent.status !== "stopped") {
-            // Blocked or held both mean the control worked and the container is
-            // gone, so the Agent stays usable. Only an unexpected failure is an
-            // error state the operator must clear.
+            // Blocked, held, or over budget means the control worked and the
+            // process/container is gone, so the Agent stays usable. Only an
+            // unexpected failure is an error state the operator must clear.
             agent.status =
               cancelled || blocked || held || overBudget ? "ready" : "error";
           }

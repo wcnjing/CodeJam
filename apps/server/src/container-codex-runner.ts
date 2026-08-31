@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
 import { EgressIsolation, type IsolationHandle } from "./network-isolation.js";
@@ -25,10 +26,39 @@ interface ActiveContainer {
   termination: Promise<void> | null;
 }
 
+/**
+ * A DNS label may not exceed 63 octets, and the broker's container name IS a
+ * DNS label: the Agent reaches it as the host in `HTTPS_PROXY`, resolved by the
+ * network's embedded DNS. A longer name resolves to nothing, so the Agent has
+ * no route to the model at all — and the failure surfaces as a transport error
+ * against the Ark URL, which reads like an outage rather than like a naming
+ * bug. The budget is the label limit minus the longest suffix we append.
+ */
+const MAX_DNS_LABEL = 63;
+const NAME_SUFFIXES = ["-net", "-broker"];
+const MAX_CONTAINER_NAME = MAX_DNS_LABEL - Math.max(...NAME_SUFFIXES.map((s) => s.length));
+
+/**
+ * Both `_` and `.` are legal in a container name and wrong in a hostname — a
+ * dot would split the label and change which name is being resolved — so the
+ * safe set here is narrower than the engine's.
+ */
+function dnsSafe(value: string): string {
+  return value.replace(/[^a-zA-Z0-9-]/g, "-");
+}
+
 export function containerName(agentId: string, instanceId = "default"): string {
-  const safeInstance = instanceId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 32);
-  const safeAgent = agentId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48);
-  return "sentinel-" + safeInstance + "-" + safeAgent;
+  const safeInstance = dnsSafe(instanceId).slice(0, 32);
+  const safeAgent = dnsSafe(agentId).slice(0, 48);
+  const name = "sentinel-" + safeInstance + "-" + safeAgent;
+  if (name.length <= MAX_CONTAINER_NAME) return name;
+
+  // Truncating alone would collide across agents that share a prefix — the
+  // usual shape, since these are UUIDs under one instance id. A digest of the
+  // full name keeps the result unique and still deterministic, which is what
+  // stale-topology cleanup depends on.
+  const digest = createHash("sha256").update(name).digest("hex").slice(0, 8);
+  return name.slice(0, MAX_CONTAINER_NAME - digest.length - 1) + "-" + digest;
 }
 
 /**
@@ -358,6 +388,7 @@ export class ContainerCodexRunner implements AgentRunner {
         throw new BudgetExceededError(
           this.config.policyMaxCommands,
           parsed.commands.length,
+          parsed.threadId,
         );
       }
       if (active.timedOut) {

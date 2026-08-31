@@ -31,6 +31,9 @@ const approvalDecisionBody = z
     reason: z.string().trim().min(1).max(2000),
   })
   .strict();
+const budgetContinuationBody = z
+  .object({ decision: z.enum(["continue", "stop"]) })
+  .strict();
 const createAgentBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().max(500).optional(),
@@ -179,6 +182,13 @@ export async function createApp(
     const { id } = approvalIdParams.parse(request.params);
     const body = approvalDecisionBody.parse(request.body);
     const result = await service.resolveApproval(id, body.decision, principal, body.reason);
+    return reply.code(200).send(result);
+  });
+
+  app.post("/api/budget-continuations/:id", async (request, reply) => {
+    const { id } = approvalIdParams.parse(request.params);
+    const body = budgetContinuationBody.parse(request.body);
+    const result = await service.resolveBudgetContinuation(id, body.decision, request.principal);
     return reply.code(200).send(result);
   });
 

@@ -244,8 +244,8 @@ describe("policy denial is recorded and recoverable", () => {
 
 /**
  * @covers TM-AGENT-004
- * A budget kill surfaces as a `terminated` run with recorded evidence, and the
- * Agent stays usable afterwards.
+ * A budget kill surfaces as a held run with recorded evidence and a continuation
+ * choice, while the Agent stays usable afterwards.
  */
 class RunawayRunner implements AgentRunner {
   async run(): Promise<RunnerResult> {
@@ -261,15 +261,18 @@ class RunawayRunner implements AgentRunner {
 }
 
 describe("runaway execution budget", () => {
-  it("terminates the run, records it, and keeps the Agent usable", async () => {
+  it("holds the run for a continuation decision and keeps the Agent usable", async () => {
     const service = await makeService(new RunawayRunner());
     const agent = await service.createAgent({ name: "Loopy" });
     const { run } = await service.sendMessage(agent.id, "loop forever");
-    await expect.poll(() => service.getRun(run.id).status).toBe("terminated");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
 
     const events = service.getPolicyEvents(agent.id);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ rule: "step-budget-exceeded", enforced: true });
+    expect(service.listApprovals(agent.id)).toMatchObject([
+      { runId: run.id, rule: "step-budget-exceeded", status: "pending" },
+    ]);
     expect(service.getAgent(agent.id).status).toBe("ready");
   });
 });
@@ -321,7 +324,7 @@ describe("monitor evidence on failure", () => {
     await service.initialize();
     const agent = await service.createAgent({ name: "Shadow" });
     const { run } = await service.sendMessage(agent.id, "loop");
-    await expect.poll(() => service.getRun(run.id).status).toBe("terminated");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
 
     const events = service.getPolicyEvents(agent.id);
     // Both the budget kill AND the monitored near-miss are recorded.

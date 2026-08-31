@@ -48,9 +48,11 @@ export class BudgetExceededError extends Error {
   constructor(
     public readonly limit: number,
     public readonly observed: number,
+    /** Codex thread to resume if the operator grants another allowance. */
+    public readonly threadId: string | null = null,
   ) {
     super(
-      "Run terminated: step budget of " +
+      "Run paused: command allowance of " +
         limit +
         " commands exceeded (" +
         observed +

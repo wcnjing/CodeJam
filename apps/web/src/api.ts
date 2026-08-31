@@ -105,4 +105,12 @@ export const api = {
       "/api/approvals/" + approvalId,
       { method: "POST", body: JSON.stringify({ decision, reason }) },
     ),
+  resolveBudgetContinuation: (
+    requestId: string,
+    decision: "continue" | "stop",
+  ) =>
+    request<{ approval: ApprovalRequest; continuationRun: AgentRun | null }>(
+      "/api/budget-continuations/" + requestId,
+      { method: "POST", body: JSON.stringify({ decision }) },
+    ),
 };

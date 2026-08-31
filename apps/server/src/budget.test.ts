@@ -61,7 +61,10 @@ describe("step budget", () => {
     const { runner: r, ws } = await runner(bin, 5);
     await expect(
       r.run({ agentId: "a", workspacePath: ws, prompt: "loop", threadId: null }),
-    ).rejects.toBeInstanceOf(BudgetExceededError);
+    ).rejects.toMatchObject({
+      name: "BudgetExceededError",
+      threadId: "t1",
+    } satisfies Partial<BudgetExceededError> & { threadId: string });
   }, 15_000);
 
   it("allows a run that stays within budget", async () => {

@@ -88,11 +88,11 @@ const RULE_EXPLANATIONS: Record<string, RuleExplanation> = {
       "Guessing 'allowed' here would let an unresolvable path become an escape route; guessing 'denied' would block ordinary work such as writing a build log to a directory named by a variable.",
   },
   "step-budget-exceeded": {
-    label: "Runaway execution stopped",
+    label: "Command allowance reached",
     severity: "info",
     glyph: "■",
     summary:
-      "This Run issued more shell commands than the configured budget allows in a single task. This guard fires regardless of intent — it catches loops and runaway automation just as readily as an attack that tries to hide in volume.",
+      "This Run issued more shell commands than one allowance permits. The process was paused at the boundary so a person can decide whether to grant another allowance or stop the task.",
     consequence:
       "Left unchecked, the Agent could keep issuing commands indefinitely, consuming resources or compounding an early mistake.",
   },

@@ -29,8 +29,8 @@ flowchart TB
   end
   GW -->|deny → blocked| STORE[("Redacted evidence<br/>policyEvents / approvals")]
   GW -->|reviewable → held| UI
-  GW -->|runaway → terminated| STORE
-  UI -->|approve / deny| SVC
+  GW -->|allowance exhausted → held| UI
+  UI -->|approve / deny / continue / stop| SVC
   CTR -.->|blocked egress| EXT["attacker host"]
   STORE --> UI
   style GW fill:#c98a2e,color:#fff
@@ -112,8 +112,9 @@ radius, not the worst-case consequence.
   `file-write-outside-workspace` are always hard-denied, so no operator can be
   fatigued into approving exfiltration or a write past the sandbox boundary.
 - **The step budget is not a toggle.** Command policy can run in monitor mode;
-  the resource budget always enforces, because a runaway loop must stop
-  regardless.
+  the resource budget always stops the active process at the boundary, because a
+  runaway loop must pause regardless. A user may then grant another bounded
+  allowance or stop the task.
 
 ## 4. Did we do a good enough job?
 
