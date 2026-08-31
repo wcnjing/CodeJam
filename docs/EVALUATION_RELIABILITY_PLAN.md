@@ -103,16 +103,16 @@ enforcement suite. That is a materially smaller claim than "Windows is broken",
 and it sharpens the §4 ask: the fix really is confined to two of Persons 1–2's
 test files, not to the project's Windows support in general.
 
-### Four ways a measurement claim goes wrong
+### Five ways a measurement claim goes wrong
 
 Everything below was found by making it. None of it came from theory, and it is
 the most transferable thing this lane produced — the harnesses are specific to
 this codebase, but the failure modes are not.
 
-The four are distinguished by **what catches them**, because that is the only
+They are distinguished by **what catches them**, because that is the only
 distinction that changes anyone's behaviour. They are ordered by how hard they
-are to see, and the ordering is not a coincidence: each one is invisible to the
-check that catches the one above it.
+are to see, and the ordering is not a coincidence: each is invisible to the check
+that catches the one above it.
 
 | | the claim is wrong about | caught only by |
 | --- | --- | --- |
@@ -120,6 +120,13 @@ check that catches the one above it.
 | **wrong mechanism** | why the value is what it is | forcing the rule to predict a case it has not seen |
 | **wrong level** | which thing produces the value | measuring the thing assumed to be the lever |
 | **wrong input** | what was measured at all | reading the instrument's output, not counting it |
+| **stale subject** | *nothing* — the claim is true | fixing the thing the claim guarded |
+
+The fifth is the odd one and the reason the list is not four. The first four all
+surface as a wrong value somewhere. A stale subject is a **correct** assertion
+whose subject has ceased to exist, so it produces no wrong value, passes every
+run, and is invisible to every check here — including all the ones built in this
+lane.
 
 #### 1. Wrong number — caught by re-reading the log
 
@@ -249,7 +256,67 @@ is caught by a machine. This one is caught by looking.
 
 ---
 
-### Two more that do not fit the four
+#### 5. Stale subject — a correct assertion whose subject no longer exists
+
+This one is not a wrong claim at all, which is exactly why it belongs on the
+list and why it sits apart from the four above.
+
+`regression.test.ts` asserted `rSquared >= 0.98` on the store-write curve and
+described it, in its own comment, as **"the load-bearing invariant"** — r² had
+been 0.9931–1.0000 across five environments, the most stable thing measured in
+this lane. Every word of that was true. What it was asserting, read plainly, is
+that **the store kept growing linearly with the number of stored events.**
+
+It was written when that was the right gate. The store was O(events already
+stored) and was going to stay that way for a while, so the only regression worth
+catching was it becoming *super*-linear — and a linearity floor catches that
+immediately. The gate encoded the defect's shape because the defect's shape was
+the thing under management.
+
+Then TM-OPS-001 was fixed, and the gate failed. Not because anything broke —
+because the growth it was asserting had been removed. The measured slope went
+from 2.65 µs/event to −0.04, r² from 0.9997 to 0.3870, and a test whose whole
+purpose was to insist on a clean linear fit could not survive its subject being
+deleted.
+
+**The distinguishing property is that nothing catches it, because it passes.**
+Every other entry on this list announces itself as a wrong value somewhere — a
+figure that will not reconcile, a rule that mispredicts, a lever that does not
+move, an input that reads as nonsense once looked at. A stale subject produces
+no wrong value at all. It is green on every run, it is cited approvingly in
+review, and its comment argues for its own importance. Had nobody fixed the
+store, **this gate would have passed silently forever**, and would have gone on
+being described as load-bearing while guarding something no longer at risk.
+
+The only thing that surfaced it was fixing the thing it guarded. That is a
+uniquely bad detection story: the trigger is an event that may never happen, and
+when it does happen the gate presents as an obstacle to the fix rather than as a
+finding. The tempting reading in that moment is "my change broke a test" — which
+is how a correct fix gets reverted to keep a gate green, and it is worth naming
+because the pressure runs the wrong way.
+
+**The general form, which is the transferable part:** *a gate written against a
+defect encodes that defect's shape.* Any assertion whose subject is a property
+of something you intend to remove has a shelf life. When the defect closes,
+**re-read the gate rather than assuming a passing test is a correct one** — and
+when a gate fails during a fix, check whether it was asserting the bug before
+concluding the fix is wrong.
+
+Here the replacement asserts the slope is under 1 µs/event and **deliberately
+stops asserting r² at all**: with the slope at zero the fit is dominated by
+noise, so r² no longer measures anything and a threshold on it would be a
+number kept for the comfort of having one.
+
+Two smaller instances of the same shape turned up in this lane, which is what
+makes it a category rather than an anecdote. `store.test.ts` pinned
+`version: 3` as a version the store must refuse, and passed for exactly as long
+as 3 was hypothetical — it became an assertion that the store rejects its own
+format the day 3 was adopted. And `injection.test.ts` asserted
+`missUpperBound === null` "with residuals present", which was correct until the
+residuals were closed. Neither was wrong when written. Both were pinned to a
+world that changed.
+
+### Two more that do not fit the five
 
 **Expired provenance — a label is a claim that goes stale.** "Measured locally,
 not from CI — refresh once the harness lands" was accurate when written and
