@@ -32,6 +32,7 @@
     "bench": "npm run bench -w @sentinel/server",
     "bench:overhead": "npm run bench:overhead -w @sentinel/server",
     "bench:generate": "npm run bench:generate -w @sentinel/server",
+    "bench:injection": "npm run bench:injection -w @sentinel/server",
     "redteam": "npm run redteam -w @sentinel/server",
     "build:broker": "docker build -f Dockerfile.egress-broker -t volc-egress-broker:local .",
     "verify:egress": "tsx scripts/verify-egress.mjs",

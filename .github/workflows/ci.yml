@@ -116,6 +116,13 @@ jobs:
       - name: Generated attack bank (gate)
         run: npm run bench:generate
 
+      # GATE. Enforcement tier of the injection benchmark: the cross product of
+      # exfil techniques x agent-shaped rewrites through evaluateCommand. Fails on
+      # any bypass above the documented ratchet. The attempt tier needs a live
+      # model and is not run in CI (it self-skips with an explanation).
+      - name: Injection benchmark - enforcement (gate)
+        run: npm run bench:injection
+
       - name: Zero-config front door
         run: npm run demo:offline
 
@@ -211,6 +218,12 @@ jobs:
       - name: Generated attack bank (gate)
         if: always()
         run: npm run bench:generate
+
+      # Enforcement tier is pure evaluateCommand, so it runs cross-platform like
+      # the bulk bank above; no live model, no spawning.
+      - name: Injection benchmark - enforcement (gate)
+        if: always()
+        run: npm run bench:injection
 
       - name: Zero-config front door
         if: always()
