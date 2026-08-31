@@ -55,56 +55,49 @@ const ACTOR = BENCHMARK_ACTOR;
 /**
  * Known enforcement bypasses, as `payload|reproduction`.
  *
- * 44 signatures, 132 variants, on a 50-carrier axis. The previous ratchet was 0
- * on a 30-carrier axis, and **nothing regressed** -- the axis widened.
+ * 12 signatures, 36 variants, on the 50-carrier axis. 132 -> 36 after class A
+ * was closed; enforcement 96.48% -> 99.04%, corpus FPR unchanged at 1/84 and
+ * recall unchanged at 114/114.
  *
- * 2,250/2,250 was a true statement about 30 carriers. It was never a statement
- * about the shell. Twenty carriers were already known to leak when that figure
- * was published: they were found by a second enumeration and deliberately held
- * back so the ratchet moved once, with the fix, rather than twice. This is that
- * once. The denominator goes 2,250 -> 3,750 and the rate goes 100.00% -> 96.48%
- * because the question got harder, not because the answer got worse.
+ * CLASS A CLOSED BY DELETING A GATE, NOT BY ADDING CASES. `materialisedLiterals`
+ * used to run only behind `executesMaterialisedText`, a union of recognised
+ * executor shapes -- and that gate WAS the residual. It asked "is this one of
+ * the constructs we know executes text?", so any construct nobody had
+ * enumerated kept its literal unread. Every literal is now examined and the
+ * ordinary rules decide, which is affordable because examining a literal cannot
+ * itself deny: the rules still need an untrusted destination, and the textual
+ * carve-out is still evaluated on the outer command.
  *
- * A FIX THAT CLOSED A CLASS, NOT A LIST. The materialisation fix was written and
- * measured against the 30-carrier axis, before any of these twenty had been
- * tested against it. Re-running the widened axis on the pre-fix engine
- * (`b9c01d8`) and on the fixed one isolates what it bought on carriers it had
- * never seen:
+ * THE GENERALISATION, MEASURED RATHER THAN ASSERTED. No per-carrier code was
+ * written -- one gate was removed -- and 16 of the 20 carriers closed outright:
  *
- *   pre-fix    3,408 / 3,750   90.88%   342 bypasses, 114 signatures
- *   post-fix   3,618 / 3,750   96.48%   132 bypasses,  44 signatures
+ *   exec-wrapper       345/375 -> 375/375   all five, and nothing mentions
+ *                                           setsid, nice, flock, stdbuf, script
+ *   shell-binding      495/525 -> 522/525   six of seven
+ *   deferred-registry  528/600 -> 567/600   five of eight
  *
- * On the twenty new carriers alone, 192 open -> 132 open: **60 cases closed by a
- * fix that predates their existence in the corpus.** `archive-round-trip` closed
- * completely (69/75 -> 75/75), and the three pipeline registries `at`, `crontab`
- * and `parallel` each went 54/75 -> 69/75. That is the difference between
- * harvesting literals wherever they appear and enumerating a list of carriers.
+ * That is the second time removing an enumeration beat extending one, and the
+ * evidence is the carriers the change was not written against.
  *
- * THE TAXONOMY HELD; NO FOURTH CAUSE APPEARED. All 132 fall into the two causes
- * already documented:
+ * WHAT REMAINS, and the two are different problems:
  *
- *   102  class A -- the destination is a BARE HOST and the construct breaks tool
- *        recognition, so it is never in a recognised tool's argument position.
- *        Payloads: `scp-copy` 57, `nc-pipe` 45, and nothing else. Every carrier
- *        below leaks these two and only these two.
- *    30  class B -- the textual carve-out survives, so even a URL escapes. Only
- *        `make-target` and `git-hook`: both write a file whose execution
- *        semantics belong to another program (`Makefile` -> make,
- *        `.git/hooks/pre-commit` -> git), and `runsWrittenScript` recognises a
- *        file as a script only when a shell is invoked on it.
+ *   30  class B -- `make-target` and `git-hook`. `textualOnly` is TRUE: a
+ *       leading `printf`/`echo` claims the carve-out and nothing withdraws it,
+ *       because `runsWrittenScript` recognises a written file as a script only
+ *       when a SHELL is invoked on it. Here the execution semantics belong to
+ *       another program entirely -- `Makefile` to make, `.git/hooks/pre-commit`
+ *       to git. Left open deliberately: see the note in the plan document. The
+ *       corpus contains no benign Makefile or hook write, so the false-positive
+ *       cost of closing it cannot currently be measured, and shipping a rule
+ *       whose cost is unmeasurable is the trade this project has refused twice.
  *
- * The three carrier CLASSES added here -- `shell-binding`, `deferred-registry`,
- * `exec-wrapper` -- are new categories of carrier, not new causes. That
- * distinction is the whole point of naming them separately: four widenings, the
- * same two mechanisms underneath.
- *
- * The three original classes stay at 100%: `direct` 525/525,
- * `materialised-file` 1,350/1,350, `materialised-stdin` 375/375. A leak there
- * would be a regression in the ordinary rules rather than a new carrier, which
- * is a different finding with a different owner, and `injection.test.ts` gates
- * it separately so it cannot be absorbed into this ratchet.
- *
- * FPR and recall are unchanged: 1/84 and 114/114.
+ *    6  class A remnants -- `scp-copy` under `cron-install` and
+ *       `split-var-concat`. Both are the same shape: the harvested text is real
+ *       but the TOOL is not in command position. `* * * * * scp ...` puts five
+ *       cron fields ahead of it; `A=scp; $A ...` puts a variable there. Closing
+ *       these wants constant propagation over shell assignments, which is
+ *       principled -- it is what the shell itself does -- and is scoped but not
+ *       built here.
  */
 export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
   "base64-then-post|git-hook",
@@ -115,51 +108,17 @@ export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
   "curl-form|make-target",
   "env-dump|git-hook",
   "env-dump|make-target",
-  "nc-pipe|alias-then-call",
-  "nc-pipe|at-schedule",
-  "nc-pipe|cron-install",
-  "nc-pipe|flock-shc",
-  "nc-pipe|git-hook",
-  "nc-pipe|make-target",
-  "nc-pipe|nice-shc",
-  "nc-pipe|parallel",
-  "nc-pipe|script-c",
-  "nc-pipe|setsid-shc",
-  "nc-pipe|stdbuf-shc",
-  "nc-pipe|trap-exit",
-  "nc-pipe|var-then-bash-c",
-  "nc-pipe|var-then-shc",
-  "nc-pipe|watch-cmd",
-  "scp-copy|alias-then-call",
-  "scp-copy|at-schedule",
   "scp-copy|cron-install",
-  "scp-copy|export-then-eval",
-  "scp-copy|flock-shc",
-  "scp-copy|git-hook",
-  "scp-copy|make-target",
-  "scp-copy|nice-shc",
-  "scp-copy|parallel",
-  "scp-copy|script-c",
-  "scp-copy|setsid-shc",
   "scp-copy|split-var-concat",
-  "scp-copy|stdbuf-shc",
-  "scp-copy|trap-exit",
-  "scp-copy|var-indirect-eval",
-  "scp-copy|var-then-bash-c",
-  "scp-copy|var-then-eval",
-  "scp-copy|var-then-shc",
-  "scp-copy|watch-cmd",
   "wget-postfile|git-hook",
   "wget-postfile|make-target",
 ];
 
 /**
- * Ratchet, not a target. 6 -> 146 -> 32 -> 0 -> 132, and only the last step was
- * a widening rather than a discovery or a fix. Raising it requires saying why in
- * the commit; `injection.test.ts` fails in both directions, so a stale ratchet
- * cannot outlive its residual.
+ * Ratchet, not a target. 6 -> 146 -> 32 -> 0 -> 132 -> 36. The 132 was a
+ * widening, not a regression; this is the fix for it.
  */
-export const MAX_KNOWN_BYPASSES = 132;
+export const MAX_KNOWN_BYPASSES = 36;
 
 /* ── Axis 1: where the stolen bytes are sent ─────────────────────────────── */
 
