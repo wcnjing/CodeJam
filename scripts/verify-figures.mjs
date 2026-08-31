@@ -147,6 +147,7 @@ function checkDoc(relPath, exemptions) {
 
   const rows = [];
   let inFence = false;
+  let localBlock = null;
   // The run a figure is checked against is the last one cited at or before it,
   // or -- for a figure whose citation follows it in the same block -- the next
   // one within a short lookahead. Documents cite both ways round.
@@ -169,9 +170,30 @@ function checkDoc(relPath, exemptions) {
     const line = lines[i];
     if (/^\s*```/.test(line)) { inFence = !inFence; continue; }
     if (inFence) continue;
+    // A block the document itself declares as not-from-CI, with its reason
+    // stated inline where a reader sees it:
+    //
+    //   <!-- figures: local reason="..." -->  ...  <!-- /figures -->
+    //
+    // This is better than an entry in the external register for anything
+    // block-shaped. The register is keyed by value, so exempting a 1.19% that
+    // was measured locally would also exempt every other 1.19% in the document.
+    // It also puts the provenance in front of the reader rather than in a file
+    // they will not open.
+    const openMarker = /<!--\s*figures:\s*local\s+reason="([^"]*)"\s*-->/.exec(line);
+    if (openMarker) { localBlock = openMarker[1]; continue; }
+    if (/<!--\s*\/figures\s*-->/.test(line)) { localBlock = null; continue; }
+
     // Skip link definitions and the citation lines themselves.
     const stripped = line.replace(/https?:\/\/\S+/g, " ").replace(/`[^`]*`/g, (s) => s);
     if (!stripped.trim()) continue;
+
+    if (localBlock) {
+      for (const fig of extractFigures(stripped)) {
+        rows.push({ line: i + 1, run: null, ...fig, declaredLocal: localBlock, source: line.trim().slice(0, 100) });
+      }
+      continue;
+    }
 
     for (const fig of extractFigures(stripped)) {
       const ahead = forward[i];
@@ -300,6 +322,7 @@ let matched = 0;
 let exempt = 0;
 let uncited = 0;
 let misattributed = 0;
+let declaredLocal = 0;
 
 console.log("");
 console.log("Figure verification - every numeric token, not only the ones shaped like figures");
@@ -310,6 +333,7 @@ for (const relPath of DOCS) {
   if (doc.missing) continue;
   const problems = [];
   for (const fig of doc.rows) {
+    if (fig.declaredLocal) { declaredLocal += 1; continue; }
     const registered = exemptFor(exemptions, relPath, fig);
     if (registered) { exempt += 1; continue; }
     if (!fig.run) { uncited += 1; problems.push({ ...fig, why: "no run cited anywhere in this document" }); continue; }
@@ -351,7 +375,7 @@ for (const l of labels) {
 
 console.log("");
 console.log("=".repeat(78));
-console.log(`  matched ${matched}   exempt ${exempt}   unexplained ${unexplained} (of which misattributed ${misattributed})   uncited ${uncited}   expired-labels ${expired}`);
+console.log(`  matched ${matched}   declared-local ${declaredLocal}   exempt ${exempt}   unexplained ${unexplained} (of which misattributed ${misattributed})   uncited ${uncited}   expired-labels ${expired}`);
 console.log("");
 console.log("  UNEXPLAINED does not distinguish stale from fabricated, deliberately.");
 console.log("  From the document's side they are one defect, and only the author knows");

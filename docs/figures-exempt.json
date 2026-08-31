@@ -1,7 +1,7 @@
 {
   "_comment": "Numbers deliberately not from the run their surrounding text cites, and provenance labels with the condition that retires each. Every entry needs a reason a reader can evaluate. Adding an entry to silence the checker rather than to record a fact is the one way this file makes things worse than no file.",
-  "unexplainedRatchet": 70,
-  "_ratchetNote": "70 is what switching the check on found, not a target. 71 of them are MISATTRIBUTED - the measurement exists in a different run than the text cites - and 58 of those are in EVALUATION_RELIABILITY_PLAN.md, which cites one run at line 12 and then presents tables from several. Fixing them means restoring the real citation per table; the checker names the correct run for each, so the work is mechanical rather than investigative. Lower this as they are fixed.",
+  "unexplainedRatchet": 24,
+  "_ratchetNote": "70 when the check was switched on; 24 after the taxonomy write-up added two correct run citations to EVALUATION_RELIABILITY_PLAN.md. That drop is the mechanism working rather than a fix: the doc cited a single run at line 12 and attributed everything below it to that run, so citing the right run mid-document re-attributed 49 figures at once. The remaining 24 are the same structural problem further up, and the checker names the correct run for each, so the work is mechanical. Lower this as they are fixed; never raise it to go green.",
   "figures": [
     {
       "doc": "README.md",
