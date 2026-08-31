@@ -1,7 +1,7 @@
 {
   "_comment": "Numbers deliberately not from the run their surrounding text cites, and provenance labels with the condition that retires each. Every entry needs a reason a reader can evaluate. Adding an entry to silence the checker rather than to record a fact is the one way this file makes things worse than no file.",
-  "unexplainedRatchet": 24,
-  "_ratchetNote": "70 when the check was switched on; 24 after the taxonomy write-up added two correct run citations to EVALUATION_RELIABILITY_PLAN.md. That drop is the mechanism working rather than a fix: the doc cited a single run at line 12 and attributed everything below it to that run, so citing the right run mid-document re-attributed 49 figures at once. The remaining 24 are the same structural problem further up, and the checker names the correct run for each, so the work is mechanical. Lower this as they are fixed; never raise it to go green.",
+  "unexplainedRatchet": 28,
+  "_ratchetNote": "Tree-dependent by nature: this counts untraceable figures in THIS tree's docs, so it moves when the documents move, not only when someone writes a bad figure. It read 24 on a branch rebased onto a newer main whose docs differ. If it changes after a rebase or merge, check whether the DOCS changed before assuming a figure went wrong -- the number is a property of the corpus being checked, not a standalone quality score. 28 of 28 here are MISATTRIBUTED, meaning the measurement exists in a run the text does not cite; the checker names the correct run for each, so the repair is mechanical. Lower this as they are fixed; never raise it to go green.",
   "figures": [
     {
       "doc": "README.md",

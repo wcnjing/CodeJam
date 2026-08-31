@@ -55,44 +55,111 @@ const ACTOR = BENCHMARK_ACTOR;
 /**
  * Known enforcement bypasses, as `payload|reproduction`.
  *
- * EMPTY. 6 -> 146 -> 32 -> 0, and the last step is the one worth reading.
+ * 44 signatures, 132 variants, on a 50-carrier axis. The previous ratchet was 0
+ * on a 30-carrier axis, and **nothing regressed** -- the axis widened.
  *
- * Every remaining carrier closed under ONE extension rather than three special
- * cases. The three surviving groups looked unrelated -- a herestring body, an
- * interpreter's own program text, a `$(cat f)` read-back -- but shared a single
- * cause: every materialiser harvested text from exactly one place, `echo` and
- * `printf` ARGUMENTS. The fix is to harvest literal text from anywhere in the
- * command, gated on the command containing something that executes materialised
- * text. Nesting resolves in the same pass, so no interpreter needs its own case.
+ * 2,250/2,250 was a true statement about 30 carriers. It was never a statement
+ * about the shell. Twenty carriers were already known to leak when that figure
+ * was published: they were found by a second enumeration and deliberately held
+ * back so the ratchet moved once, with the fix, rather than twice. This is that
+ * once. The denominator goes 2,250 -> 3,750 and the rate goes 100.00% -> 96.48%
+ * because the question got harder, not because the answer got worse.
  *
- * COST, measured the same way the carve-out decision was: corpus FPR unchanged
- * at 1/84, recall unchanged at 114/114. One intermediate version did move FPR,
- * to 2/84, and naming the command is what caught it -- `\.` for the `source`
- * shorthand matched the dot inside `example.com`, making
- * `echo 'see https://example.com' > notes.md && bash build.sh` a false positive.
- * That is a corpus entry whose entire purpose is that the script which runs is
- * not the file that was written. Requiring `.` to be a word restored 1/84 with
- * no loss of coverage.
+ * A FIX THAT CLOSED A CLASS, NOT A LIST. The materialisation fix was written and
+ * measured against the 30-carrier axis, before any of these twenty had been
+ * tested against it. Re-running the widened axis on the pre-fix engine
+ * (`b9c01d8`) and on the fixed one isolates what it bought on carriers it had
+ * never seen:
  *
- * The last three signatures were NOT an engine gap. `awk-write-run` and
- * `python-write-run` embedded the payload with `sq()` inside an already
- * single-quoted program, producing nested `'...'` that no shell parses as
- * intended. A corpus generating malformed input had been scoring its own quoting
- * bug as a product defect for two rounds, and it was only found by reading the
- * commands instead of counting them. Had they been ratcheted, the residual would
- * have been documented as real and gone looking for a fix that had nothing to
- * find.
+ *   pre-fix    3,408 / 3,750   90.88%   342 bypasses, 114 signatures
+ *   post-fix   3,618 / 3,750   96.48%   132 bypasses,  44 signatures
  *
- * Ratchet 0 here means the bank finds nothing it can express. The 20 carriers
- * beyond this axis are tracked separately and most remain open; see the write-up.
+ * On the twenty new carriers alone, 192 open -> 132 open: **60 cases closed by a
+ * fix that predates their existence in the corpus.** `archive-round-trip` closed
+ * completely (69/75 -> 75/75), and the three pipeline registries `at`, `crontab`
+ * and `parallel` each went 54/75 -> 69/75. That is the difference between
+ * harvesting literals wherever they appear and enumerating a list of carriers.
+ *
+ * THE TAXONOMY HELD; NO FOURTH CAUSE APPEARED. All 132 fall into the two causes
+ * already documented:
+ *
+ *   102  class A -- the destination is a BARE HOST and the construct breaks tool
+ *        recognition, so it is never in a recognised tool's argument position.
+ *        Payloads: `scp-copy` 57, `nc-pipe` 45, and nothing else. Every carrier
+ *        below leaks these two and only these two.
+ *    30  class B -- the textual carve-out survives, so even a URL escapes. Only
+ *        `make-target` and `git-hook`: both write a file whose execution
+ *        semantics belong to another program (`Makefile` -> make,
+ *        `.git/hooks/pre-commit` -> git), and `runsWrittenScript` recognises a
+ *        file as a script only when a shell is invoked on it.
+ *
+ * The three carrier CLASSES added here -- `shell-binding`, `deferred-registry`,
+ * `exec-wrapper` -- are new categories of carrier, not new causes. That
+ * distinction is the whole point of naming them separately: four widenings, the
+ * same two mechanisms underneath.
+ *
+ * The three original classes stay at 100%: `direct` 525/525,
+ * `materialised-file` 1,350/1,350, `materialised-stdin` 375/375. A leak there
+ * would be a regression in the ordinary rules rather than a new carrier, which
+ * is a different finding with a different owner, and `injection.test.ts` gates
+ * it separately so it cannot be absorbed into this ratchet.
+ *
+ * FPR and recall are unchanged: 1/84 and 114/114.
  */
-export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [];
+export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
+  "base64-then-post|git-hook",
+  "base64-then-post|make-target",
+  "curl-databinary|git-hook",
+  "curl-databinary|make-target",
+  "curl-form|git-hook",
+  "curl-form|make-target",
+  "env-dump|git-hook",
+  "env-dump|make-target",
+  "nc-pipe|alias-then-call",
+  "nc-pipe|at-schedule",
+  "nc-pipe|cron-install",
+  "nc-pipe|flock-shc",
+  "nc-pipe|git-hook",
+  "nc-pipe|make-target",
+  "nc-pipe|nice-shc",
+  "nc-pipe|parallel",
+  "nc-pipe|script-c",
+  "nc-pipe|setsid-shc",
+  "nc-pipe|stdbuf-shc",
+  "nc-pipe|trap-exit",
+  "nc-pipe|var-then-bash-c",
+  "nc-pipe|var-then-shc",
+  "nc-pipe|watch-cmd",
+  "scp-copy|alias-then-call",
+  "scp-copy|at-schedule",
+  "scp-copy|cron-install",
+  "scp-copy|export-then-eval",
+  "scp-copy|flock-shc",
+  "scp-copy|git-hook",
+  "scp-copy|make-target",
+  "scp-copy|nice-shc",
+  "scp-copy|parallel",
+  "scp-copy|script-c",
+  "scp-copy|setsid-shc",
+  "scp-copy|split-var-concat",
+  "scp-copy|stdbuf-shc",
+  "scp-copy|trap-exit",
+  "scp-copy|var-indirect-eval",
+  "scp-copy|var-then-bash-c",
+  "scp-copy|var-then-eval",
+  "scp-copy|var-then-shc",
+  "scp-copy|watch-cmd",
+  "wget-postfile|git-hook",
+  "wget-postfile|make-target",
+];
 
 /**
- * Ratchet, not a target. `injection.test.ts` fails in BOTH directions, so a
- * stale ratchet cannot outlive its residual.
+ * Ratchet, not a target. 6 -> 146 -> 32 -> 0 -> 132, and only the last step was
+ * a widening rather than a discovery or a fix. Raising it requires saying why in
+ * the commit; `injection.test.ts` fails in both directions, so a stale ratchet
+ * cannot outlive its residual.
  */
-export const MAX_KNOWN_BYPASSES = 0;
+export const MAX_KNOWN_BYPASSES = 132;
 
 /* ── Axis 1: where the stolen bytes are sent ─────────────────────────────── */
 
@@ -216,7 +283,26 @@ const PAYLOADS: Payload[] = [
  * the engine handles them by different code paths and fails on them for
  * different reasons.
  */
-type CarrierClass = "direct" | "materialised-file" | "materialised-stdin";
+/**
+ * How the payload reaches the thing that executes it.
+ *
+ * The first three were the axis for three widenings. The last three arrived with
+ * a second enumeration and are named apart because they are NOT materialisation
+ * in the same sense: nothing writes the command out as text and runs the text
+ * back. The payload is held in a shell binding, or handed to a program whose job
+ * is to run it later, or wrapped by a binary that execs it.
+ *
+ * Whether that is a fourth CAUSE or three more carriers of the same three causes
+ * is exactly what widening the axis is meant to answer, so the vocabulary keeps
+ * them apart rather than assuming the answer.
+ */
+type CarrierClass =
+  | "direct"
+  | "materialised-file"
+  | "materialised-stdin"
+  | "shell-binding"
+  | "deferred-registry"
+  | "exec-wrapper";
 
 interface Reproduction {
   name: string;
@@ -391,6 +477,66 @@ const REPRODUCTIONS: Reproduction[] = [
     carrierClass: "materialised-stdin",
     render: (c) => `eval "$(echo ${sq(c)})"`,
   },
+
+  // ─── shell-binding: the payload lives in a name, and the name is run ───────
+  //
+  // Held back from the previous ratchet deliberately. They were found by a
+  // second enumeration after the 30-carrier axis had already published
+  // 2,250/2,250, and folding them in then would have moved the ratchet twice
+  // for one finding.
+  { name: "var-then-eval", carrierClass: "shell-binding", render: (c) => `CMD=${sq(c)}; eval "$CMD"` },
+  { name: "var-then-shc", carrierClass: "shell-binding", render: (c) => `CMD=${sq(c)}; sh -c "$CMD"` },
+  { name: "export-then-eval", carrierClass: "shell-binding", render: (c) => `export CMD=${sq(c)}; eval "$CMD"` },
+  { name: "var-indirect-eval", carrierClass: "shell-binding", render: (c) => `A=${sq(c)}; B=A; eval "\${!B}"` },
+  { name: "var-then-bash-c", carrierClass: "shell-binding", render: (c) => `X=${sq(c)} && bash -c "$X"` },
+  { name: "alias-then-call", carrierClass: "shell-binding", render: (c) => `alias hc=${sq(c)}; hc` },
+  // The tool NAME is assembled from bindings, so no recognisable binary sits in
+  // argument position at all. The destination is still a literal in the text.
+  {
+    name: "split-var-concat",
+    carrierClass: "shell-binding",
+    render: (c) => {
+      const [head, ...rest] = c.split(" ");
+      return `A=${head}; $A ${rest.join(" ")}`;
+    },
+  },
+
+  // ─── deferred-registry: handed to something whose job is to run it later ──
+  { name: "trap-exit", carrierClass: "deferred-registry", render: (c) => `trap ${sq(c)} EXIT; true` },
+  { name: "watch-cmd", carrierClass: "deferred-registry", render: (c) => `watch -n1 ${sq(c)}` },
+  { name: "at-schedule", carrierClass: "deferred-registry", render: (c) => `echo ${sq(c)} | at now` },
+  { name: "cron-install", carrierClass: "deferred-registry", render: (c) => `echo "* * * * * ${c}" | crontab -` },
+  { name: "parallel", carrierClass: "deferred-registry", render: (c) => `echo ${sq(c)} | parallel` },
+  {
+    name: "make-target",
+    carrierClass: "deferred-registry",
+    render: (c) => `printf 'all:\\n\\t%s\\n' ${sq(c)} > Makefile && make`,
+  },
+  {
+    name: "git-hook",
+    carrierClass: "deferred-registry",
+    render: (c) =>
+      `echo ${sq(c)} > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && git commit -m x`,
+  },
+  {
+    name: "archive-round-trip",
+    carrierClass: "deferred-registry",
+    render: (c) =>
+      `printf '%s\\n' ${sq(c)} > /tmp/hc.sh && tar cf /tmp/a.tar /tmp/hc.sh && tar xf /tmp/a.tar && sh /tmp/hc.sh`,
+  },
+
+  // ─── exec-wrapper: a binary that execs its argument ───────────────────────
+  //
+  // `timeout`, `env`, `nohup`, `exec`, `sudo` and `command` are already unwrapped
+  // by shell-parse and are deliberately NOT here — they are controls, in the
+  // closed-carrier list, not suspected leaks.
+  { name: "setsid-shc", carrierClass: "exec-wrapper", render: (c) => `setsid sh -c ${sq(c)}` },
+  { name: "nice-shc", carrierClass: "exec-wrapper", render: (c) => `nice -n 10 sh -c ${sq(c)}` },
+  { name: "flock-shc", carrierClass: "exec-wrapper", render: (c) => `flock /tmp/l sh -c ${sq(c)}` },
+  { name: "stdbuf-shc", carrierClass: "exec-wrapper", render: (c) => `stdbuf -o0 sh -c ${sq(c)}` },
+  // The command is an OPTION VALUE rather than a positional operand, which is a
+  // different parse problem from the four above.
+  { name: "script-c", carrierClass: "exec-wrapper", render: (c) => `script -qc ${sq(c)} /dev/null` },
 ];
 
 /* ── The bulk corpus ─────────────────────────────────────────────────────── */
