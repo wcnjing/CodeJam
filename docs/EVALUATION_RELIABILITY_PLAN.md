@@ -312,6 +312,52 @@ stops asserting r² at all**: with the slope at zero the fit is dominated by
 noise, so r² no longer measures anything and a threshold on it would be a
 number kept for the comfort of having one.
 
+**It would not even have failed cleanly, and this was demonstrated by accident.**
+After the fix, two runs of *identical* code measured r² at **0.3870** and then
+**0.9876**. The second would have **passed** the old `rSquared >= 0.98` gate.
+With the slope at zero there is no trend for r² to describe, so it fits whatever
+noise the run happens to contain and swings across most of its range.
+
+So the honest account of what the old gate would have done post-fix is not "it
+fails and someone re-reads it". It is: **it fails intermittently.** That is
+strictly worse, because of how teams treat the two. A gate that fails every time
+is a statement, and someone eventually reads it. A gate that fails one run in
+three is a *flake*, and flakes get retried, quarantined, or have their threshold
+nudged from 0.98 to 0.95 until they settle. Every one of those responses
+preserves the assertion and destroys the signal, and none of them requires anyone
+to notice that the assertion no longer has a subject. The gate would have
+survived its own obsolescence by being unreliable about announcing it.
+
+The rule this sharpens: **an intermittent gate deserves the same re-read as a
+failing one, and for a stronger reason.** Flakiness is normally treated as a
+property of the environment. It can equally be a property of a measurement that
+has stopped measuring anything — and that case looks identical from the outside
+until someone asks what the assertion is still about.
+
+#### The same shape in the threat register, not just in tests
+
+`TM-OPS-001` carried `status: "mitigated"` with the note "Bounded, where it was
+previously OPEN", on the strength of `AUDIT_RETENTION_DAYS`. Read against the
+threat as stated — unbounded audit-log *growth* — that is defensible. Read
+against the failure mode the entry itself documents, it was not: **retention
+bounds how large the log gets over time; it does nothing about what one write
+costs.** The O(events already stored) term survived it completely untouched, and
+the register said mitigated the whole time.
+
+The note also carried the per-event store cost, ~2.3 µs, in the position where
+the *decision* cost belongs — the decision measures 48–64 µs. So the sentence
+compared a quantity to itself and read as reassuring.
+
+This is the same family as a stale subject, one level up from a test: **an
+assertion that keeps passing while its subject moves out from under it.** In a
+test suite the mechanism is a green check; in a threat register it is a status
+field, which is worse, because a register is read by people deciding whether
+something needs attention and its whole function is to be trusted at a glance.
+Nothing in the tooling could have caught it — `npm run threat-model` verifies
+that a mitigated threat has a passing test attached, not that the control
+addresses the failure mode. That check does not exist, and naming it here is the
+most that was done about it.
+
 Two smaller instances of the same shape turned up in this lane, which is what
 makes it a category rather than an anecdote. `store.test.ts` pinned
 `version: 3` as a version the store must refuse, and passed for exactly as long
