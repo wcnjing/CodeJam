@@ -651,6 +651,74 @@ function pipedScriptPayloads(command: string): string[] {
 }
 
 /**
+ * Text written into a file that this same command then executes.
+ *
+ * `pipedScriptPayloads` covers the pipeline carrier -- `echo X | sh`. This is
+ * the file carrier: `echo X > f && sh f`. `runsWrittenScript` already RECOGNISES
+ * that shape and withdraws the textual carve-out, which is enough for a URL,
+ * because `ANY_URL` then sees it anywhere in the line. It is not enough for a
+ * BARE HOST: a bare host is only recoverable from a recognised tool's argument
+ * position, and inside a quoted string being redirected to a file there is no
+ * such position. So the text has to be materialised and re-asked, exactly as the
+ * decoder and pipeline carriers are.
+ *
+ * Writes are recognised BY TOOL as well as by redirect. A file written by `tee`,
+ * `dd of=`, `sed -n w` or `awk print >` is just as executable afterwards as one
+ * written by `>`, and recognising only the redirect is what let those escape
+ * while carrying a URL -- the one case where even a URL got through.
+ */
+function writtenScriptPayloads(command: string): string[] {
+  if (!runsWrittenScript(command) && !writesByToolThenRuns(command)) return [];
+  const payloads: string[] = [];
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    if (!TEXT_EMITTERS.has(invocation.tool)) continue;
+    for (const argument of invocation.args) {
+      if (argument.startsWith("-")) continue;
+      const text = argument.replace(/^['"]/, "").replace(/['"]$/, "");
+      if (text && text !== "%s" && text !== "%b" && !FORMAT_ONLY.test(text)) payloads.push(text);
+    }
+  }
+  return payloads;
+}
+
+const TEXT_EMITTERS = new Set(["echo", "printf"]);
+/** A printf format string is not a payload: `printf 'all:\n\t%s\n' <payload>`. */
+const FORMAT_ONLY = /^[%\\a-z:\t\n ]*$/i;
+
+/** Tools that write a file without a shell redirect. */
+const WRITE_TOOLS = new Set(["tee", "dd", "sed", "awk"]);
+
+/**
+ * A file written by a TOOL rather than a redirect, and then executed.
+ *
+ * Deliberately coarse: if any write-tool appears in the line and any later
+ * segment runs a shell or a script, the written text is materialised. Being
+ * coarse here is safe because materialising extra text cannot itself deny --
+ * the ordinary rules still require an untrusted destination to fire -- while
+ * being precise here is what the previous version got wrong.
+ */
+function writesByToolThenRuns(command: string): boolean {
+  const segments = executableSegments(command);
+  const writes = segments.some((segment) => {
+    const invocation = invocationFromSegment(segment, true);
+    return invocation ? WRITE_TOOLS.has(invocation.tool) : false;
+  });
+  if (!writes) return false;
+  return segments.some((segment) => {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) return false;
+    return (
+      SHELL_NAMES.has(invocation.tool) ||
+      invocation.tool === "source" ||
+      invocation.tool === "." ||
+      invocation.tool === "eval"
+    );
+  });
+}
+
+/**
  * The capabilities a command would exercise, resolved against the run's context.
  *
  * NETWORK_EGRESS is reported once per destination so a rule can speak about
@@ -727,7 +795,11 @@ export function extractCapabilities(
   // separately, as evidence.
   if (depth < MAX_DECODE_DEPTH) {
     const seen = new Set(requests.map((r) => r.capability + "\u0000" + r.resource));
-    for (const payload of [...decodedPayloads(command), ...pipedScriptPayloads(command)]) {
+    for (const payload of [
+      ...decodedPayloads(command),
+      ...pipedScriptPayloads(command),
+      ...writtenScriptPayloads(command),
+    ]) {
       for (const inner of extractCapabilities(payload, context, depth + 1)) {
         const key = inner.capability + "\u0000" + inner.resource;
         if (seen.has(key)) continue;
@@ -767,7 +839,16 @@ export function extractCapabilities(
  */
 const STDIN_EXECUTORS = new Set(["eval", "source", "."]);
 
+/** `sh <<< 'payload'` -- a herestring is a stdin source like any pipe. */
+const HERESTRING_TO_SHELL = /(?:^|[\s;&|])(?:sh|bash|zsh|dash|ksh|eval|source)[^<]*<<</;
+/** `sh <(echo 'payload')` -- process substitution as the script operand. */
+const PROCSUB_TO_SHELL = /(?:^|[\s;&|])(?:sh|bash|zsh|dash|ksh)\s+<\(/;
+
 export function feedsAnExecutor(command: string): boolean {
+  // A shell can be handed its script without a pipeline at all. A herestring
+  // (`sh <<< 'cmd'`) and process substitution (`sh <(echo 'cmd')`) are both
+  // stdin sources, and both were missed by requiring a `|` before looking.
+  if (HERESTRING_TO_SHELL.test(command) || PROCSUB_TO_SHELL.test(command)) return true;
   if (!command.includes("|")) return false;
   for (const segment of executableSegments(command)) {
     const invocation = invocationFromSegment(segment, true);
@@ -812,9 +893,171 @@ export function feedsAnExecutor(command: string): boolean {
  * carve-out cannot itself cause a denial - the rules still require an untrusted
  * destination to fire.
  */
+/**
+ * How the textual carve-out decides, while the two options are being measured.
+ *
+ *   "enumerate" - the shipping behaviour. The carve-out is GRANTED by default to
+ *                 anything starting with a textual command, and specific
+ *                 recognisers (`runsWrittenScript`, `feedsAnExecutor`) withdraw
+ *                 it. Fail-OPEN: a construct nobody enumerated keeps the
+ *                 exemption.
+ *   "strict"    - the carve-out is granted only to a command that is PURELY
+ *                 textual output: no pipeline stage after it, no redirect, no
+ *                 later command. Fail-CLOSED: a construct nobody enumerated
+ *                 loses the exemption and the destination stays visible.
+ *
+ * A measurement seam, not a permanent setting. It exists so the choice between
+ * the two is made from an FPR number rather than from an argument.
+ */
+export type CarveoutMode = "enumerate" | "strict" | "inert-sink";
+
+/**
+ * Sinks that consume text and cannot execute it.
+ *
+ * This is the allowlist that "inert-sink" mode inverts against: text piped into
+ * one of these is still just text, and anything NOT here is treated as an
+ * executor. `tee` earns its place from the corpus -- writing a URL into notes is
+ * ordinary work -- and its write-then-execute form is caught by
+ * `runsWrittenScript` rather than by this list. `sed` and `awk` are absent on
+ * purpose: both can write a file (`sed -n w`, `awk print >`), so neither is
+ * inert in the sense this list means.
+ */
+const INERT_SINKS = new Set([
+  "tee", "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "sort", "uniq",
+  "less", "more", "tr", "cut", "column", "fold", "nl", "rev", "tac", "jq",
+  "base64", "gunzip", "gzip", "tostdout",
+]);
+
+/**
+ * Whether the textual output flows into something that is not a known-inert
+ * sink.
+ *
+ * The inversion happens HERE rather than at the carve-out itself. Measurement
+ * is why: inverting the carve-out wholesale takes corpus FPR from 1/84 to 6/84,
+ * and the five it breaks are ordinary developer work that the corpus contains
+ * specific benign guards for -- `git commit -m "... see https://..." && git
+ * status`, `echo '... https://...' | tee -a notes.md`. Chaining and redirecting
+ * are not the problem; handing the text to an unknown CONSUMER is. So the
+ * consumer list is what fails closed: `| at`, `| crontab`, `| parallel` all
+ * withdraw the carve-out because nobody put them on an inert list, while the
+ * benign guards survive untouched.
+ */
+function feedsUnknownSink(command: string): boolean {
+  const stages = topLevelPipelineStages(command);
+  if (stages.length < 2) return false;
+  for (let i = 1; i < stages.length; i += 1) {
+    const invocation = invocationFromSegment(stages[i]!, true);
+    if (!invocation) continue;
+    if (!INERT_SINKS.has(invocation.tool)) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-level pipeline stages, quote-aware.
+ *
+ * `executableSegments` cannot be used here: it flattens pipelines and `&&`
+ * sequences into one list, and this needs to tell them apart. Piping text into
+ * something is handing it over; running a second, separate command afterwards is
+ * not. Conflating them is exactly what took "strict" mode to 6/84 FPR.
+ */
+function topLevelPipelineStages(command: string): string[] {
+  const stages: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let depth = 0;
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!;
+    if (quote) {
+      current += ch;
+      if (ch === quote && command[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; current += ch; continue; }
+    if (ch === "(") depth += 1;
+    if (ch === ")") depth -= 1;
+    if (ch === "|" && depth === 0) {
+      if (command[i + 1] === "|") { current += "||"; i += 1; continue; }
+      stages.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  stages.push(current.trim());
+  return stages.filter(Boolean);
+}
+
+/**
+ * DEFAULT: "inert-sink", chosen from measurement rather than from argument.
+ *
+ *                        enumerate      strict        inert-sink
+ *   corpus FPR           1/84 1.19%     6/84 7.14%    1/84 1.19%
+ *   corpus recall        114/114        114/114       114/114
+ *   injection bank       93.51%         96.04%        94.84%
+ *
+ * "strict" closes the most and is not affordable. The five benign commands it
+ * newly denies are ordinary work the corpus contains explicit guards for --
+ * `git commit -m "... https://... " && git status`,
+ * `echo '... https://...' | tee -a notes.md`, and the `bash -lc` wrapping that
+ * every corpus entry uses. A 6x FPR increase on core developer workflow to buy
+ * 2.5 points of bank coverage is the wrong trade, and it would have been made on
+ * the strength of the fail-open argument alone.
+ *
+ * "inert-sink" dominates "enumerate": identical FPR and recall, 30 more bank
+ * variants closed. It inverts the list that can safely be inverted -- an unknown
+ * pipeline CONSUMER now withdraws the carve-out -- while leaving chaining and
+ * redirecting alone, which is where strict does its damage.
+ *
+ * The honest limit: no carve-out mode addresses the DOMINANT residual. 23 of the
+ * 40 newly-found carrier cases stay open under every mode here, and nearly all
+ * are bare-host forms where the carve-out never applied. That needs
+ * materialisation, not exemption logic.
+ */
+let carveoutMode: CarveoutMode =
+  process.env.POLICY_CARVEOUT_MODE === "strict"
+    ? "strict"
+    : process.env.POLICY_CARVEOUT_MODE === "enumerate"
+      ? "enumerate"
+      : "inert-sink";
+
+export function setCarveoutMode(mode: CarveoutMode): void {
+  carveoutMode = mode;
+}
+export function getCarveoutMode(): CarveoutMode {
+  return carveoutMode;
+}
+
+/**
+ * Whether a command is nothing but textual output.
+ *
+ * True only when every segment is a textual-output command and the command does
+ * not hand that output to anything: no pipe, no redirect, no second command.
+ * `echo 'see https://x'` and `git commit -m 'see https://x'` qualify.
+ * `echo 'curl https://x' | tee f > /dev/null && sh f` does not, and neither does
+ * any of the constructs that had to be enumerated one at a time.
+ */
+function isInertTextualOutput(command: string): boolean {
+  // Any pipeline, redirect, separator, substitution or background operator
+  // means the text goes somewhere. Backticks and $( ) included: those are how
+  // the output becomes an argument to something else.
+  if (/[|><;&`]/.test(command)) return false;
+  if (/\$\(/.test(command)) return false;
+  const segments = executableSegments(command);
+  if (segments.length !== 1) return false;
+  return TEXTUAL_URL_CONTEXT.test(segments[0]!);
+}
+
 export function isTextualUrlOnly(command: string): boolean {
   if (!TEXTUAL_URL_CONTEXT.test(command)) return false;
+  if (carveoutMode === "strict") return isInertTextualOutput(command);
+  if (carveoutMode === "inert-sink" && feedsUnknownSink(command)) return false;
   if (runsWrittenScript(command)) return false;
+  // `tee` is an inert sink -- writing a URL into notes is ordinary work, and the
+  // corpus guards it. Writing with `tee` and then EXECUTING what was written is
+  // not, and it is the one shape where a URL escaped too. The distinction is
+  // whether the written file is later run, which is exactly what this asks.
+  if (writesByToolThenRuns(command)) return false;
   if (feedsAnExecutor(command)) return false;
 
   const carrying = executableSegments(command).filter(

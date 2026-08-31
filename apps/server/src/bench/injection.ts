@@ -55,121 +55,66 @@ const ACTOR = BENCHMARK_ACTOR;
 /**
  * Known enforcement bypasses, as `payload|reproduction`.
  *
- * 49 signatures, 146 variants, and the count is itself the finding.
+ * 11 signatures, 32 variants -- down from 49 and 146, after the materialisation
+ * fix in `capabilities.ts`. Enforcement 2,104/2,250 -> 2,218/2,250 (93.51% ->
+ * 98.58%) with corpus FPR unchanged at 1/84 and recall unchanged at 114/114.
  *
- * The first version of this file documented SIX, in one class, and called that
- * class bounded. That was wrong, and the error is worth recording because it is
- * the same one the generated bank made three times: **the axis was too narrow to
- * express the class, so the class looked small.** One `write-then-run` carrier
- * found six. Enumerating what the shell actually offers -- every way to
- * materialise text and then execute it -- took the same finding to 146, across
- * 17 of 30 carriers. Six was a floor, not a count.
+ * WHAT CLOSED, and why it is a product fix rather than a benchmark change:
  *
- * Three distinct causes, which is what makes this systematic rather than a gap:
+ *   - Text written to a file and then executed is now MATERIALISED and re-asked,
+ *     the same way decoded and piped text already were. `runsWrittenScript` only
+ *     ever withdrew the carve-out, which is enough for a URL and never enough
+ *     for a bare host.
+ *   - Writes are recognised BY TOOL (`tee`, `dd of=`, `sed w`, `awk print >`)
+ *     as well as by redirect, and a write-tool followed by execution now
+ *     withdraws the carve-out too. That was the one shape where even a URL
+ *     escaped.
+ *   - Herestrings and process substitution count as stdin sources, so
+ *     `sh <<< '...'` and `sh <(echo '...')` reach the executor check.
+ *   - The textual carve-out's PIPELINE SINK list is now inverted: an unknown
+ *     consumer withdraws the exemption, where before only a known executor did.
  *
- *   A. WRITE SEEN, CONTENTS NEVER MATERIALISED  (redirect carriers)
- *      `runsWrittenScript` recognises `> file` followed by running `file`, so it
- *      WITHDRAWS the textual carve-out. That is enough for a URL -- `ANY_URL`
- *      then sees it -- but nothing re-examines the file's text, so a BARE HOST
- *      escapes. Bare-host payloads only: `nc`, `scp`.
+ * WHAT REMAINS, named rather than rounded away:
  *
- *   B. WRITE NOT RECOGNISED AS A WRITE AT ALL  (`tee`, `dd of=`, `sed -n w`)
- *      `runsWrittenScript` scans `>` and `>>` redirect targets only. A file
- *      written by a TOOL is invisible to it, the carve-out survives, and **even
- *      a URL escapes**. This breaks the assumption the first version of this
- *      comment asserted outright -- that a URL is always visible because
- *      `ANY_URL` matches anywhere. It is not, while the carve-out is still live:
- *      `echo 'curl https://...' | tee /tmp/h.sh > /dev/null && sh /tmp/h.sh`
- *      is ALLOWED. `write-then-eval-cat` belongs here too, via `eval "$(cat f)"`.
+ *   - `write-then-eval-cat` (5): `echo X > f && eval "$(cat f)"`. The file is
+ *     read back through a substitution rather than named as a script operand,
+ *     so neither the redirect nor the executor check connects the two.
+ *   - `awk-write-run`, `python-write-run` (3): the payload lives inside the
+ *     interpreter's own program text, not in an `echo`/`printf` argument, so
+ *     there is nothing for the materialiser to lift out.
+ *   - `herestring-sh`, `eval-subst` (3): correctly DETECTED as executors now,
+ *     but the herestring body is still not materialised, so a bare host inside
+ *     it stays unrecoverable.
  *
- *   C. STDIN EXECUTOR, NO FILE  (`sh <<< ...`, `sh <(echo ...)`)
- *      `feedsAnExecutor` covers pipelines but not herestrings or process
- *      substitution as a script source. Bare-host payloads only.
+ * All three want the same next step -- materialise the text a construct will
+ * execute, from more sources than `echo`/`printf` arguments -- and none is a new
+ * class. They are left open deliberately rather than chased with a fourth
+ * special case.
  *
- * Closed carriers stay in the axis deliberately, as the measured boundary:
- * `pipe-to-sh`, `write-then-cat-pipe`, `heredoc-to-file-run`,
- * `base64-to-file-run`, `xxd-to-file-run`, `sh-c-direct` and every `direct`
- * rendering all report full detection. The `direct` class is 525/525 -- nothing
- * here is a regression in the ordinary rules, which is what identifies this as a
- * materialisation problem specifically rather than a detection one.
- *
- * THE FIX is still one function, and cause B says how far it has to reach: a
- * `writtenScriptPayloads(command)` beside `pipedScriptPayloads` in the
- * materialisation dispatch, extracting the text written to a file that is later
- * executed. To cover B it must recognise writes by TOOL (`tee`, `dd of=`,
- * `sed w`, `awk print >`, an interpreter open-for-write) and not only by
- * redirect -- a wider change than the first version of this comment estimated,
- * and the estimate is now stated together with the cause that sets its size.
- *
- * DEFERRED, not accepted: the fix lands in the capability engine, which is
- * another lane's file, and this branch is the benchmark. Every signature is
- * named below so the gap is gated -- a 147th variant, or any signature not on
- * this list, fails the build -- and so whoever closes it inherits the map
- * rather than the search.
+ * Verified present on `main` before this fix: the 146 were a defect in the
+ * shipping product, reachable before this benchmark existed. The benchmark made
+ * them countable; the fix closed 114 of them.
  */
 export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
-  "base64-then-post|dd-to-file-run",
-  "base64-then-post|sed-w-run",
-  "base64-then-post|tee-to-file-run",
   "base64-then-post|write-then-eval-cat",
-  "curl-databinary|dd-to-file-run",
-  "curl-databinary|sed-w-run",
-  "curl-databinary|tee-to-file-run",
   "curl-databinary|write-then-eval-cat",
-  "curl-form|dd-to-file-run",
-  "curl-form|sed-w-run",
-  "curl-form|tee-to-file-run",
   "curl-form|write-then-eval-cat",
-  "env-dump|dd-to-file-run",
-  "env-dump|sed-w-run",
-  "env-dump|tee-to-file-run",
-  "nc-pipe|append-redirect-run",
   "nc-pipe|awk-write-run",
-  "nc-pipe|dd-to-file-run",
-  "nc-pipe|echo-redirect-run",
   "nc-pipe|herestring-sh",
-  "nc-pipe|printf-redirect-run",
-  "nc-pipe|procsub-sh",
-  "nc-pipe|sed-w-run",
-  "nc-pipe|tee-to-file-run",
-  "nc-pipe|write-noext-run",
-  "nc-pipe|write-relative-run",
-  "nc-pipe|write-then-bash",
-  "nc-pipe|write-then-chmod-exec",
-  "scp-copy|append-redirect-run",
   "scp-copy|awk-write-run",
-  "scp-copy|dd-to-file-run",
-  "scp-copy|echo-redirect-run",
   "scp-copy|eval-subst",
   "scp-copy|herestring-sh",
-  "scp-copy|printf-redirect-run",
-  "scp-copy|procsub-sh",
   "scp-copy|python-write-run",
-  "scp-copy|sed-w-run",
-  "scp-copy|tee-to-file-run",
-  "scp-copy|write-noext-run",
-  "scp-copy|write-relative-run",
-  "scp-copy|write-then-bash",
-  "scp-copy|write-then-chmod-exec",
   "scp-copy|write-then-eval-cat",
-  "scp-copy|write-then-source",
-  "wget-postfile|dd-to-file-run",
-  "wget-postfile|sed-w-run",
-  "wget-postfile|tee-to-file-run",
   "wget-postfile|write-then-eval-cat",
 ];
 
 /**
- * Ratchet, not a target.
- *
- * 6 -> 146 is not a regression: it is one measurement replacing a narrower one
- * against an unchanged engine. Every variant here was reachable on `main` before
- * this benchmark existed; widening the carrier axis is what made them countable.
- * Raising this requires saying why in the commit. Lowering it is what the fix
- * does, and `injection.test.ts` fails if the engine closes part of the gap while
- * this number stays high, so a stale ratchet cannot outlive its residual.
+ * Ratchet, not a target. 6 -> 146 -> 32: the rises were the axis widening
+ * against an unchanged engine, the fall is the fix. `injection.test.ts` fails in
+ * BOTH directions, so a stale ratchet cannot outlive its residual.
  */
-export const MAX_KNOWN_BYPASSES = 146;
+export const MAX_KNOWN_BYPASSES = 32;
 
 /* ── Axis 1: where the stolen bytes are sent ─────────────────────────────── */
 
