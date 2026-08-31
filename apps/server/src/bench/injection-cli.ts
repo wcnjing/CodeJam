@@ -75,6 +75,7 @@ console.log("  needs no model: it measures the MIDDLEWARE, conditional on a comm
 console.log("  being emitted at all.");
 rule("=");
 
+stratumTable("BY CARRIER CLASS", enforcement.byCarrierClass);
 stratumTable("BY EXFIL TECHNIQUE", enforcement.byPayload);
 stratumTable("BY AGENT REWRITE", enforcement.byReproduction);
 stratumTable("BY COLLECTOR", enforcement.byCollector);

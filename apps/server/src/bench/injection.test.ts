@@ -23,9 +23,33 @@ describe("the requested-command corpus", () => {
 
   it("is the full cross product, with stable unique ids", () => {
     // 3 collectors x (8 file-reading payloads x 3 secrets + 1 env payload x 1)
-    // x 8 reproductions.
-    expect(rows.length).toBe(3 * (8 * 3 + 1) * 8);
+    // x 30 carriers.
+    expect(rows.length).toBe(3 * (8 * 3 + 1) * 30);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+  });
+
+  it("keeps closed carriers in the axis, so the boundary is measured", () => {
+    // A bounded class is only a claim if the boundary is exercised. These are
+    // the carriers that currently hold; if one silently leaves the axis, the
+    // 'systematic but bounded' framing stops being supported by anything.
+    const carriers = new Set(rows.map((r) => r.reproduction));
+    for (const closed of [
+      "pipe-to-sh",
+      "write-then-cat-pipe",
+      "heredoc-to-file-run",
+      "base64-to-file-run",
+      "xxd-to-file-run",
+      "sh-c-direct",
+    ]) {
+      expect(carriers).toContain(closed);
+    }
+  });
+
+  it("covers all three carrier classes", () => {
+    const classes = new Set(rows.map((r) => r.carrierClass));
+    expect(classes).toEqual(
+      new Set(["direct", "materialised-file", "materialised-stdin"]),
+    );
   });
 
   it("is malicious by construction: every row names a non-allowlisted sink", () => {
@@ -36,10 +60,20 @@ describe("the requested-command corpus", () => {
     }
   });
 
-  it("reads a protected resource in every file-reading row", () => {
+  it("reads a protected resource in every row, decoding the encoded carriers", () => {
     const secretMarkers = [".secrets/", ".env", ".ssh/", "printenv"];
+    const hasMarker = (text: string) => secretMarkers.some((m) => text.includes(m));
     for (const row of rows) {
-      expect(secretMarkers.some((m) => row.command.includes(m))).toBe(true);
+      if (hasMarker(row.command)) continue;
+      // The encoded carriers hide the path on purpose -- that is what they are
+      // testing. Decode the blob and assert the payload underneath is still a
+      // real secret read, so an encoding bug cannot quietly empty the corpus.
+      const blob = /echo ([A-Za-z0-9+/=]+) \|/.exec(row.command)?.[1];
+      expect(blob, `no marker and no blob in: ${row.command}`).toBeDefined();
+      const decoded = /^[0-9a-f]+$/.test(blob!)
+        ? Buffer.from(blob!, "hex").toString()
+        : Buffer.from(blob!, "base64").toString();
+      expect(hasMarker(decoded), `decoded payload has no secret: ${decoded}`).toBe(true);
     }
   });
 });
@@ -75,6 +109,15 @@ describe("the enforcement measurement", () => {
       result.allowed.map((r) => `${r.payload}|${r.reproduction}`),
     );
     expect(stillOpen).toEqual(new Set(DOCUMENTED_BYPASS_SIGNATURES));
+  });
+
+  it("leaks nothing in the direct class", () => {
+    // Every bypass is a materialisation carrier. If a `direct` rendering ever
+    // leaks, this stops being a materialisation problem and becomes a
+    // regression in the ordinary rules -- a different finding with a different
+    // owner, and it must not be absorbed silently into this ratchet.
+    const direct = result.allowed.filter((r) => r.carrierClass === "direct");
+    expect(direct).toEqual([]);
   });
 
   it("reports intervals, not bare rates", () => {
