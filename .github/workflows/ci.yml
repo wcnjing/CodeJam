@@ -123,6 +123,16 @@ jobs:
       - name: Injection benchmark - enforcement (gate)
         run: npm run bench:injection
 
+      # GATE. Every numeric token in every doc, checked against the run its own
+      # text cites. Ratcheted: fails on a NEW untraceable figure, or on a
+      # provenance label whose retirement condition has been met. Needs the gh
+      # CLI to read run logs, so it runs only where a token is available.
+      - name: Published figures trace to their cited runs (gate)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run verify:figures
+
       - name: Zero-config front door
         run: npm run demo:offline
 
