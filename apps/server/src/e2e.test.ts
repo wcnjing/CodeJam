@@ -262,13 +262,18 @@ describe("full governance loop over HTTP", () => {
     expect(noReason.statusCode).toBe(400);
 
     // A client that still supplies an approver is refused outright rather than
-    // having the field silently stripped.
-    const spoofed = await post(app, "/api/approvals/" + approvalId, {
-      decision: "approve",
-      reason: "y",
-      actor: "someone-else",
-    });
-    expect(spoofed.statusCode).toBe(400);
+    // having the field silently stripped. Asserted on BOTH decisions: approve
+    // and deny share one strict schema today, so deny is protected only
+    // incidentally, and a later split of the two bodies would not fail a test
+    // that exercised approve alone.
+    for (const decision of ["approve", "deny"] as const) {
+      const spoofed = await post(app, "/api/approvals/" + approvalId, {
+        decision,
+        reason: "y",
+        actor: "someone-else",
+      });
+      expect(spoofed.statusCode).toBe(400);
+    }
 
     // Still pending: neither attempt resolved anything.
     const after = await get(app, `/api/agents/${agent.id}/approvals`);
