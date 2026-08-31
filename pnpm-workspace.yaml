@@ -1,0 +1,6 @@
+packages:
+  - apps/**
+  - tests/
+allowBuilds:
+  esbuild: false
+  inotify: set this to true or false

@@ -28,7 +28,7 @@ interface ActiveContainer {
 export function containerName(agentId: string, instanceId = "default"): string {
   const safeInstance = instanceId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 32);
   const safeAgent = agentId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48);
-  return "launchpad-" + safeInstance + "-" + safeAgent;
+  return "sentinel-" + safeInstance + "-" + safeAgent;
 }
 
 /**
@@ -65,7 +65,7 @@ export function buildContainerRunArgs(
     "--name",
     name,
     "--label",
-    "io.codejam.launchpad=agent-runtime",
+    "io.codejam.sentinel=agent-runtime",
     "--label",
     "io.codejam.agent-id=" + request.agentId,
     "--label",

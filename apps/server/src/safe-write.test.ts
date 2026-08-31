@@ -18,7 +18,7 @@ async function sandbox() {
   const workspace = path.join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   // Something the host owns that the Agent must never reach — stands in for
-  // .data/launchpad.json, the audit store.
+  // .data/sentinel.json, the audit store.
   const outside = path.join(root, "audit-store.json");
   await writeFile(outside, "REAL AUDIT EVIDENCE\n", "utf8");
   return { root, workspace, outside };

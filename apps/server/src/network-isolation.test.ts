@@ -72,13 +72,13 @@ describe("EgressIsolation lifecycle", () => {
     const handle = await new EgressIsolation(config, exec).setup("agent-1");
 
     expect(handle).toEqual({
-      network: "launchpad-test-instance-agent-1-net",
-      broker: "launchpad-test-instance-agent-1-broker",
+      network: "sentinel-test-instance-agent-1-net",
+      broker: "sentinel-test-instance-agent-1-broker",
     });
     // Stale cleanup first: names are deterministic, so a crashed previous run
     // would otherwise make "already exists" the normal startup path.
     expect(verbs(calls)).toEqual([
-      "stop launchpad-test-instance-agent-1-broker",
+      "stop sentinel-test-instance-agent-1-broker",
       "network rm",
       "network create",
       "run",
@@ -104,7 +104,7 @@ describe("EgressIsolation lifecycle", () => {
     await expect(new EgressIsolation(config, exec).setup("agent-1")).rejects.toThrow(
       /outbound network: bridge missing/,
     );
-    expect(verbs(calls).slice(-2)).toEqual(["stop launchpad-test-instance-agent-1-broker", "network rm"]);
+    expect(verbs(calls).slice(-2)).toEqual(["stop sentinel-test-instance-agent-1-broker", "network rm"]);
   });
 
   it("fails loudly when the network cannot be created", async () => {

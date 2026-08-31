@@ -41,14 +41,14 @@ if [[ "$(stat -c '%u:%g' data)" != "1000:1000" ]] \
     exit 1
   fi
 fi
-export LAUNCHPAD_ENV_FILE="$env_file"
+export sentinel_ENV_FILE="$env_file"
 
 docker compose --env-file "$env_file" up -d --build
 
 requested_sandbox_mode="$(sed -n 's/^CODEX_SANDBOX_MODE=//p' "$env_file" | tail -n 1)"
 requested_sandbox_mode="${requested_sandbox_mode:-workspace-write}"
 if [[ "$requested_sandbox_mode" == "workspace-write" ]] \
-  && ! docker compose --env-file "$env_file" exec -T launchpad \
+  && ! docker compose --env-file "$env_file" exec -T sentinel \
     codex sandbox linux --full-auto -- true >/dev/null 2>&1; then
   echo "Codex Landlock is unavailable on this Linux kernel/container runtime." >&2
   echo "Falling back to danger-full-access inside the outer Docker boundary." >&2
@@ -59,4 +59,4 @@ fi
 docker compose --env-file "$env_file" ps
 
 public_port="$(sed -n 's/^PUBLIC_PORT=//p' "$env_file" | tail -n 1)"
-echo "Agent Launchpad is starting on port ${public_port:-3000}."
+echo "Agent sentinel is starting on port ${public_port:-3000}."

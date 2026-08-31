@@ -1,9 +1,9 @@
 locals {
-  name = "agent-launchpad"
+  name = "agent-sentinel"
 
   ingress_permissions = [
     {
-      description     = "Agent Launchpad web"
+      description     = "Agent sentinel web"
       direction       = "ingress"
       policy          = "accept"
       port_end        = 80
@@ -15,7 +15,7 @@ locals {
       source_group_id = ""
     },
     {
-      description     = "Agent Launchpad SSH"
+      description     = "Agent sentinel SSH"
       direction       = "ingress"
       policy          = "accept"
       port_end        = 22
@@ -49,9 +49,9 @@ locals {
   ])
 }
 
-resource "volcenginecc_vpc_vpc" "launchpad" {
+resource "volcenginecc_vpc_vpc" "sentinel" {
   vpc_name              = local.name
-  description           = "VPC for the CodeJam Agent Launchpad starter kit"
+  description           = "VPC for the CodeJam Agent sentinel starter kit"
   cidr_block            = "172.20.0.0/16"
   support_ipv_4_gateway = true
   enable_ipv_6          = false
@@ -64,11 +64,11 @@ resource "volcenginecc_vpc_vpc" "launchpad" {
   ]
 }
 
-resource "volcenginecc_vpc_subnet" "launchpad" {
-  vpc_id      = volcenginecc_vpc_vpc.launchpad.id
+resource "volcenginecc_vpc_subnet" "sentinel" {
+  vpc_id      = volcenginecc_vpc_vpc.sentinel.id
   zone_id     = var.zone_id
   subnet_name = local.name
-  description = "Agent Launchpad subnet"
+  description = "Agent sentinel subnet"
   cidr_block  = "172.20.1.0/24"
   tags = [
     {
@@ -78,10 +78,10 @@ resource "volcenginecc_vpc_subnet" "launchpad" {
   ]
 }
 
-resource "volcenginecc_vpc_security_group" "launchpad" {
-  vpc_id              = volcenginecc_vpc_vpc.launchpad.id
+resource "volcenginecc_vpc_security_group" "sentinel" {
+  vpc_id              = volcenginecc_vpc_vpc.sentinel.id
   security_group_name = local.name
-  description         = "Web and SSH access for Agent Launchpad"
+  description         = "Web and SSH access for Agent sentinel"
   project_name        = var.project_name
   ingress_permissions = local.ingress_permissions
   egress_permissions = [
@@ -106,10 +106,10 @@ resource "volcenginecc_vpc_security_group" "launchpad" {
   ]
 }
 
-resource "volcenginecc_ecs_instance" "launchpad" {
+resource "volcenginecc_ecs_instance" "sentinel" {
   instance_name        = local.name
-  hostname             = "agent-launchpad"
-  description          = "CodeJam Agent Launchpad starter kit"
+  hostname             = "agent-sentinel"
+  description          = "CodeJam Agent sentinel starter kit"
   project_name         = var.project_name
   instance_charge_type = "PostPaid"
   instance_type        = var.instance_type
@@ -128,9 +128,9 @@ resource "volcenginecc_ecs_instance" "launchpad" {
   }
 
   primary_network_interface = {
-    security_group_ids = [volcenginecc_vpc_security_group.launchpad.id]
-    subnet_id          = volcenginecc_vpc_subnet.launchpad.id
-    vpc_id             = volcenginecc_vpc_vpc.launchpad.id
+    security_group_ids = [volcenginecc_vpc_security_group.sentinel.id]
+    subnet_id          = volcenginecc_vpc_subnet.sentinel.id
+    vpc_id             = volcenginecc_vpc_vpc.sentinel.id
   }
 
   system_volume = {

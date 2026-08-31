@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Imports of local modules use the `.js` extension (NodeNext ESM), e.g. `./principals.js`.
-- Server tests run with `npm test` from the repo root (delegates to `vitest run` in `apps/server`). A single file: `npm test -w @launchpad/server -- src/principals.test.ts`.
+- Server tests run with `npm test` from the repo root (delegates to `vitest run` in `apps/server`). A single file: `npm test -w @sentinel/server -- src/principals.test.ts`.
 - Full gate before the final commit: `npm run check` (typecheck + test + build).
 - The web workspace has no test runner; verify it with `npm run typecheck` and `npm run build`.
 - Principal id charset: `^[A-Za-z0-9._@-]{1,64}$`. Token charset: `^[A-Za-z0-9._~-]{1,128}$`.
@@ -121,7 +121,7 @@ describe("PrincipalRegistry", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm test -w @launchpad/server -- src/principals.test.ts`
+Run: `npm test -w @sentinel/server -- src/principals.test.ts`
 Expected: FAIL — `Failed to resolve import "./principals.js"`.
 
 - [ ] **Step 3: Write the implementation**
@@ -230,7 +230,7 @@ export class PrincipalRegistry {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npm test -w @launchpad/server -- src/principals.test.ts`
+Run: `npm test -w @sentinel/server -- src/principals.test.ts`
 Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
@@ -363,7 +363,7 @@ describe("credential configuration", () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `npm test -w @launchpad/server -- src/app.test.ts src/config-policy.test.ts`
+Run: `npm test -w @sentinel/server -- src/app.test.ts src/config-policy.test.ts`
 Expected: FAIL — `/api/me` returns 404, and `config.principals` is undefined.
 
 - [ ] **Step 3: Update the config**
@@ -460,7 +460,7 @@ Replace the `/api/auth` route (line 79) and add `/api/me` after it:
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `npm test -w @launchpad/server -- src/app.test.ts src/config-policy.test.ts`
+Run: `npm test -w @sentinel/server -- src/app.test.ts src/config-policy.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Typecheck**
@@ -576,7 +576,7 @@ Add to `apps/server/src/app.test.ts` inside the existing `describe("HTTP boundar
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `npm test -w @launchpad/server -- src/app.test.ts`
+Run: `npm test -w @sentinel/server -- src/app.test.ts`
 Expected: FAIL — the spoofed request returns 200 because Zod strips `actor`, and the unauthenticated approval reaches the service instead of 401.
 
 - [ ] **Step 3: Tighten the endpoint**

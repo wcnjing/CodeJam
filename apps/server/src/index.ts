@@ -10,7 +10,7 @@ const config = loadConfig();
 await writeCodexConfig(config);
 
 const store = new JsonStore(
-  path.join(config.dataDirectory, "launchpad.json"),
+  path.join(config.dataDirectory, "sentinel.json"),
   config.auditRetentionDays,
 );
 const workspaces = new WorkspaceManager(config.workspaceRoot);

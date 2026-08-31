@@ -728,8 +728,8 @@ Runtime image.
 ### 2. Clone the repository
 
 ```bash
-git clone <repository-url> volc-agent-launchpad
-cd volc-agent-launchpad
+git clone <repository-url> volc-agent-sentinel
+cd volc-agent-sentinel
 ```
 
 Skip this step when already working from the repository root.
@@ -773,7 +773,7 @@ later messages.
 Press `Ctrl+C` in the startup terminal. The script removes temporary Runtime
 containers but keeps Agent workspaces and conversations.
 
-- macOS state: `~/.volc-agent-launchpad/`
+- macOS state: `~/.volc-agent-sentinel/`
 - Linux state: `.local/`
 - Custom location: set `LOCAL_POC_DATA_ROOT`
 

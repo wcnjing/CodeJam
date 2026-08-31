@@ -9,7 +9,7 @@ import path from "node:path";
  * The Agent workspace is shared ground: the Agent owns it, and the host process
  * also writes into it (AGENTS.md, the protected fixture, .gitignore, README.md).
  * A plain `writeFile` follows symlinks, so an Agent that replaces AGENTS.md with
- * a link to `.data/launchpad.json` turns the next `PATCH /api/agents/:id` into a
+ * a link to `.data/sentinel.json` turns the next `PATCH /api/agents/:id` into a
  * host-privileged write over our own audit store — with content the API caller
  * supplies. Every host write into Agent-controlled ground goes through here.
  *

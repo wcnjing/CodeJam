@@ -94,7 +94,7 @@ if [[ -n "${LOCAL_POC_DATA_ROOT:-}" ]]; then
   export AGENT_WORKSPACE_ROOT="$local_state_root/workspaces"
   export CODEX_HOME="$local_state_root/codex-home"
 elif [[ "$(uname -s)" == "Darwin" ]]; then
-  local_state_root="${HOME}/.volc-agent-launchpad"
+  local_state_root="${HOME}/.volc-agent-sentinel"
   export APP_DATA_DIR="${APP_DATA_DIR:-$local_state_root/data}"
   export AGENT_WORKSPACE_ROOT="${AGENT_WORKSPACE_ROOT:-$local_state_root/workspaces}"
   export CODEX_HOME="${CODEX_HOME:-$local_state_root/codex-home}"
@@ -130,7 +130,7 @@ if ! "$engine" run --rm \
   --mount "type=bind,src=$AGENT_WORKSPACE_ROOT,dst=/workspace" \
   --mount "type=bind,src=$CODEX_HOME,dst=/codex-home" \
   "$runtime_image" sh -lc \
-    'touch /workspace/.launchpad-write-test /codex-home/.launchpad-write-test && rm /workspace/.launchpad-write-test /codex-home/.launchpad-write-test'; then
+    'touch /workspace/.sentinel-write-test /codex-home/.sentinel-write-test && rm /workspace/.sentinel-write-test /codex-home/.sentinel-write-test'; then
   log "The container engine cannot mount $local_state_root."
   log "Set LOCAL_POC_DATA_ROOT to a directory shared with Docker/Colima/Podman."
   exit 2
@@ -156,7 +156,7 @@ export CONTAINER_RUNTIME_IMAGE="$runtime_image"
 cleanup() {
   local container_ids
   container_ids="$($engine ps --all --quiet \
-    --filter label=io.codejam.launchpad=agent-runtime \
+    --filter label=io.codejam.sentinel=agent-runtime \
     --filter "label=io.codejam.instance-id=$RUNTIME_INSTANCE_ID" 2>/dev/null || true)"
   if [[ -n "$container_ids" ]]; then
     log "Removing remaining Agent Runtime containers for $RUNTIME_INSTANCE_ID."

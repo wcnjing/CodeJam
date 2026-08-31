@@ -30,7 +30,7 @@ describe("Container Codex runner", () => {
     );
 
     expect(containerName("agent/unsafe", "test-instance")).toBe(
-      "launchpad-test-instance-agent-unsafe",
+      "sentinel-test-instance-agent-unsafe",
     );
     expect(args).toContain("runtime:test");
     expect(args).toContain("type=bind,src=/tmp/agent-workspace,dst=/workspace");
@@ -121,12 +121,12 @@ describe("container hardening controls", () => {
   it("joins a per-run isolated network and points at the broker by default", () => {
     const config = loadConfig({ ...baseEnv });
     const args = buildContainerRunArgs(request, config);
-    expect(valueAfter(args, "--network")).toBe("launchpad-test-instance-agent-1-net");
-    expect(agentNetworkName("agent-1", config)).toBe("launchpad-test-instance-agent-1-net");
+    expect(valueAfter(args, "--network")).toBe("sentinel-test-instance-agent-1-net");
+    expect(agentNetworkName("agent-1", config)).toBe("sentinel-test-instance-agent-1-net");
     // Per-run, not a shared broker: one compromised Agent must not be able to
     // reach — or exhaust — the broker another Agent's run depends on.
-    expect(args).toContain("HTTPS_PROXY=http://launchpad-test-instance-agent-1-broker:8080");
-    expect(args).toContain("HTTP_PROXY=http://launchpad-test-instance-agent-1-broker:8080");
+    expect(args).toContain("HTTPS_PROXY=http://sentinel-test-instance-agent-1-broker:8080");
+    expect(args).toContain("HTTP_PROXY=http://sentinel-test-instance-agent-1-broker:8080");
     // An empty NO_PROXY matters: a default bypass list would let the Agent
     // reach anything it could name as "local" without going through the broker.
     expect(args).toContain("NO_PROXY=");

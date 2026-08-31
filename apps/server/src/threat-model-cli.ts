@@ -4,9 +4,15 @@ import { fileURLToPath } from "node:url";
 import { risk, THREAT_REGISTER } from "./threat-model.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const testFiles = readdirSync(here).filter((f) => f.endsWith(".test.ts"));
+if (testFiles.length === 0) {
+  console.warn(
+    "threat-model-cli: no *.test.ts in " + here + " (built dist?). " +
+      "Mitigated threats with no @covers tag in reach will report NO.",
+  );
+}
 const covered = new Set<string>();
-for (const file of readdirSync(here)) {
-  if (!file.endsWith(".test.ts")) continue;
+for (const file of testFiles) {
   const text = readFileSync(path.join(here, file), "utf8");
   for (const m of text.matchAll(/@covers\s+((?:TM-[A-Z]+-\d+\s*)+)/g)) {
     for (const id of m[1]!.trim().split(/\s+/)) covered.add(id);

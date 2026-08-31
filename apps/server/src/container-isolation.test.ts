@@ -124,7 +124,7 @@ describe("container runner with egress isolation on", () => {
       .map((line) => JSON.parse(line) as string[]);
     const probe = calls.find((c) => c[0] === "exec");
     expect(probe, "readiness was never asked of the engine").toBeDefined();
-    expect(probe![1]).toBe("launchpad-test-a-broker");
+    expect(probe![1]).toBe("sentinel-test-a-broker");
   }, 30_000);
 
   it("refuses to start the Agent when the broker never answers", async () => {

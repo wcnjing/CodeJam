@@ -1,6 +1,6 @@
 # Architecture
 
-Volc Agent Launchpad is a single-node control plane for hackathon use.
+Volc Agent sentinel is a single-node control plane for hackathon use.
 
 ```mermaid
 flowchart LR
@@ -46,7 +46,7 @@ Interrupted Runs become `cancelled` after a restart.
 ### Storage
 
 ```text
-data/launchpad.json       Agent, message, and Run metadata
+data/sentinel.json       Agent, message, and Run metadata
 workspaces/AgentID/       Agent-created files
 workspaces/.deleted/      Archived deleted workspaces
 codex-home/               Codex configuration and sessions

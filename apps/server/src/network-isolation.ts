@@ -37,7 +37,7 @@ export type EngineExec = (args: string[]) => Promise<EngineResult>;
 export function buildNetworkCreateArgs(network: string): string[] {
   // --internal is the whole control: the engine installs no NAT or gateway, so
   // there is no route off this network for anything attached to it.
-  return ["network", "create", "--internal", "--label", "io.codejam.launchpad=agent-egress", network];
+  return ["network", "create", "--internal", "--label", "io.codejam.sentinel=agent-egress", network];
 }
 
 export function buildNetworkRemoveArgs(network: string): string[] {
@@ -60,7 +60,7 @@ export function buildBrokerRunArgs(options: {
     "--name",
     options.broker,
     "--label",
-    "io.codejam.launchpad=agent-egress",
+    "io.codejam.sentinel=agent-egress",
     "--network",
     options.network,
     // The broker is the thing an escaped Agent attacks next, so it gets the
