@@ -5,6 +5,7 @@ import type {
   EvaluationSummary,
   Message,
   PolicyDecision,
+  Principal,
   SystemInfo,
 } from "./types";
 
@@ -42,6 +43,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   auth: () => request<{ required: boolean }>("/api/auth"),
+  me: () => request<{ principal: Principal | null }>("/api/me"),
   system: () => request<SystemInfo>("/api/system"),
   listAgents: () => request<{ agents: Agent[] }>("/api/agents"),
   createAgent: (body: {
@@ -94,11 +96,10 @@ export const api = {
   resolveApproval: (
     approvalId: string,
     decision: "approve" | "deny",
-    actor: string,
     reason: string,
   ) =>
     request<{ approval: ApprovalRequest; continuationRun: AgentRun | null }>(
       "/api/approvals/" + approvalId,
-      { method: "POST", body: JSON.stringify({ decision, actor, reason }) },
+      { method: "POST", body: JSON.stringify({ decision, reason }) },
     ),
 };

@@ -1,11 +1,10 @@
-import type { ApprovalRequest } from "../types";
+import type { ApprovalRequest, Principal } from "../types";
 import { explainRule, type PolicyMode } from "../lib/ruleExplanations";
 import { DecisionExplanation } from "./DecisionExplanation";
 
 export function PendingApprovalCard({
   approval,
-  approver,
-  onApproverChange,
+  principal,
   reason,
   onReasonChange,
   busy,
@@ -13,8 +12,8 @@ export function PendingApprovalCard({
   mode = null,
 }: {
   approval: ApprovalRequest;
-  approver: string;
-  onApproverChange: (value: string) => void;
+  /** Resolved from the credential. Null means this session cannot decide. */
+  principal: Principal | null;
   reason: string;
   onReasonChange: (value: string) => void;
   busy: boolean;
@@ -43,14 +42,6 @@ export function PendingApprovalCard({
       />
       <div className="approval-controls">
         <label>
-          Approver
-          <input
-            value={approver}
-            onChange={(event) => onApproverChange(event.target.value)}
-            placeholder="your name"
-          />
-        </label>
-        <label>
           Reason
           <input
             value={reason}
@@ -62,19 +53,27 @@ export function PendingApprovalCard({
       <div className="approval-actions">
         <button
           className="button button-primary"
-          disabled={busy || !approver.trim() || !reason.trim()}
+          disabled={busy || !principal || !reason.trim()}
           onClick={() => onResolve("approve")}
         >
-          Approve &amp; resume
+          {principal ? "Approve as " + principal.id : "Approve & resume"}
         </button>
         <button
           className="button button-danger"
-          disabled={busy || !approver.trim() || !reason.trim()}
+          disabled={busy || !principal || !reason.trim()}
           onClick={() => onResolve("deny")}
         >
-          Deny
+          {principal ? "Deny as " + principal.id : "Deny"}
         </button>
-        {!reason.trim() && <span className="policy-note">A reason is required to decide.</span>}
+        {!principal && (
+          <span className="policy-note">
+            Deciding requires an authenticated principal. Set APP_PRINCIPALS and unlock
+            with that principal&apos;s token.
+          </span>
+        )}
+        {principal && !reason.trim() && (
+          <span className="policy-note">A reason is required to decide.</span>
+        )}
       </div>
     </article>
   );
@@ -86,6 +85,11 @@ export function ResolvedApprovalCard({ approval }: { approval: ApprovalRequest }
       <strong>
         Approval {approval.status}
         {approval.resolvedBy ? " by " + approval.resolvedBy : ""}
+        {approval.resolvedByAttribution === "self-asserted" && (
+          // Predates credential-derived approvers: this name was typed into the
+          // request, not proven. Saying so is the point of storing attribution.
+          <span className="policy-note"> (self-asserted, not authenticated)</span>
+        )}
       </strong>
       <span>
         {approval.status === "denied"

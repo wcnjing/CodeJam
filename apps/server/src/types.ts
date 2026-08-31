@@ -92,8 +92,21 @@ export interface ApprovalRequest {
   hosts: string[];
   status: ApprovalStatus;
   requestedAt: string;
-  /** Named human who resolved it. No real identity in this POC — a label. */
+  /**
+   * Id of whoever resolved it. For `resolvedByAttribution: "credential"` —
+   * everything this code writes — it is the authenticated principal derived
+   * from the request's credential and is never client-supplied. Read it
+   * together with the attribution: records migrated from schema v1 carry a name
+   * the client asserted, and the two are otherwise indistinguishable.
+   */
   resolvedBy: string | null;
+  /**
+   * Where `resolvedBy` came from, so a stored decision says for itself whether
+   * its approver is trustworthy. Null while pending. "self-asserted" appears
+   * only on records migrated from schema v1, when the approver was a free-text
+   * body field; nothing writes it at runtime.
+   */
+  resolvedByAttribution: ApproverAttribution | null;
   /** Why the human approved or denied. Recorded to detect rubber-stamping. */
   decisionReason: string | null;
   resolvedAt: string | null;
@@ -101,8 +114,15 @@ export interface ApprovalRequest {
   continuationRunId: string | null;
 }
 
+/**
+ * How an approval's `resolvedBy` was established. Only "credential" is ever
+ * written now; "self-asserted" exists to label pre-v2 records honestly rather
+ * than let them pass as authenticated.
+ */
+export type ApproverAttribution = "credential" | "self-asserted";
+
 export interface Database {
-  version: 1;
+  version: 2;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];

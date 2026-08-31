@@ -30,7 +30,7 @@ const service = {
 
 async function fetchSummary(): Promise<Record<string, unknown>> {
   const app = await createApp(
-    loadConfig({ NODE_ENV: "test", APP_AUTH_TOKEN: "a-strong-test-token" }),
+    loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:a-strong-test-token" }),
     service,
   );
   try {

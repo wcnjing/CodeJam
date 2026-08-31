@@ -12,5 +12,7 @@ fi
 mkdir -p data workspaces codex-home
 
 echo "Next:"
-echo "  1. Fill ARK_API_KEY and ARK_MODEL in .env"
+echo "  1. Fill ARK_API_KEY, ARK_MODEL and APP_PRINCIPALS in .env"
+echo "     (APP_PRINCIPALS is required: docker compose runs a production server"
+echo "      on 0.0.0.0 and will not start without at least one id:token pair.)"
 echo "  2. Run: docker compose up --build"

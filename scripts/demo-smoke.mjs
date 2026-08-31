@@ -12,7 +12,12 @@
  *   BASE_URL=http://host:3000 npm run demo:check
  *   npm run demo:check -- --skip-engine   when running without a container engine
  *
- * Without --self-host it requires a server already running (`npm run poc`).
+ * Without --self-host it requires a server already running (`npm run poc`), plus
+ * a credential if that server has principals configured: either SENTINEL_TOKEN
+ * (one principal's token, as in DEPLOYMENT.md) or APP_PRINCIPALS, whose first
+ * id:token pair this script will use. Resolving an approval REQUIRES one — the
+ * approver is derived from the credential, so an anonymous caller cannot decide.
+ * --self-host configures its own single-principal registry and needs neither.
  *
  * --self-host starts one with RUNTIME_PROVIDER=replay on a spare port and tears
  * it down afterwards. That makes the two run-driven checks - benign run and
@@ -42,6 +47,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -55,7 +61,30 @@ const SELF_HOST_PORT = Number(process.env.SELF_HOST_PORT || 3099);
 const BASE_URL = SELF_HOST
   ? `http://127.0.0.1:${SELF_HOST_PORT}`
   : (process.env.BASE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
-const TOKEN = (process.env.APP_AUTH_TOKEN || "").trim();
+/**
+ * The token this script presents against a server someone else started.
+ * SENTINEL_TOKEN is the operator-facing knob (DEPLOYMENT.md uses that name);
+ * otherwise take the first pair out of the same APP_PRINCIPALS the server
+ * reads, so a working .env needs no second variable. --self-host ignores both
+ * and uses the registry it generates for its own server instead.
+ */
+function tokenFromEnvironment() {
+  const explicit = (process.env.SENTINEL_TOKEN || "").trim();
+  if (explicit) return explicit;
+  const first = (process.env.APP_PRINCIPALS || "").split(",")[0]?.trim() ?? "";
+  const separator = first.indexOf(":");
+  return separator < 0 ? "" : first.slice(separator + 1).trim();
+}
+
+// --self-host runs an otherwise open server, but approvals refuse a null
+// principal, so the deny path needs a registry either way. The id is the name
+// the audit record will carry as its approver.
+const SELF_HOST_PRINCIPAL = "demo-smoke";
+const SELF_HOST_TOKEN = randomBytes(24).toString("base64url");
+const TOKEN = SELF_HOST ? SELF_HOST_TOKEN : tokenFromEnvironment();
+
+/** Principal id the server attributes our decisions to. Filled from /api/me. */
+let principalId = null;
 const COLLECTOR_PORT = 9099;
 
 /** Exactly what workspace.ts seeds. Ground truth, not just a before/after hash. */
@@ -144,7 +173,7 @@ async function startReplayServer() {
         RUNTIME_PROVIDER: "replay",
         ARK_API_KEY: "replay-no-key-needed",
         ARK_MODEL: "ep-replay",
-        APP_AUTH_TOKEN: "",
+        APP_PRINCIPALS: SELF_HOST_PRINCIPAL + ":" + SELF_HOST_TOKEN,
         APP_DATA_DIR: path.join(dataRoot, "data"),
         AGENT_WORKSPACE_ROOT: path.join(dataRoot, "workspaces"),
         CODEX_HOME: path.join(dataRoot, "codex"),
@@ -194,7 +223,7 @@ if (SELF_HOST) {
 console.log("");
 console.log("Pre-demo smoke check");
 console.log("-".repeat(74));
-console.log(`  target ${BASE_URL}${TOKEN ? " (authenticated)" : " (no APP_AUTH_TOKEN set)"}`);
+console.log(`  target ${BASE_URL}${TOKEN ? " (authenticated)" : " (no credential set)"}`);
 if (SELF_HOST) {
   console.log("  mode   --self-host, RUNTIME_PROVIDER=replay (model faked, policy real)");
 }
@@ -223,6 +252,39 @@ if (!serverUp) {
   await teardown();
   console.log(`Total: ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
   process.exit(1);
+}
+
+// -------------------------------------------------------------- 1b. identity
+
+// Approvals derive the approver from the credential, so a run that cannot name
+// a principal cannot resolve one. Find that out here, with a remediation hint,
+// rather than as a bare HTTP 401 at the approval step.
+try {
+  const { status, json } = await api("GET", "/api/me");
+  principalId = json?.principal?.id ?? null;
+  if (status === 401) {
+    record(
+      "fail",
+      "Approver identity",
+      "the presented credential is not a configured principal",
+      "Set SENTINEL_TOKEN (or APP_PRINCIPALS) to a token this server knows.",
+    );
+  } else if (principalId) {
+    record("pass", "Approver identity", `deciding as ${principalId}`);
+  } else {
+    record(
+      "fail",
+      "Approver identity",
+      "server reports no principal for this request",
+      "Configure APP_PRINCIPALS on the server; approvals refuse an anonymous caller.",
+    );
+  }
+} catch (error) {
+  record(
+    "fail",
+    "Approver identity",
+    "unreachable: " + (error instanceof Error ? error.message : String(error)),
+  );
 }
 
 // ------------------------------------------------------- 2. container engine
@@ -383,15 +445,33 @@ if (heldRunId) {
     record("fail", "Approval raised", "no pending approval for the held run");
   } else {
     record("pass", "Approval raised", `${pending.rule} for ${(pending.hosts ?? []).join(", ")}`);
+    // No `actor`: the approver comes from the credential, and the body schema
+    // is strict, so sending one is a 400 rather than a silently ignored field.
     const decision = await api("POST", "/api/approvals/" + pending.id, {
       decision: "approve",
-      actor: "demo-smoke",
       reason: "pre-demo smoke check",
     });
     const continuation = decision.json?.continuationRun;
+    const resolvedBy = decision.json?.approval?.resolvedBy;
     if (decision.status !== 200 || !continuation?.id) {
-      record("fail", "Approval resolved", `HTTP ${decision.status}`);
+      record(
+        "fail",
+        "Approval resolved",
+        `HTTP ${decision.status}`,
+        decision.status === 401
+          ? "Resolving needs a configured principal; see the Approver identity check above."
+          : undefined,
+      );
+    } else if (principalId && resolvedBy !== principalId) {
+      // The claim this whole gate rests on: the record names the credential's
+      // principal, not anything the client could have put in the body.
+      record(
+        "fail",
+        "Approval attributed to the credential",
+        `resolvedBy=${JSON.stringify(resolvedBy)}, expected ${JSON.stringify(principalId)}`,
+      );
     } else {
+      record("pass", "Approval attributed to the credential", `resolvedBy=${resolvedBy}`);
       const outcome = await waitForRun(continuation.id);
       if (outcome.status === "completed") {
         record("pass", "Continuation run completed", "the scoped grant worked");

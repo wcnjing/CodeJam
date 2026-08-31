@@ -120,7 +120,15 @@ export function buildAuditTimeline(
           : explanation.label + " — denied",
       detail: approval.decisionReason ?? undefined,
       command: approval.command,
-      meta: approval.resolvedBy ? "by " + approval.resolvedBy : undefined,
+      meta: approval.resolvedBy
+        ? "by " +
+          approval.resolvedBy +
+          // A migrated record's approver was typed in, not proven. The timeline
+          // is read as evidence, so it must not show the two as equivalent.
+          (approval.resolvedByAttribution === "self-asserted"
+            ? " (self-asserted)"
+            : "")
+        : undefined,
     });
   }
 

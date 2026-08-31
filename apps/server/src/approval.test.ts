@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { PolicyViolationError } from "./errors.js";
 import { JsonStore } from "./store.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
+import type { Principal } from "./principals.js";
 import { WorkspaceManager } from "./workspace.js";
 
 /**
@@ -55,6 +56,10 @@ class SecretExfilRunner implements AgentRunner {
   }
 }
 
+const ALICE: Principal = { id: "ops-alice" };
+const BOB: Principal = { id: "ops-bob" };
+const OPS: Principal = { id: "ops" };
+
 const dirs: string[] = [];
 afterEach(async () => {
   const { rm } = await import("node:fs/promises");
@@ -102,16 +107,22 @@ describe("human approval gate", () => {
     const { continuationRun } = await service.resolveApproval(
       pending[0]!.id,
       "approve",
-      "ops-alice",
+      ALICE,
       "npm registry is a trusted dependency source",
     );
     expect(continuationRun).not.toBeNull();
     await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
     expect(service.getRun(continuationRun!.id).output).toContain("registry.npmjs.org");
 
-    // The decision is recorded with the named approver and reason.
+    // The decision is recorded with the named approver and reason. The record
+    // also says for itself that the approver came from a credential, so it can
+    // never be read as equivalent to a self-asserted one migrated from v1.
     const resolved = service.getApproval(pending[0]!.id);
-    expect(resolved).toMatchObject({ status: "approved", resolvedBy: "ops-alice" });
+    expect(resolved).toMatchObject({
+      status: "approved",
+      resolvedBy: "ops-alice",
+      resolvedByAttribution: "credential",
+    });
     expect(resolved.decisionReason).toContain("trusted");
     expect(resolved.continuationRunId).toBe(continuationRun!.id);
   });
@@ -124,7 +135,7 @@ describe("human approval gate", () => {
     const { run } = await service.sendMessage(agent.id, "fetch it");
     await expect.poll(() => service.getRun(run.id).status).toBe("held");
     const approval = service.listApprovals(agent.id)[0]!;
-    const { continuationRun } = await service.resolveApproval(approval.id, "approve", "ops", "trusted registry");
+    const { continuationRun } = await service.resolveApproval(approval.id, "approve", OPS, "trusted registry");
     await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
 
     // A fresh task must be held again — the grant did not widen the allowlist.
@@ -144,13 +155,14 @@ describe("human approval gate", () => {
     const { continuationRun } = await service.resolveApproval(
       approval.id,
       "deny",
-      "ops-bob",
+      BOB,
       "not an approved dependency source",
     );
     expect(continuationRun).toBeNull();
     expect(service.getApproval(approval.id)).toMatchObject({
       status: "denied",
       resolvedBy: "ops-bob",
+      resolvedByAttribution: "credential",
     });
     // Held run stays held; no new run was created.
     expect(service.getRun(run.id).status).toBe("held");
@@ -208,13 +220,13 @@ describe("human approval gate", () => {
     const a2 = approvals.find((a) => a.runId === second.run.id)!;
 
     // Approve #1 -> continuation starts and never resolves -> Agent busy.
-    const r1 = await service.resolveApproval(a1.id, "approve", "ops-a", "ok");
+    const r1 = await service.resolveApproval(a1.id, "approve", ALICE, "ok");
     expect(r1.continuationRun).not.toBeNull();
     expect(service.getAgent(agent.id).status).toBe("busy");
 
     // Approve #2 while busy -> 409, and #2 MUST remain pending (not approved).
     await expect(
-      service.resolveApproval(a2.id, "approve", "ops-b", "ok"),
+      service.resolveApproval(a2.id, "approve", BOB, "ok"),
     ).rejects.toMatchObject({ statusCode: 409 });
     expect(service.getApproval(a2.id).status).toBe("pending");
     expect(service.getApproval(a2.id).resolvedBy).toBeNull();
@@ -223,7 +235,7 @@ describe("human approval gate", () => {
     release({ output: "done", threadId: "t", usage: null });
     await expect.poll(() => service.getRun(r1.continuationRun!.id).status).toBe("completed");
     await expect.poll(() => service.getAgent(agent.id).status).toBe("ready");
-    const r2 = await service.resolveApproval(a2.id, "approve", "ops-b", "retry");
+    const r2 = await service.resolveApproval(a2.id, "approve", BOB, "retry");
     expect(r2.continuationRun).not.toBeNull();
     expect(service.getApproval(a2.id).status).toBe("approved");
     // Drain the second continuation before teardown so no store write races the
@@ -238,22 +250,10 @@ describe("human approval gate", () => {
     await expect.poll(() => service.getRun(run.id).status).toBe("held");
     const approval = service.listApprovals(agent.id)[0]!;
 
-    await service.resolveApproval(approval.id, "deny", "ops", "no");
+    await service.resolveApproval(approval.id, "deny", OPS, "no");
     await expect(
-      service.resolveApproval(approval.id, "approve", "ops", "changed my mind"),
+      service.resolveApproval(approval.id, "approve", OPS, "changed my mind"),
     ).rejects.toMatchObject({ statusCode: 409 });
-  });
-
-  it("requires a named approver", async () => {
-    const service = await makeService(new EgressGatedRunner());
-    const agent = await service.createAgent({ name: "Gated" });
-    const { run } = await service.sendMessage(agent.id, "fetch it");
-    await expect.poll(() => service.getRun(run.id).status).toBe("held");
-    const approval = service.listApprovals(agent.id)[0]!;
-
-    await expect(
-      service.resolveApproval(approval.id, "approve", "   ", "reason"),
-    ).rejects.toMatchObject({ statusCode: 400 });
   });
 });
 
@@ -281,7 +281,7 @@ describe("evidence lifecycle", () => {
     const { continuationRun } = await service.resolveApproval(
       approval.id,
       "approve",
-      "ops",
+      OPS,
       "trusted",
     );
     await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
@@ -301,7 +301,7 @@ describe("evidence lifecycle", () => {
     await expect.poll(() => service.getRun(run.id).status).toBe("held");
     const approval = service.listApprovals(agent.id)[0]!;
     await expect(
-      service.resolveApproval(approval.id, "deny", "ops", "   "),
+      service.resolveApproval(approval.id, "deny", OPS, "   "),
     ).rejects.toMatchObject({ statusCode: 400 });
   });
 });

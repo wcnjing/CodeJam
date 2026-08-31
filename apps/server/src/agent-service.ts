@@ -21,6 +21,7 @@ import type {
   PolicyObservation,
   UpdateAgentInput,
 } from "./types.js";
+import type { Principal } from "./principals.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const now = () => new Date().toISOString();
@@ -186,8 +187,8 @@ export class AgentService {
 
   /**
    * Resolves a held run. A human with the command and its reason in front of
-   * them approves or denies it; the decision and the named actor are recorded
-   * so override rates can be reviewed for rubber-stamping.
+   * them approves or denies it; the decision and the authenticated principal
+   * are recorded so override rates can be reviewed for rubber-stamping.
    *
    * Approval grants a run-scoped host grant for exactly the hosts the
    * denied command named, then resumes the original task as a new run. The
@@ -196,13 +197,11 @@ export class AgentService {
   async resolveApproval(
     id: string,
     decision: "approve" | "deny",
-    actor: string,
+    principal: Principal,
     reason: string,
   ): Promise<{ approval: ApprovalRequest; continuationRun: AgentRun | null }> {
-    const trimmedActor = actor.trim();
-    if (!trimmedActor) {
-      throw new HttpError(400, "An approver name is required to record the decision");
-    }
+    // No "approver name required" guard: the caller is a resolved Principal, so
+    // an anonymous decision is unrepresentable rather than merely rejected.
     const trimmedReason = reason.trim();
     if (!trimmedReason) {
       throw new HttpError(400, "A reason is required so every decision records why");
@@ -216,7 +215,8 @@ export class AgentService {
           throw new HttpError(409, "This request was already " + approval.status);
         }
         approval.status = "denied";
-        approval.resolvedBy = trimmedActor;
+        approval.resolvedBy = principal.id;
+        approval.resolvedByAttribution = "credential";
         approval.decisionReason = trimmedReason;
         approval.resolvedAt = now();
         return structuredClone(approval);
@@ -266,7 +266,8 @@ export class AgentService {
       agent.lastError = null;
       agent.updatedAt = timestamp;
       approval.status = "approved";
-      approval.resolvedBy = trimmedActor;
+      approval.resolvedBy = principal.id;
+      approval.resolvedByAttribution = "credential";
       approval.decisionReason = trimmedReason;
       approval.resolvedAt = now();
       approval.continuationRunId = run.id;
@@ -564,6 +565,7 @@ export class AgentService {
               status: "pending",
               requestedAt: completedAt,
               resolvedBy: null,
+              resolvedByAttribution: null,
               decisionReason: null,
               resolvedAt: null,
               continuationRunId: null,

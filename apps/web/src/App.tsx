@@ -7,6 +7,7 @@ import type {
   EvaluationSummary,
   Message,
   PolicyDecision,
+  Principal,
   SystemInfo,
 } from "./types";
 import { AuditTimeline } from "./components/AuditTimeline";
@@ -279,7 +280,7 @@ export default function App() {
   const [policyEvents, setPolicyEvents] = useState<PolicyDecision[]>([]);
   const [showPolicy, setShowPolicy] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const [approver, setApprover] = useState("operator");
+  const [principal, setPrincipal] = useState<Principal | null>(null);
   const [approvalReason, setApprovalReason] = useState("");
   const [view, setView] = useState<"welcome" | "agents" | "evaluation">("welcome");
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
@@ -392,7 +393,11 @@ export default function App() {
   }, [agents, refreshAgents]);
 
   const bootstrap = useCallback(async () => {
-    await Promise.all([refreshAgents(), api.system().then(setSystem)]);
+    await Promise.all([
+      refreshAgents(),
+      api.system().then(setSystem),
+      api.me().then(({ principal: current }) => setPrincipal(current)),
+    ]);
   }, [refreshAgents]);
 
   useEffect(() => {
@@ -562,7 +567,6 @@ export default function App() {
       const result = await api.resolveApproval(
         approval.id,
         decision,
-        approver.trim() || "operator",
         approvalReason.trim(),
       );
       setApprovalReason("");
@@ -644,8 +648,11 @@ export default function App() {
         <form className="auth-card" onSubmit={unlock}>
           <div className="brand-mark">S</div>
           <span className="eyebrow">Sentinel</span>
-          <h1>Enter the access token</h1>
-          <p>This shared demo token is configured by the platform operator.</p>
+          <h1>Enter your access token</h1>
+          <p>
+            Your personal access token, issued by the platform operator. Approvals are
+            recorded under the principal it identifies.
+          </p>
           {error && <div className="error-banner" role="alert">{error}</div>}
           <label>
             Access token
@@ -972,8 +979,7 @@ export default function App() {
                   <PendingApprovalCard
                     mode={policyMode}
                     approval={pendingApproval}
-                    approver={approver}
-                    onApproverChange={setApprover}
+                    principal={principal}
                     reason={approvalReason}
                     onReasonChange={setApprovalReason}
                     busy={busy}
