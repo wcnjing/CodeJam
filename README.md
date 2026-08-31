@@ -24,7 +24,7 @@ actually leave. Built on the CodeJam starter kit's Kill Switch track.
 | Attacks the policy would allow | 100% | **0.0%** (0/114) |
 | Secret-channel attacks allowed | 40/40 | **0/40** |
 | Legitimate tasks blocked | 0% | 1.2% (1/84) |
-| Added per-command decision latency (p95) | — | **tens of µs** |
+| Added per-command decision latency (p95) | — | **well under a millisecond** |
 
 *Computed live in-app at **Security Evaluation**; `npm run bench:security` for
 the CLI, `npm run bench` for the full harness with provenance. Latency is
@@ -57,6 +57,40 @@ Run it locally with Docker, Colima, or rootless Podman.
 > real engine by `npm run verify:egress`). `RUNTIME_PROVIDER=local-process` has
 > no equivalent containment and should not be given an untrusted Agent. Do not
 > use production data or credentials. See [SECURITY.md](SECURITY.md).
+
+## Architecture at a glance
+
+Sentinel interposes between the Agent Runtime and everything the Agent tries to
+touch. Every action request is normalised, evaluated against policy, and resolved
+into one of five graduated outcomes — **allow, approve, deny, limit, and record
+& redact** (the diagram's subtitle calls the last one *remember*) — with the
+decision and its evidence emitted to an audit trail on the way through.
+
+One caveat the diagram cannot draw, and it matters: interception happens on the
+Runtime's event stream *as* a command starts, not before it. That is early enough
+to stop continuation, retries and every subsequent command, and it is not early
+enough to guarantee a single fast command never completes. **Containment, not
+prevention** — spelled out under [Limitations](#limitations).
+
+![Sentinel architecture: the user and frontend send prompts to the Agent Runtime; every tool call from the Runtime passes through Sentinel's request interceptor and policy engine, which resolves it to allow, approve, deny, limit or record before the tool executes; a control plane manages policy and approvals, and an evidence layer captures events, traces, audit logs, metrics and redacted retention](docs/assets/architecture-overview.png)
+
+> **Read this as the target shape, not as a component inventory.** The diagram is
+> the design the middleware is built toward, and this repository implements one
+> track of it well rather than all of it thinly. What is actually built and
+> measured: the request interceptor and policy engine (over **shell commands
+> emitted by Codex**, which is the only action type interposed on today), all
+> five decision outcomes, the evidence emitter, the append-only event store,
+> redaction and retention, the approvals console, and run-scoped grants. What is
+> drawn but not built: database and MCP-server resources, a real secrets manager,
+> identity beyond `APP_PRINCIPALS`, session and token revocation, metric alerting,
+> and policy management as anything richer than environment variables. The
+> sections below are scoped to the built half, and every figure in them cites the
+> CI run that produced it.
+
+The enforcement point, the trust boundary it sits on, and what crosses it are
+drawn concretely in [The control](#the-control) below;
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component and extension
+boundaries.
 
 ## Direction: threat modeling and safety
 
@@ -326,8 +360,12 @@ rate**, secret-channel block rate, per-family coverage, and a
 baseline-vs-protected comparison. On the current corpus the predicted escape rate
 drops from 100% (no middleware) to 0.0%, secret-channel attacks allowed from
 40/40 to 0/40, with a p95
-decision latency in the tens of microseconds (hardware-dependent; run the CLI on
-your own machine for the figure that applies to it).
+decision latency well under a millisecond (hardware-dependent; run the CLI on
+your own machine for the figure that applies to it — the CI runners report a p95
+of 250.6–278.3 µs, and an earlier "tens of microseconds" here was a p50 quoted as
+if it were a tail).
+([run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
+`npm run bench:security`)
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
@@ -342,6 +380,17 @@ your own machine for the figure that applies to it).
 Every figure below comes from a CI run on a clean GitHub runner, linked so it can
 be checked rather than taken on trust. Nothing here was measured only on a
 contributor's laptop.
+
+> **Most of this section was last re-derived against
+> [run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
+> the CI run for the current commit, and four claims did not survive it.** The
+> store was no longer O(n); the injection benchmark's 146 bypasses were closed;
+> the test count had grown from 226 to 363; and the Windows failure count,
+> reported as stable at 12, was 20. **Every one of them had moved in the
+> project's favour except the last** — which is the direction that makes a stale
+> figure hardest to notice, because nothing about a document that understates its
+> own system feels wrong to read. Each is corrected in place below, with the
+> superseded value kept next to it.
 
 > **The verification step is itself a finding, and it has now caught me.**
 > The clearest instance was not a stale figure but an invented one. I reported
@@ -487,36 +536,69 @@ executing — and it had never been quantified.
 ([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:overhead`;
 that run reports p50 2 ms / max 3 ms on Node 22 and p50 3 ms / max 4 ms on Node 24,
 n=5 each. The token tier measures the same window on a larger sample and reports
-max 5 ms at n=24; the two are different denominators and are not mixed here)
+max 5 ms at n=24; the two are different denominators and are not mixed here.
+The current build reads the same: p50 3 ms / max 4 ms at n=5 on both Node 22 and
+Node 24, and 24/24 Runtimes terminated at p50 3 ms / max 6–7 ms in the token
+tier —
+[run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907))
 
-**The middleware's real cost is not the policy decision.** A decision is
-**58.19–63.70 µs** across three runners. Recording it is the expensive half:
-`JsonStore.mutate()` clones and rewrites the whole database on every call, so
-writing one policy event is **O(events already stored)** — 0.31–1.08 ms at zero
-events, **14.16–17.59 ms at 5,000**. Growth is exactly linear, r²
-**0.9995–0.9999** across three independent runners, so this is a property of the
-code and not of a machine.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:store`)
+**The middleware's real cost used to be recording the decision, and that is now
+fixed.** A decision costs **54.48–62.31 µs** per command, measured as a paired
+A/B at the `scanCommandsWith` seam so the delta is the decision and nothing else.
+Recording it costs a flat **0.37–0.45 ms**, independent of how many events are
+already stored: marginal cost per stored event measures −0.01 to −0.00 µs, and
+the r² of a linear fit collapses to **0.0002–0.0658** because there is no longer
+a slope to fit.
+([run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
+`npm run bench:overhead` and `npm run bench:store`)
 
-The capability engine made the decision itself dearer — 45.70–59.40 µs under the
-old regex engine, 58.19–63.70 µs now, same harness on the same three runners. It
-bought the closures described above. The store curve did not change class: same
-linearity, same O(n).
+> **This section used to describe an O(n) store, and that description was
+> correct when it was written.** Measured at
+> [run 33298935065](https://github.com/wcnjing/CodeJam/actions/runs/33298935065):
+> `JsonStore.mutate()` cloned and re-serialised
+> the whole database on every call, so writing one policy event cost
+> O(events already stored) — 0.31–1.08 ms at zero events rising to
+> 14.16–17.59 ms at 5,000, exactly linear at r² 0.9995–0.9999.
+> The README then said the fix was *"scoped and deliberately not built"*, because
+> the two cheap options both capped the log by discarding audit records — a
+> liability rather than a fix for a project whose thesis is trustworthy evidence,
+> and one that does not remove the linear term in any case, only moves the
+> ceiling.
+>
+> **It is now built, and it is the expensive option.** Policy events are appended
+> to a JSONL log beside the database, one line per event, instead of being
+> re-serialised into the database blob on every write. Nothing is discarded to
+> achieve it; retention still applies, by compaction at startup and on read,
+> because age is a property of a record rather than of a write. **TM-OPS-001 is
+> closed by removing the growth, not by capping it** —
+> `apps/server/src/store.ts`, `PolicyEventLog.append`, with
+> `regression.test.ts` gating the slope directly so a reintroduced O(n) write
+> fails the build rather than being noticed later.
+>
+> The honest note on the residual: this closes the per-write cost, not every
+> concern. What is left is misconfiguration (a retention window set far too high)
+> and ordinary disk consumption, which is a smaller and better-understood
+> problem than the one it replaces.
 
 **What that costs as a share of a run is workload-dependent, and the range is
-the honest form of it**: the same run measures the decision at **0.62–0.70% of
-wall time over five commands, 3.4–3.5% over 25, and 6.6–6.9% over 50** — the
-Runtime's wall time is roughly fixed near 30 ms while the policy cost scales
+the honest form of it.** From
+[run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907)
+(`npm run bench:overhead`), the same run measures the decision at **0.85–0.91% of
+wall time over five commands, 4.5% over 25, and 9.2–9.3% over 50** — the
+Runtime's wall time is roughly fixed near 32 ms while the policy cost scales
 with the number of commands, so any single percentage is a statement about one
-workload rather than about the middleware.
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:overhead`)
+workload rather than about the middleware. These are higher than the 0.62–0.70 /
+3.4–3.5 / 6.6–6.9% this section reported previously, and the reason is the
+capability engine costing more per decision, not a regression in the store.
 
-*The fix is scoped and deliberately not built.* Three options are written up with
-trade-offs; the two cheap ones cap the log by discarding audit records. For a
-project whose thesis is trustworthy evidence, an audit log that silently drops
-records to go faster is a liability, not a fix — and the cap does not even remove
-the linear term. Only an append-only log does, and that is a design change that
-wants its own review. The gap is tracked as **TM-OPS-001**, still open on purpose.
+> **`bench:overhead`'s own commentary is stale where this section is not.** Its
+> section 2 still prints "It is O(policy events already stored), reaching ~11-16
+> ms at 5000 events" — a hardcoded narrative string that `bench:store` in the
+> same CI run directly contradicts. The number this README publishes comes from
+> `bench:store`'s measured decomposition, not from that sentence. It is recorded
+> here rather than quietly worked around, because a benchmark that narrates a
+> conclusion it no longer measures is the same defect this document keeps
+> finding in itself.
 
 **The obvious fix to a Windows setup bug would have introduced remote code
 execution.** `codex-runner.ts` spawned `CODEX_BIN` without a shell; on Windows a
@@ -621,7 +703,9 @@ wrapper *ran* the command, none *wrote* it and then ran what was written. So the
 bank could not express `echo '<command>' | sh` — the shortest bypass of the
 textual carve-out, simpler than any encoded form, and open on every branch. Four
 pipeline-sink wrappers took the bank from 5,488 to **6,860 variants** and
-surfaced 105 further bypasses, all `nc`/`socat`/`openssl`:
+surfaced 105 further bypasses, all `nc`/`socat`/`openssl`. The "after" column
+still holds at
+[run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907):
 
 | | before | after the fix |
 | --- | --- | ---: |
@@ -669,7 +753,9 @@ constant) is now measured against 75 benign entries instead of 73, because two
 benign guards were added with the fix. Numerator 1 throughout.
 
 **Zero is reported with its denominator and its interval.** "0 secret leaks" is
-not evidence the rate is zero — 40 attempts only buy so much confidence:
+not evidence the rate is zero — 40 attempts only buy so much confidence. From
+[run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907)
+(`npm run bench`):
 
 | metric | counts | interval |
 | --- | --- | --- |
@@ -678,8 +764,6 @@ not evidence the rate is zero — 40 attempts only buy so much confidence:
 | Attack block rate | 114/114 | 100.0%, 95% CI 96.7–100.0% |
 | False positive rate | 1/84 | 1.2%, 95% CI 0.2–6.4% |
 | Red-team probe denials | 56/56 | 100.0%, 95% CI 93.6–100.0% |
-
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench`)
 
 **Three of these rows are now perfect scores — 0/114 escapes, 114/114 blocked,
 56/56 denied — which is exactly when the interval matters most.** A rate of 0/114
@@ -692,10 +776,13 @@ overstating residual risk is the only safe direction for a security number.
 (`npm run bench` — full provenance in `bench-results.json`: commit SHA, Node, OS,
 CPU, corpus size, policy hash)
 
-**CI: 226 tests green on ubuntu-latest, Node 22 and 24** (234 total, 8 skipped).
-([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065)) The matrix is
-not redundancy: it separates platform from runtime version, which an earlier
-comparison had confounded.
+**CI, at
+[run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907):
+363 tests green on ubuntu-latest, Node 22 and 24** (371 total, 8 skipped —
+335/343 in the server suite, 22 in the web suite, 6 in the evaluation suite; it
+was 226 green of 234 when this line was last re-derived).
+The matrix is not redundancy: it separates platform from runtime version, which an
+earlier comparison had confounded.
 
 **Windows was verified beyond what the challenge asks.** The brief specifies
 **macOS or Linux**; Windows is not a supported platform for this submission.
@@ -706,19 +793,37 @@ On Windows: install, typecheck, build, all evaluation harnesses, the offline
 entry point and — after the fix above — the `local-process` runtime provider all
 work. One thing does not:
 
-- **The runtime test suite** — 12 of 175 fail. The fake-Codex stand-in is spawned
-  via a `#!/usr/bin/env node` shebang and the executable bit; Windows honours
-  neither, so every spawn throws `EFTYPE`.
+- **The runtime test suite** — **20 of 343 fail** in the server suite (319 pass, 4
+  skipped). The largest group is still the original cause: the fake-Codex stand-in
+  is spawned via a `#!/usr/bin/env node` shebang and the executable bit, and
+  Windows honours neither, so every such spawn throws `EFTYPE` —
+  `runner-policy.test.ts`, `budget.test.ts`, `container-runner-policy.test.ts`.
+  Two smaller groups have joined it since: `container-isolation.test.ts` (4), which
+  exercises the egress-broker topology, and `safe-write.test.ts` (3), which asserts
+  POSIX file modes that Windows does not have.
+  ([run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907))
 - ~~**The `local-process` runtime provider**~~ — **fixed**, see the RCE
   near-miss above. `CODEX_BIN` now resolves to a real executable without a shell,
   or refuses to run and says how to proceed. Verified end to end against an
   npm-generated shim: the run completes and enforcement still fires.
 
 A non-blocking `windows-latest` CI leg runs on every push, so this claim rests on
-public evidence rather than on someone's machine. The signal there is the failure
-*count*, which has been 12 throughout. Because Windows is outside the stated
-requirements, that leg is **reporting, not a gate** — it is why the branch badge
-is green while the leg is red, and that is deliberate rather than tolerated.
+public evidence rather than on someone's machine. Because Windows is outside the
+stated requirements, that leg is **reporting, not a gate** — it is why the branch
+badge is green while the leg is red, and that is deliberate rather than tolerated.
+
+> **A "known-red" leg is a figure that stops being read, and this one drifted.**
+> The signal on this leg is the failure *count*, and the README reported it as
+> "12 throughout" — a claim about stability, which is exactly the kind that stops
+> being re-derived once it has been true twice. It is 20 now, and the growth is
+> not the shebang class getting worse: it is two new POSIX-only suites landing
+> since, one of which (`container-isolation.test.ts`) exists because the egress
+> broker was added. The job's own name in
+> [.github/workflows/ci.yml](.github/workflows/ci.yml) still reads *"expected red
+> — 12 POSIX-only failures"*, so the stale number is in two places and the label
+> is one of them. A count that is allowed to be red needs a *stated expected
+> value* that something checks; "known-red" on its own degrades into "not
+> looked at".
 
 **A replay demo path that does not overclaim.** `RUNTIME_PROVIDER=replay` streams
 a recorded event stream so the governance loop can be shown with no key, no
@@ -779,48 +884,58 @@ Recorded honestly, because each one is a real gap:
   control removes the dependence on reading text at all, and that is still
   deliberately not attempted — see
   [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
-- **Open: 146 bypasses where materialised text is never re-examined.** The
-  engine materialises two carriers — what a command decodes, and what it pipes
-  into a shell. It does not materialise the third: **text written to a file that
-  is then executed.** An injection benchmark
-  (`npm run bench:injection`, enforcement 2,104/2,250 = **93.51%**, 95% CI
-  92.42–94.46% — from
-  [run 33354116107](https://github.com/wcnjing/CodeJam/actions/runs/33354116107),
-  which reports that figure and the 146-variant ratchet identically on all three
-  runners, so it is not one machine's artefact. **The harness itself is not in
-  this tree**: it lands in the pull request that produced that run, and until
-  that merges the command named here is not runnable from `main`.)
+- **Closed: the 146 bypasses where materialised text was never re-examined.**
+  This entry documented an open gap for most of the benchmark's life, and it is
+  kept rather than deleted because the shape of the finding is the useful part.
+  The engine materialised two carriers — what a command decodes, and what it
+  pipes into a shell. It did not materialise the third: **text written to a file
+  that is then executed.** An injection benchmark (`npm run bench:injection`)
   enumerated every carrier the shell offers and found **146 variants across 49
   signatures and 17 of 30 carriers**, in three causes:
-  `runsWrittenScript` withdraws the textual carve-out for `> file` but never
-  re-reads the file, so a **bare host** escapes; it scans redirects only, so a
-  file written by `tee`, `dd of=`, `sed -n w` or `eval "$(cat f)"` is not seen
-  as a write at all and **even a URL escapes**; and `feedsAnExecutor` covers
+  `runsWrittenScript` withdrew the textual carve-out for `> file` but never
+  re-read the file, so a **bare host** escaped; it scanned redirects only, so a
+  file written by `tee`, `dd of=`, `sed -n w` or `eval "$(cat f)"` was not seen
+  as a write at all and **even a URL escaped**; and `feedsAnExecutor` covered
   pipelines but not `sh <<< …` or `sh <(echo …)`.
-  Every signature is named in `injection.ts` and gated — a 147th fails the
-  build. The fix is one function, `writtenScriptPayloads`, beside the existing
-  `pipedScriptPayloads`; it is not built here because it belongs to the
-  capability engine rather than the benchmark lane.
-  **The count is the honest part.** A first pass found six, under one carrier,
-  and called the class bounded; enumerating the carriers took the same finding
-  to 146 against an unchanged engine. Six was a floor, not a count — the fourth
-  time in this project that a class looked small because the axis could not
-  express it. The `direct` class is 525/525, so this is a materialisation gap
-  and not a regression in the ordinary rules.
+  Measured at
+  [run 33354116107](https://github.com/wcnjing/CodeJam/actions/runs/33354116107),
+  enforcement was 2,104/2,250 = **93.51%**, 95% CI 92.42–94.46%, reported
+  identically on all three runners so it was not one machine's artefact.
+
+  **It is now 2,250/2,250 = 100.00%**, 95% CI 99.83–100.00%, ratchet 0, on the
+  same benchmark and the same 2,250 variants
+  ([run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
+  `npm run bench:injection` — the harness is in this tree and runnable from
+  `main`). The fix is the one function this section named as the fix:
+  `writtenScriptPayloads` in `capabilities.ts`, beside the existing
+  `pipedScriptPayloads`, recognising writes **by tool as well as by redirect**
+  so that `tee`, `dd of=` and `sed -n w` count as writes, and re-asking the
+  existing rules of the materialised text. No rule was added. A 2,251st variant
+  or a 147th signature still fails the build.
+
+  **The count was the honest part, and it is the part worth keeping.** A first
+  pass found six, under one carrier, and called the class bounded; enumerating
+  the carriers took the same finding to 146 against an unchanged engine. Six was
+  a floor, not a count — the fourth time in this project that a class looked
+  small because the axis could not express it. Closing it does not retire that
+  lesson: 146 is the number of variants the carrier axis can *express*, and
+  `direct` was 525/525 throughout, which is what identified this as a
+  materialisation gap rather than a regression in the ordinary rules.
   <!-- LOAD-BEARING: the paragraph below stays. It is the one place the README
        explains why three independent measurements can all read 100% and still
        miss the same class, which is the argument the rest of this document
        depends on. Reviewed and kept deliberately; if it is trimmed for length,
        trim something else. -->
-  **This does not contradict the 100% figures above, and the relationship is
-  the point.** The generated bank reports 6,860/6,860 and the corpus reports
-  0/114 escapes because neither has a carrier axis — every variant they generate
-  runs its command directly, and every one of those is still denied. Three
+  **This never contradicted the 100% figures above, and the relationship is
+  the point — including now that this one reads 100% too.** The generated bank
+  reported 6,860/6,860 and the corpus reported 0/114 escapes while this class was
+  wide open, because neither has a carrier axis: every variant they generate runs
+  its command directly, and every one of those was always denied. Three
   independent measurements agreeing at 100% did not make the system safe here;
-  they agreed because they shared a blind spot. That is the strongest available
-  argument for the thing this README says elsewhere and it is worth stating
-  where the numbers are: a rate is only ever a rate over what the harness can
-  express.
+  they agreed because they shared a blind spot. **Four measurements now agree at
+  100%, and that is worth exactly as much as three did** — which is the reason
+  this paragraph survives the fix rather than being deleted with it. A rate is
+  only ever a rate over what the harness can express.
 - **Containment versus prevention.** Confirmed against a live Ark endpoint:
   Codex emits `item.started` carrying the full command with `exit_code: null,
   status: "in_progress"` before the command finishes, so the engine reacts
@@ -841,9 +956,12 @@ Recorded honestly, because each one is a real gap:
   out either — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md). With
   the `local-process` runtime there is no broker and the command-text guard is
   the only control.
-- **Single process.** Policy decisions live in the same single-writer JSON store
-  as everything else, now pruned past `AUDIT_RETENTION_DAYS` (TM-OPS-001,
-  mitigated) — access control on the store itself remains out of scope.
+- **Single process.** Policy decisions now live in an append-only JSONL log
+  beside the JSON database rather than inside it, pruned past
+  `AUDIT_RETENTION_DAYS` on append, on read, and by compaction at startup
+  (TM-OPS-001, closed — see the performance section). Both still run in one
+  single-writer process, and access control on the store itself remains out of
+  scope.
 
 ## Screenshots
 
@@ -1142,6 +1260,9 @@ docker compose config
 
 - [Threat model](docs/THREAT_MODEL.md) — DFD, trust boundaries, control map, residual risks
 - [Policy evaluation](docs/POLICY_EVALUATION.md) — measurement harness, defects found, red-team results
+- [Evaluation & reliability plan](docs/EVALUATION_RELIABILITY_PLAN.md) — methodology behind every published figure
+- [Egress containment](docs/EGRESS_CONTAINMENT.md) — the network layer under `RUNTIME_PROVIDER=container`
+- [Recorded evidence](docs/evidence/) — live-run transcripts, collector and broker logs, and what they do not prove
 - [Operational governance](docs/OPERATIONAL_GOVERNANCE.md) — operational-controls mapping and gaps
 - [Kill Switch plan](docs/KILL_SWITCH_PLAN.md) — design and status
 - [Architecture](docs/ARCHITECTURE.md)
