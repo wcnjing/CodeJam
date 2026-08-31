@@ -108,31 +108,32 @@ describe("container hardening controls", () => {
     expect(args).not.toContain("--tmpfs");
   });
 
-  it("stays on the bridge network while egress isolation is off", () => {
-    // The default: the sidecar is not orchestrated yet, so an isolated network
-    // would strand the Agent with no route to anything.
-    const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
+  it("falls back to the bridge network when isolation is turned off", () => {
+    // Opting out is a deliberate act and has to still produce a working Agent.
+    const args = buildContainerRunArgs(
+      request,
+      loadConfig({ ...baseEnv, CONTAINER_EGRESS_ISOLATION: "false" }),
+    );
     expect(valueAfter(args, "--network")).toBe("bridge");
     expect(args.join(" ")).not.toContain("HTTPS_PROXY");
   });
 
-  it("joins a per-run isolated network and points at the broker when enabled", () => {
-    const config = loadConfig({ ...baseEnv, CONTAINER_EGRESS_ISOLATION: "true" });
+  it("joins a per-run isolated network and points at the broker by default", () => {
+    const config = loadConfig({ ...baseEnv });
     const args = buildContainerRunArgs(request, config);
     expect(valueAfter(args, "--network")).toBe("launchpad-test-instance-agent-1-net");
     expect(agentNetworkName("agent-1", config)).toBe("launchpad-test-instance-agent-1-net");
-    expect(args).toContain("HTTPS_PROXY=http://launchpad-egress-broker:8080");
-    expect(args).toContain("HTTP_PROXY=http://launchpad-egress-broker:8080");
+    // Per-run, not a shared broker: one compromised Agent must not be able to
+    // reach — or exhaust — the broker another Agent's run depends on.
+    expect(args).toContain("HTTPS_PROXY=http://launchpad-test-instance-agent-1-broker:8080");
+    expect(args).toContain("HTTP_PROXY=http://launchpad-test-instance-agent-1-broker:8080");
     // An empty NO_PROXY matters: a default bypass list would let the Agent
     // reach anything it could name as "local" without going through the broker.
     expect(args).toContain("NO_PROXY=");
   });
 
   it("never puts the API key value in argv", () => {
-    const args = buildContainerRunArgs(
-      request,
-      loadConfig({ ...baseEnv, CONTAINER_EGRESS_ISOLATION: "true" }),
-    );
+    const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
     expect(args.join(" ")).not.toContain("secret-that-must-not-appear-in-argv");
   });
 });

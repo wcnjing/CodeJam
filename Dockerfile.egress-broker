@@ -1,0 +1,30 @@
+# The egress broker sidecar.
+#
+# The broker is what stands between an untrusted Agent and the internet, so it
+# is built to have as little in it as possible. The source uses only node
+# builtins, which means the runtime stage is a bare node image plus one bundled
+# file — no npm install, no dependency tree, no supply chain of its own.
+#
+#   docker build -f Dockerfile.egress-broker -t volc-egress-broker:local .
+
+ARG NODE_IMAGE=node:22-bookworm-slim
+
+FROM ${NODE_IMAGE} AS build
+WORKDIR /build
+# Only the two files the broker actually needs. Copying apps/server wholesale
+# would put the API key handling and the policy engine into a build context that
+# has no reason to see them.
+COPY apps/server/src/egress-broker.ts apps/server/src/egress-broker-cli.ts ./src/
+RUN npx --yes esbuild@0.25.10 src/egress-broker-cli.ts \
+      --bundle --platform=node --format=esm --target=node22 \
+      --outfile=/build/broker.mjs
+
+FROM ${NODE_IMAGE}
+COPY --from=build /build/broker.mjs /app/broker.mjs
+# Runs as an unprivileged user; the orchestrator also starts it --read-only,
+# with no capabilities and no-new-privileges.
+USER node
+ENV EGRESS_LISTEN_HOST=0.0.0.0 \
+    EGRESS_LISTEN_PORT=8080
+EXPOSE 8080
+ENTRYPOINT ["node", "/app/broker.mjs"]

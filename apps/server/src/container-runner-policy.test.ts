@@ -75,6 +75,10 @@ async function makeRunner(engine: string) {
     CONTAINER_ENGINE: engine,
     CONTAINER_RUNTIME_IMAGE: "runtime:test",
     CONTAINER_USER: "1000:1000",
+    // This test drives a fake engine to check command enforcement. Egress
+    // isolation would make it wait on a broker that no fake can make listen;
+    // the topology is covered by network-isolation.test.ts and verify-egress.
+    CONTAINER_EGRESS_ISOLATION: "false",
   });
   return { runner: new ContainerCodexRunner(config), workspace: state };
 }

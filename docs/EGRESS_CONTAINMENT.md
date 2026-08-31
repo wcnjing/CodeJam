@@ -1,7 +1,9 @@
 # Egress containment
 
-Status: **mechanism built and tested, topology not yet wired.** Read the
-"What is not done" section before citing this anywhere.
+Status: **wired and verified against a real engine.** `npm run verify:egress`
+stands the topology up and checks it end to end; the run that accompanied this
+document passed 11/11 on Docker 29.5.2. Read "What is still not proven" before
+citing this anywhere.
 
 ## Why this exists
 
@@ -62,48 +64,75 @@ root filesystem, so the workspace and `CODEX_HOME` stay writable and the Agent
 works normally; it simply cannot write elsewhere in its own image, and cannot
 stage an executable in `/tmp`. Asserted at the argv level, both directions.
 
-`CONTAINER_EGRESS_ISOLATION` (**default off**, see below) switches `--network`
-from `bridge` to a per-run network and sets `HTTPS_PROXY` / `HTTP_PROXY` at the
-broker with an empty `NO_PROXY`. The empty `NO_PROXY` is deliberate: a default
+`CONTAINER_EGRESS_ISOLATION` (**default on**) switches `--network` from `bridge`
+to the per-run network and points `HTTPS_PROXY` / `HTTP_PROXY` at that run's own
+broker, with an empty `NO_PROXY`. The empty `NO_PROXY` is deliberate: a default
 bypass list would let the Agent reach anything it could name as local without
-passing the broker.
+passing the broker. The broker is per-run rather than shared, so one compromised
+Agent cannot reach or exhaust the broker another run depends on.
 
-## What is not done
+It defaults on because the container runtime is itself opt-in — anyone on this
+path wants the hardened one. It needs the broker image (`npm run build:broker`),
+and `isAvailable()` checks for it, so a missing image is reported up front
+instead of failing the first run. There is no silent downgrade to an unisolated
+runtime.
 
-**The sidecar is not orchestrated, and this is why the flag defaults to off.**
-Turning `CONTAINER_EGRESS_ISOLATION=true` today produces correct argv for a
-topology nothing yet creates: no code creates the per-run `--internal` network,
-starts a dual-homed broker container on it, waits for the broker to be ready, or
-tears either down after the run. An Agent started that way would sit on a network
-with no route to anything, including the broker, and every model call would fail.
+## Orchestration
 
-Enabling it needs, in order:
+`network-isolation.ts` owns the per-run lifecycle, and the order is the design:
 
-1. A broker entrypoint (`egress-broker-cli.ts`) and a small image for it.
-2. Network create/teardown around each run, attached to the run's lifecycle so a
-   crashed run does not leak networks.
-3. A readiness check before the Agent starts, so a broken sidecar aborts the run
-   rather than letting it time out.
-4. Verification against a real engine.
+1. Clear any stale network and broker. The names derive from the container name
+   and so are deterministic, which means a crashed previous run would otherwise
+   make "already exists" the normal startup path.
+2. Create the `--internal` network. This is the control: the engine installs no
+   NAT and no gateway, so nothing attached to it has a route out.
+3. Start the broker on that network, itself contained — `--read-only`,
+   `--cap-drop ALL`, `no-new-privileges`, unprivileged user. It is what an
+   escaped Agent attacks next, so it gets the same treatment as the Agent.
+4. Connect the broker to an outbound network as well. It is now dual-homed: the
+   single object with a foot on both sides.
+5. **Wait for the broker to accept connections**, then start the Agent. An Agent
+   started against a broker that has not bound yet fails in a way that looks
+   like a model outage — the failure most likely to be misread as flakiness
+   rather than as containment being broken. If it never binds, the run is
+   refused rather than started with no route out.
 
-**Nothing here has been exercised against Docker or Podman.** No container engine
-was available in the environment where this was written. The broker's own logic
-is tested over real TCP on loopback; the container argv is asserted as strings.
-The composed topology is unverified, and it should not be described as working
-until someone has watched an Agent reach the model through the broker and watched
-a non-allowlisted destination fail from inside the container.
+Teardown runs in a `finally`, including on every throwing path, so a failed run
+does not leak a network the next setup would have to clear blind.
 
-**Until then the README limitation stands as written.** The base64 residual is
-not retired. The mechanism that retires it exists and is tested; the wiring that
-would put it in the path does not.
+Any failure during setup tears down what was already created and throws. A
+half-built topology would leave the Agent on an internal network with no broker,
+which hangs rather than errors.
+
+## What is still not proven
+
+**One engine, one platform.** Verified on Docker 29.5.2 on macOS. Podman is
+wired (`--userns keep-id` is already handled for the Agent container) but has
+not been exercised. Rootless Podman in particular treats `--internal` and
+inter-container DNS differently enough to deserve its own run before it is
+claimed.
+
+**The verification uses a stand-in endpoint.** `verify:egress` allowlists
+`example.com`, not a real Ark endpoint, because the check has to run without a
+model key. The allow/deny boundary is what it proves; that a real Codex run
+completes through the broker is a separate claim, and one this check does not
+make.
+
+**The broker sees TLS as opaque bytes.** It gates the destination, not the
+content. An allowlisted endpoint that is itself hostile, or an exfiltration
+channel folded into legitimate traffic to that endpoint, is out of scope — the
+command policy and the evidence trail are what address those.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `CONTAINER_READ_ONLY_ROOT` | `true` | `--read-only` root plus a noexec `/tmp` tmpfs. |
-| `CONTAINER_EGRESS_ISOLATION` | `false` | Per-run isolated network and broker proxy variables. Needs a broker; see above. |
-| `CONTAINER_EGRESS_BROKER_HOST` | `launchpad-egress-broker` | Hostname the Agent's proxy variables point at. |
+| `CONTAINER_EGRESS_ISOLATION` | `true` | Per-run isolated network and broker sidecar. |
+| `CONTAINER_EGRESS_BROKER_IMAGE` | `volc-egress-broker:local` | Built by `npm run build:broker`. |
+| `CONTAINER_EGRESS_BROKER_PORT` | `8080` | Port the broker listens on inside the network. |
+| `CONTAINER_EGRESS_OUTBOUND_NETWORK` | `bridge` | The broker's second home. The Agent is never attached to it. |
+| `CONTAINER_EGRESS_READY_TIMEOUT_MS` | `15000` | How long to wait for the broker before refusing the run. |
 
 The broker allowlists exactly one endpoint, derived from `ARK_BASE_URL` via
 `parseEgressEndpoint()`. One endpoint is the whole design: an allowlist with a

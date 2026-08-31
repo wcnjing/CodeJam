@@ -35,16 +35,20 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((value) => value === "true"),
-  // Defaults OFF, unlike the read-only root. The argv this produces is tested,
-  // but the sidecar that has to exist on the isolated network is not yet
-  // orchestrated here, so turning it on without starting a broker leaves the
-  // Agent on a network with no route to anything. Flip it on together with a
-  // broker, not before. See docs/EGRESS_CONTAINMENT.md.
+  // On by default: the container runtime is already opt-in, so anyone reaching
+  // this path wants the hardened one. It needs the broker image — build it with
+  // `npm run build:broker` — and fails loudly rather than quietly downgrading if
+  // it is missing. Verified end to end by `npm run verify:egress`.
   CONTAINER_EGRESS_ISOLATION: z
     .enum(["true", "false"])
-    .default("false")
+    .default("true")
     .transform((value) => value === "true"),
-  CONTAINER_EGRESS_BROKER_HOST: z.string().min(1).default("launchpad-egress-broker"),
+  CONTAINER_EGRESS_BROKER_IMAGE: z.string().min(1).default("volc-egress-broker:local"),
+  CONTAINER_EGRESS_BROKER_PORT: z.coerce.number().int().min(1).max(65535).default(8080),
+  // The network the broker gets its second, outbound-capable home on. The Agent
+  // is never attached to this one.
+  CONTAINER_EGRESS_OUTBOUND_NETWORK: z.string().min(1).default("bridge"),
+  CONTAINER_EGRESS_READY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   RUNTIME_INSTANCE_ID: z
     .string()
     .trim()
@@ -125,7 +129,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
     containerReadOnlyRoot: env.CONTAINER_READ_ONLY_ROOT,
     containerEgressIsolation: env.CONTAINER_EGRESS_ISOLATION,
-    containerEgressBrokerHost: env.CONTAINER_EGRESS_BROKER_HOST,
+    containerEgressBrokerImage: env.CONTAINER_EGRESS_BROKER_IMAGE,
+    containerEgressBrokerPort: env.CONTAINER_EGRESS_BROKER_PORT,
+    containerEgressOutboundNetwork: env.CONTAINER_EGRESS_OUTBOUND_NETWORK,
+    containerEgressReadyTimeoutMs: env.CONTAINER_EGRESS_READY_TIMEOUT_MS,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
     principals,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
