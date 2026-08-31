@@ -798,6 +798,12 @@ executable name", and `PWNED` never appears in the output.
 
 #### Finding: generation found a bypass that hand-authoring did not
 
+The figures in this section are the generated bank's own CI run —
+[run 33254598308](https://github.com/wcnjing/CodeJam/actions/runs/33254598308) —
+not the injection-benchmark run cited in §2.3. Both are cited because they are
+two different measurements, and attributing this section to the run above it is
+what the figure checker was written to catch.
+
 `npm run bench:generate` builds a cross product — 7 host forms × 16 egress tools
 × 4 secret channels × 10 shell wrappers = **3,430 variants**, evaluated in ~25 ms.
 Nobody chose the combinations, which is the whole point: the labeled corpus and
@@ -855,7 +861,9 @@ do not split it, and unwraps `bash -lc "…"` first — without that the whole
 payload sits inside one quoted string and the wrapper's leading `echo` still
 shields it. That last case was caught by the corpus, not by hand: every corpus
 entry is shell-wrapped, and the first version of the fix regressed core
+<!-- figures: local reason="93.8% is the core-detection rate of a rejected first version of this fix, measured locally and never committed. It is in no CI run by construction: nothing was ever pushed in that state. The same number is registered for README.md, which describes the same rejected attempt." -->
 detection to 93.8% until it handled the wrapper.
+<!-- /figures -->
 
 Result: bank 3,416/3,430 → **3,430/3,430**, `and-chain` stratum 95.92% → 100%,
 `perl` 95.00% → 100%. Corpus: core detection 100%, blind-set recall 100%, escape
@@ -876,6 +884,9 @@ proves the **container actually dies** — a regex matching is not a process bei
 killed, and only the second tier can support the defence-in-depth claim.
 
 #### Finding: the local-process runner cannot start Codex on Windows at all
+
+Figures from here on return to
+[run 33369414249](https://github.com/wcnjing/CodeJam/actions/runs/33369414249).
 
 Found while validating the pre-demo smoke check (task 2.4), and **separate from
 the shebang/`EFTYPE` issue in §0** — this one affects the product, not the tests.

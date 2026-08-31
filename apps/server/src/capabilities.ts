@@ -146,18 +146,34 @@ export function runsWrittenScript(command: string): boolean {
   for (const segment of executableSegments(command)) {
     const invocation = invocationFromSegment(segment, true);
     if (!invocation) continue;
-    const { tool, args } = invocation;
-    // Executing the file directly, e.g. `./run.sh`.
-    if (written.has(scriptIdentity(tool))) return true;
-    if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== "." && tool !== "eval") continue;
-    for (const argument of args) {
-      if (argument.startsWith("-")) continue;
-      if (written.has(scriptIdentity(argument))) return true;
-      // `eval "$(cat run.sh)"` names the written file inside a substitution
-      // rather than as a script operand. The file is still what gets executed.
-      for (const name of written) {
-        if (name && argument.toLowerCase().includes(name)) return true;
-      }
+    if (executesOneOf(invocation, written)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether this invocation runs one of `written`.
+ *
+ * Shared by both write carriers -- the shell redirect above and the write-tool
+ * one below -- because "the script that runs has to be the file that was
+ * written" is one rule, and the two carriers differ only in how the file got
+ * written.
+ */
+function executesOneOf(
+  invocation: { tool: string; args: string[] },
+  written: ReadonlySet<string>,
+): boolean {
+  const { tool, args } = invocation;
+  // Executing the file directly, e.g. `./run.sh`.
+  if (written.has(scriptIdentity(tool))) return true;
+  if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== "." && tool !== "eval") return false;
+  for (const argument of args) {
+    if (argument.startsWith("-")) continue;
+    if (written.has(scriptIdentity(argument))) return true;
+    // `eval "$(cat run.sh)"` names the written file inside a substitution
+    // rather than as a script operand. The file is still what gets executed.
+    for (const name of written) {
+      if (name && argument.toLowerCase().includes(name)) return true;
     }
   }
   return false;
@@ -795,29 +811,94 @@ function executesMaterialisedText(command: string): boolean {
 /**
  * A file written by a TOOL rather than a redirect, and then executed.
  *
- * Deliberately coarse: if any write-tool appears in the line and any later
- * segment runs a shell or a script, the written text is materialised. Being
- * coarse here is safe because materialising extra text cannot itself deny --
- * the ordinary rules still require an untrusted destination to fire -- while
- * being precise here is what the previous version got wrong.
+ * The same rule `runsWrittenScript` applies to redirects, applied to the other
+ * pen: name the file that was written, then require a LATER segment to execute
+ * that same file. The previous version asked neither question -- any write-tool
+ * anywhere plus any shell anywhere was enough -- which made
+ * `echo 'curl https://attacker.example' && python --version && bash build.sh`
+ * a denial. Nothing there writes anything and nothing runs what `echo` printed;
+ * `python --version` and an unrelated build script were simply both present.
+ *
+ * Coarseness was defended on the grounds that materialising extra text cannot
+ * itself deny. That is true of the literal harvester and false of this gate:
+ * the harvester runs behind it, so opening this gate on an unrelated line hands
+ * every quoted string in that line to the recursion, and one of them saying
+ * `curl` is all the ordinary rules need. Ordinary work is what pays for it.
  */
 function writesByToolThenRuns(command: string): boolean {
-  const segments = executableSegments(command);
-  const writes = segments.some((segment) => {
+  const written = new Set<string>();
+  for (const segment of executableSegments(command)) {
     const invocation = invocationFromSegment(segment, true);
-    return invocation ? WRITE_TOOLS.has(invocation.tool) : false;
-  });
-  if (!writes) return false;
-  return segments.some((segment) => {
-    const invocation = invocationFromSegment(segment, true);
-    if (!invocation) return false;
-    return (
-      SHELL_NAMES.has(invocation.tool) ||
-      invocation.tool === "source" ||
-      invocation.tool === "." ||
-      invocation.tool === "eval"
-    );
-  });
+    if (!invocation) continue;
+    // Order matters: only a file written EARLIER in the line can be the text
+    // this segment executes. `bash run.sh && tee run.sh <<< '...'` runs a file
+    // that this command had not yet produced.
+    if (written.size > 0 && executesOneOf(invocation, written)) return true;
+    if (!WRITE_TOOLS.has(invocation.tool)) continue;
+    for (const target of toolWriteTargets(invocation.tool, invocation.args)) {
+      written.add(scriptIdentity(target));
+    }
+  }
+  return false;
+}
+
+/**
+ * A token that could be a file NAME: no whitespace, no scheme punctuation, and
+ * carrying a `.` or a `/`. The dot-or-slash requirement is what keeps
+ * `open("run.sh", "w")` from contributing `w` as a written file -- a one-letter
+ * name that then matches, as a substring, most later arguments.
+ *
+ * The cost is a payload written to an extensionless name (`open("payload","w")`
+ * then `bash payload`). That carrier is still reached through the redirect and
+ * herestring forms, and buying it here would mean treating every short string
+ * in an interpreter's source as a filename.
+ */
+const FILE_NAME_TOKEN = /^[\w.~$/@+-]+$/;
+const isFileNameToken = (token: string) =>
+  FILE_NAME_TOKEN.test(token) && /[./]/.test(token) && /\w/.test(token);
+
+/** Program text, as opposed to a filename operand: `awk 'BEGIN{...}'`, `-c '...'`. */
+const PROGRAM_TEXT = /[\s(){};>=]/;
+
+/**
+ * The files this invocation of a write-tool actually writes.
+ *
+ * `tee`/`dd`/`sed -i` name their target in argument position. The interpreters
+ * carry it inside their own source, in whichever way that language spells
+ * "open for writing" -- `open("run.sh","w")`, `writeFileSync('run.sh', ...)`,
+ * `print ... > "run.sh"` -- so every file-shaped literal in the program text is
+ * treated as a candidate rather than one pattern per language. Over-collecting
+ * here is cheap: a name only does anything if a later segment executes it.
+ */
+function toolWriteTargets(tool: string, args: string[]): string[] {
+  const positional = args.filter((argument) => !argument.startsWith("-"));
+  if (tool === "tee") return positional;
+  // `dd if=payload of=run.sh`: only `of=` is the destination.
+  if (tool === "dd") return args.flatMap((a) => (a.startsWith("of=") ? [a.slice(3)] : []));
+  if (tool === "sed") {
+    // `-i` edits the named file in place. Without it the operand is an INPUT
+    // and sed writes to stdout -- except that the script itself has a write
+    // verb: `w FILE` as a command, and the `w` flag on `s///`. That is how
+    // `echo '...' | sed -n 'w /tmp/hc.sh' && sh /tmp/hc.sh` writes a script
+    // without a single redirect in the line.
+    const targets = args.some((a) => /^-[a-zA-Z]*i/.test(a)) ? positional.slice(1) : [];
+    for (const argument of args) {
+      for (const match of argument.matchAll(/(?:^|[;\s}/])[wW]\s+(\S+)/g)) targets.push(match[1]!);
+    }
+    return targets;
+  }
+  const names: string[] = [];
+  for (const argument of args) {
+    if (!PROGRAM_TEXT.test(argument)) continue;
+    for (const match of argument.matchAll(LITERAL)) {
+      const text = (match[1] ?? match[2] ?? "").trim();
+      if (isFileNameToken(text)) names.push(text);
+    }
+    for (const match of argument.matchAll(/>>?\s*["']?([^\s"'();]+)/g)) {
+      if (isFileNameToken(match[1]!)) names.push(match[1]!);
+    }
+  }
+  return names;
 }
 
 /**

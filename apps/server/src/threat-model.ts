@@ -332,8 +332,8 @@ export const THREAT_REGISTER: Threat[] = [
       {
         id: "CTRL-RETENTION-BOUND",
         description:
-          "Resolved approvals are pruned once older than AUDIT_RETENTION_DAYS; policy events are dropped outside the window when the log is compacted at load. A still-pending approval is exempt regardless of age — it's live state, not history",
-        where: "store.ts JsonStore.prune and PolicyEventLog.load",
+          "Resolved approvals are pruned once older than AUDIT_RETENTION_DAYS; policy events past the window are dropped on every append and every read, and the log file is rewritten on a rate-limited schedule so the write path stays O(1) in events stored. Enforcing this only at load bounded retention by uptime rather than by age — a server that never restarts kept serving expired records indefinitely. A still-pending approval is exempt regardless of age — it's live state, not history",
+        where: "store.ts JsonStore.prune and PolicyEventLog.enforceRetention",
       },
       {
         id: "CTRL-APPEND-ONLY-LOG",

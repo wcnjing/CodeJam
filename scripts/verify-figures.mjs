@@ -24,14 +24,27 @@
  *   EXEMPT      the number is deliberately not from that run, and the reason is
  *               recorded in `docs/figures-exempt.json`. Historical
  *               "before" columns live here. So does anything structural.
+ *   UNCITED     the number cites no run anywhere in its document, so there is
+ *               nothing to check it against. Ratcheted separately, because a
+ *               shared total lets a fixed misattribution make room for a
+ *               fabricated uncited number with the gate still green.
+ *   UNVERIFIED  the cited run's log could not be READ -- `gh` missing, token
+ *               expired, rate limited, wrong repository. Nothing may be
+ *               concluded, so nothing is: not ratcheted, always a failure.
  *   UNEXPLAINED everything else. This is the failure state, and it does not
  *               distinguish "stale" from "fabricated" on purpose: from the
  *               document's point of view they are the same defect, and the
  *               author is the only one who can say which it was.
  *
- * The third state is the point. A number that cannot be found in its own cited
- * run must be explained by a human, in a file, in words. It cannot be resolved
- * by being plausible.
+ * UNEXPLAINED is the point. A number that cannot be found in its own cited run
+ * must be explained by a human, in a file, in words. It cannot be resolved by
+ * being plausible.
+ *
+ * UNVERIFIED exists because the reverse failure is worse than a wrong figure. A
+ * check that cannot reach its evidence and reports success has not been lenient
+ * -- it has lied about having looked. So an unreadable log fails the gate
+ * outright, and is never cached: caching one turns a transient outage into a
+ * permanent pass on every later run.
  *
  * PROVENANCE LABELS are checked separately, and for a different failure. The
  * label "measured locally, not from CI - refresh once the harness lands" was
@@ -72,26 +85,73 @@ function loadExemptions() {
 
 /* ── run logs ────────────────────────────────────────────────────────────── */
 
+/**
+ * Runs whose logs could not be read for an OPERATIONAL reason: `gh` missing,
+ * unauthenticated, rate-limited, pointed at the wrong repository, or the API
+ * simply unreachable. Kept apart from a verifiably expired log because the two
+ * mean opposite things. An expired log is a fact about the world; a failed
+ * fetch is a fact about this machine, and treating it as evidence is how a gate
+ * passes without checking anything.
+ */
+const operationalFailures = new Map();
+
+/**
+ * Read one run's log, distinguishing three outcomes rather than two.
+ *
+ *   ok      the log was fetched (and cached; logs are immutable once written).
+ *   gone    the RUN is reachable but its log is not — expired or deleted.
+ *           A verified fact, and not a document defect: figures citing it are
+ *           exempt.
+ *   error   anything else. The fetch failed for a reason that says nothing
+ *           about the run, so nothing may be concluded from it. Fails the gate.
+ *
+ * The old code collapsed `gone` and `error` into "empty log", and an empty log
+ * was read as "exempt". With the ratchet at zero that made the whole evidence
+ * gate pass whenever `gh` was missing, the token had expired, or the API was
+ * rate-limiting — the check reporting success precisely when it had checked
+ * nothing. Failed fetches are also no longer cached: caching one turns a
+ * transient outage into a permanent lie for every later run on that machine.
+ */
 function runLog(runId) {
   mkdirSync(CACHE, { recursive: true });
   const cached = path.join(CACHE, `${runId}.log`);
-  if (existsSync(cached)) return readFileSync(cached, "utf8");
+  if (existsSync(cached)) return { text: readFileSync(cached, "utf8"), status: "ok" };
   process.stderr.write(`  fetching run ${runId} ...\n`);
-  let text = "";
   try {
-    text = execFileSync("gh", ["run", "view", runId, "--log"], {
+    const text = execFileSync("gh", ["run", "view", runId, "--log"], {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
       windowsHide: true,
     });
+    writeFileSync(cached, text, "utf8");
+    return { text, status: "ok" };
   } catch (error) {
-    // A run whose logs have expired or been deleted is not a document defect.
-    // Say so distinctly rather than reporting every figure in it as unexplained.
-    text = "";
-    process.stderr.write(`  WARNING: could not fetch run ${runId}\n`);
+    const detail = String(error?.stderr || error?.message || error).trim().split("\n")[0];
+    // The only way to tell "this run's log has expired" from "I cannot talk to
+    // GitHub" is to ask about the run itself. If the run's metadata comes back,
+    // the API, the credential and the repository are all fine and it is the log
+    // that is gone. If it does not, nothing here is trustworthy.
+    if (runExists(runId)) {
+      process.stderr.write(`  run ${runId}: log no longer available (run itself is reachable)\n`);
+      return { text: "", status: "gone" };
+    }
+    process.stderr.write(`  ERROR: could not read run ${runId} - ${detail}\n`);
+    operationalFailures.set(runId, detail);
+    return { text: "", status: "error" };
   }
-  writeFileSync(cached, text, "utf8");
-  return text;
+}
+
+function runExists(runId) {
+  try {
+    execFileSync("gh", ["run", "view", runId, "--json", "databaseId"], {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Every number that appears anywhere in a run's log. */
@@ -299,25 +359,42 @@ function candidateRuns() {
       { encoding: "utf8", windowsHide: true },
     );
     for (const r of JSON.parse(out)) if (r.conclusion === "success") runs.add(String(r.databaseId));
-  } catch {}
+  } catch (error) {
+    // Swallowing this used to look harmless -- the candidate list is only used
+    // to tell "misattributed" from "never measured". But it fails for exactly
+    // the reasons a log fetch fails, so a silent catch here is the same gate
+    // passing blind, one step earlier.
+    const detail = String(error?.stderr || error?.message || error).trim().split("\n")[0];
+    process.stderr.write(`  ERROR: could not list runs - ${detail}\n`);
+    operationalFailures.set("gh run list", detail);
+  }
   return [...runs];
 }
 
 const CANDIDATES = process.argv.includes("--no-search") ? [] : candidateRuns();
 
+/** The numbers in a run's log, read at most once per process. */
+function runNumbers(runId) {
+  if (!logCache.has(runId)) {
+    const log = runLog(runId);
+    logCache.set(runId, { nums: numbersIn(log.text), status: log.status });
+  }
+  return logCache.get(runId);
+}
+
 /** Which other run, if any, actually contains this figure. */
 function foundElsewhere(fig, citedRun) {
   for (const runId of CANDIDATES) {
     if (runId === citedRun) continue;
-    if (!logCache.has(runId)) logCache.set(runId, numbersIn(runLog(runId)));
-    const nums = logCache.get(runId);
-    if (nums.size === 0) continue;
+    const { nums, status } = runNumbers(runId);
+    if (status !== "ok" || nums.size === 0) continue;
     if (matches(fig, nums)) return runId;
   }
   return null;
 }
 
 let unexplained = 0;
+let unverified = 0;
 let matched = 0;
 let exempt = 0;
 let uncited = 0;
@@ -337,9 +414,18 @@ for (const relPath of DOCS) {
     const registered = exemptFor(exemptions, relPath, fig);
     if (registered) { exempt += 1; continue; }
     if (!fig.run) { uncited += 1; problems.push({ ...fig, why: "no run cited anywhere in this document" }); continue; }
-    if (!logCache.has(fig.run)) logCache.set(fig.run, numbersIn(runLog(fig.run)));
-    const nums = logCache.get(fig.run);
-    if (nums.size === 0) { exempt += 1; continue; }
+    const { nums, status } = runNumbers(fig.run);
+    // Fail closed. An unreadable log is not evidence of anything, so a figure
+    // citing one is neither matched nor exempt -- it is unverified, and the
+    // gate says so rather than waving it through.
+    if (status === "error") {
+      unverified += 1;
+      problems.push({ ...fig, why: `UNVERIFIED - run ${fig.run} could not be read (see errors above)` });
+      continue;
+    }
+    // A reachable run whose log has expired is a fact about GitHub's retention,
+    // not a defect in the document.
+    if (status === "gone" || nums.size === 0) { exempt += 1; continue; }
     if (matches(fig, nums)) { matched += 1; continue; }
     unexplained += 1;
     const elsewhere = foundElsewhere(fig, fig.run);
@@ -375,7 +461,7 @@ for (const l of labels) {
 
 console.log("");
 console.log("=".repeat(78));
-console.log(`  matched ${matched}   declared-local ${declaredLocal}   exempt ${exempt}   unexplained ${unexplained} (of which misattributed ${misattributed})   uncited ${uncited}   expired-labels ${expired}`);
+console.log(`  matched ${matched}   declared-local ${declaredLocal}   exempt ${exempt}   unexplained ${unexplained} (of which misattributed ${misattributed})   uncited ${uncited}   unverified ${unverified}   expired-labels ${expired}`);
 console.log("");
 console.log("  UNEXPLAINED does not distinguish stale from fabricated, deliberately.");
 console.log("  From the document's side they are one defect, and only the author knows");
@@ -394,20 +480,64 @@ console.log("");
  * condition has been met is actively misleading every reader from that moment
  * on, which is a different and more urgent defect than an old citation.
  */
-const ratchet = exemptions.unexplainedRatchet ?? 0;
 let failed = false;
-if (unexplained > ratchet) {
-  console.log(`FAIL: ${unexplained} unexplained figures against a ratchet of ${ratchet}.`);
-  console.log("Either a new figure cannot be traced to its cited run, or an old one was");
-  console.log("fixed and the ratchet was not lowered. Both want a human. Do not raise it");
-  console.log("to go green.");
+
+/**
+ * One ratchet per defect, never a shared total. A figure that cannot be traced
+ * to its cited run and a figure that cites nothing at all are different
+ * defects, and a single number lets one absorb the other: fix an old
+ * misattribution and a newly fabricated uncited figure slots into the space it
+ * left, with the gate still green.
+ */
+function ratchet(name, count, key, describe) {
+  const limit = exemptions[key] ?? 0;
+  if (count > limit) {
+    console.log(`FAIL: ${count} ${name} against a ratchet of ${limit}.`);
+    for (const line of describe) console.log(line);
+    console.log("Do not raise the ratchet to go green.");
+    failed = true;
+  } else if (count < limit) {
+    console.log(`Ratchet is stale: ${count} ${name} against a ratchet of ${limit}.`);
+    console.log(`Lower ${key} to ${count} in docs/figures-exempt.json.`);
+    failed = true;
+  } else {
+    console.log(`Ratchet held: ${count} ${name}, all pre-existing, ratchet ${limit}.`);
+  }
+}
+
+ratchet("unexplained figures", unexplained, "unexplainedRatchet", [
+  "Either a new figure cannot be traced to its cited run, or an old one was",
+  "fixed and the ratchet was not lowered. Both want a human.",
+]);
+
+/**
+ * Uncited figures are ratcheted too, and that is the whole point of counting
+ * them. They used to be reported and then ignored by the failure condition,
+ * which left the gate with a door in it: a fabricated number could pass simply
+ * by citing nothing, and citing nothing is the easier thing to do. Resolve one
+ * by citing the run it came from, declaring the block local, or registering it
+ * in the exemption file -- the same three exits every other figure has.
+ */
+ratchet("uncited figures", uncited, "uncitedRatchet", [
+  "A number with no cited run cannot be checked against anything. Cite the run",
+  "it came from, wrap the block in a `figures: local` marker with a reason, or",
+  "register it in docs/figures-exempt.json.",
+]);
+
+/**
+ * NOT ratcheted, on purpose. Every count above is a claim about a document;
+ * this one is a claim about whether the check ran at all, and a check that
+ * could not read its evidence has no business reporting a verdict on it.
+ */
+if (operationalFailures.size > 0) {
+  console.log("");
+  console.log(`FAIL: ${operationalFailures.size} run log(s) could not be read at all.`);
+  for (const [runId, detail] of operationalFailures) console.log(`  ${runId}: ${detail}`);
+  console.log("This is an operational failure, not a document defect: a missing `gh`, an");
+  console.log("expired token, a rate limit or the wrong repository. Figures citing those");
+  console.log(`runs are counted unverified (${unverified}), never exempt, because an`);
+  console.log("unreadable log is not evidence. Fix the environment and re-run.");
   failed = true;
-} else if (unexplained < ratchet) {
-  console.log(`Ratchet is stale: ${unexplained} unexplained against a ratchet of ${ratchet}.`);
-  console.log(`Lower unexplainedRatchet to ${unexplained} in docs/figures-exempt.json.`);
-  failed = true;
-} else {
-  console.log(`Ratchet held: ${unexplained} unexplained, all pre-existing, ratchet ${ratchet}.`);
 }
 if (expired > 0) {
   console.log(`FAIL: ${expired} provenance label(s) have met their retirement condition.`);

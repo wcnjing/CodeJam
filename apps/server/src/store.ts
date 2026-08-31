@@ -83,6 +83,18 @@ function migrate(parsed: StoredDatabase): { database: Database; migrated: boolea
 }
 
 /**
+ * The shortest interval between two rewrites of the log file.
+ *
+ * Expired events leave memory the moment they expire, so nothing past retention
+ * is ever readable. Reclaiming the DISK costs a full rewrite, which is O(events
+ * stored); doing one per expiry would put back exactly the linear term this
+ * class removed. Rate-limiting by wall clock rather than by a count is what
+ * keeps the amortised per-append cost flat regardless of how many events exist:
+ * a burst of a million appends still pays for at most one rewrite a minute.
+ */
+const COMPACTION_INTERVAL_MS = 60_000;
+
+/**
  * The audit log, appended to rather than rewritten (TM-OPS-001).
  *
  * Recording one policy decision used to cost O(events already stored): every
@@ -103,15 +115,33 @@ function migrate(parsed: StoredDatabase): { database: Database; migrated: boolea
  * accompanies, so a crash between them leaves a record whose state update never
  * landed, and never the reverse.
  *
- * Retention still applies, by compaction at load rather than per write. Age is a
- * property of a record; it does not change because somebody wrote another one.
+ * Retention applies continuously, not only at load. Age is a property of a
+ * record -- it does not change because somebody wrote another one -- but that
+ * argument only justifies not RE-EVALUATING every stored event on every write.
+ * It does not justify waiting for a restart: a server that runs for months
+ * would otherwise serve, and keep, records long past their retention window.
+ * So expiry is applied on every append and every read, and the FILE is rewritten
+ * on a bounded schedule (see `enforceRetention`), which keeps the write path
+ * O(1) in the number of events already stored -- the property this class exists
+ * to provide.
  */
 class PolicyEventLog {
   private events: PolicyDecision[] = [];
+  private lastCompactedAt = 0;
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly retentionMs: number,
+  ) {}
 
-  async load(retentionDays: number, adopted: PolicyDecision[] = []): Promise<void> {
+  /**
+   * `adopted` carries events lifted out of a pre-v3 database blob. Adoption is
+   * idempotent BY EVENT ID: the migration writes the events here before the
+   * database that carried them is rewritten without them, so a crash between
+   * those two steps leaves a store that will offer the same events again on the
+   * next start. Re-adopting them must be a no-op, not a duplicated audit trail.
+   */
+  async load(adopted: PolicyDecision[] = []): Promise<void> {
     const onDisk: PolicyDecision[] = [];
     try {
       const raw = await readFile(this.filePath, "utf8");
@@ -129,24 +159,42 @@ class PolicyEventLog {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-    this.events = [...onDisk, ...adopted].filter(
-      (event) => new Date(event.decidedAt).getTime() >= cutoff,
-    );
-    if (this.events.length !== onDisk.length || adopted.length > 0) await this.compact();
+    const cutoff = Date.now() - this.retentionMs;
+    const seen = new Set<string>();
+    const kept: PolicyDecision[] = [];
+    for (const event of [...onDisk, ...adopted]) {
+      if (new Date(event.decidedAt).getTime() < cutoff) continue;
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      kept.push(event);
+    }
+    // Adopted events predate everything appended since, so the merged sequence
+    // is not necessarily in time order. Sorting it once here is what lets the
+    // running server drop expirations as a PREFIX rather than rescanning the
+    // whole array -- an O(n log n) at startup buying O(1) amortised afterwards.
+    kept.sort((a, b) => new Date(a.decidedAt).getTime() - new Date(b.decidedAt).getTime());
+    this.events = kept;
+    if (kept.length !== onDisk.length || adopted.length > 0) await this.compact();
   }
 
-  /** O(1) in the number of events already stored. The whole point. */
+  /** O(1) amortised in the number of events already stored. The whole point. */
   async append(event: PolicyDecision): Promise<void> {
     this.events.push(event);
     await appendFile(this.filePath, JSON.stringify(event) + "\n", {
       encoding: "utf8",
       mode: 0o600,
     });
+    await this.enforceRetention();
   }
 
-  /** Events are immutable once written, so readers get a shallow copy. */
+  /**
+   * Events are immutable once written, so readers get a shallow copy -- of the
+   * events that are still within retention. Enforcing it here as well as on
+   * append is what makes the guarantee hold on an idle server: no append, no
+   * restart, and still nothing past the window is returned.
+   */
   all(): PolicyDecision[] {
+    this.dropExpired();
     return this.events.slice();
   }
 
@@ -157,6 +205,34 @@ class PolicyEventLog {
     if (this.events.length !== before) await this.compact();
   }
 
+  /**
+   * Drop everything past the retention window from memory.
+   *
+   * Events are held in time order (appends are chronological; `load` sorts the
+   * one case that is not), so the expired ones are a prefix and the scan stops
+   * at the first survivor. Each event is dropped exactly once over the life of
+   * the process, which is what makes this O(1) amortised per append rather than
+   * the O(events stored) rescan that per-write pruning used to cost.
+   */
+  private dropExpired(): number {
+    const cutoff = Date.now() - this.retentionMs;
+    let expired = 0;
+    while (
+      expired < this.events.length &&
+      new Date(this.events[expired]!.decidedAt).getTime() < cutoff
+    ) {
+      expired += 1;
+    }
+    if (expired > 0) this.events = this.events.slice(expired);
+    return expired;
+  }
+
+  private async enforceRetention(): Promise<void> {
+    if (this.dropExpired() === 0) return;
+    if (Date.now() - this.lastCompactedAt < COMPACTION_INTERVAL_MS) return;
+    await this.compact();
+  }
+
   private async compact(): Promise<void> {
     const temporaryPath = this.filePath + ".tmp";
     const body = this.events.map((event) => JSON.stringify(event)).join("\n");
@@ -165,6 +241,7 @@ class PolicyEventLog {
       mode: 0o600,
     });
     await rename(temporaryPath, this.filePath);
+    this.lastCompactedAt = Date.now();
   }
 }
 
@@ -177,34 +254,51 @@ export class JsonStore {
     private readonly filePath: string,
     private readonly retentionDays: number = 90,
   ) {
-    this.log = new PolicyEventLog(filePath.replace(/\.json$/, "") + ".policy-events.jsonl");
+    this.log = new PolicyEventLog(
+      filePath.replace(/\.json$/, "") + ".policy-events.jsonl",
+      retentionDays * 24 * 60 * 60 * 1000,
+    );
   }
 
   async initialize(): Promise<void> {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     let adopted: PolicyDecision[] = [];
+    let migrated = false;
     try {
       const raw = await readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as StoredDatabase;
       if (!Array.isArray(parsed.agents)) {
         throw new Error("Unsupported database format");
       }
-      const { database, migrated } = migrate(parsed);
+      const walked = migrate(parsed);
+      migrated = walked.migrated;
       // Lift any events the migration carried through into the log. Dropping
       // them would make an upgrade destroy the audit trail, which is a worse
       // bug than the performance defect this release fixes.
-      adopted = database.policyEvents ?? [];
-      this.data = { ...emptyDatabase(), ...database, policyEvents: [], version: CURRENT_VERSION };
-      // Write the upgrade back once, so the labelling survives a crash and the
-      // next start is not a second migration of the same records.
-      if (migrated) await this.persist();
+      adopted = walked.database.policyEvents ?? [];
+      this.data = {
+        ...emptyDatabase(),
+        ...walked.database,
+        policyEvents: [],
+        version: CURRENT_VERSION,
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;
       }
       await this.persist();
     }
-    await this.log.load(this.retentionDays, adopted);
+    // Adopt FIRST, then record the upgrade. The database is the only remaining
+    // copy of a pre-v3 record's policy events, so writing it back as v3 with an
+    // empty `policyEvents` before the log has them durably is a window in which
+    // a crash -- or an EACCES/ENOSPC on the JSONL -- destroys the audit trail
+    // outright, with nothing left for the next start to recover from. In this
+    // order the worst case is a v2 database whose events are already in the log,
+    // and re-adopting them is a no-op because `load` dedupes by event id.
+    await this.log.load(adopted);
+    // Write the upgrade back once, so the labelling survives a crash and the
+    // next start is not a second migration of the same records.
+    if (migrated) await this.persist();
   }
 
   snapshot(): Database {
@@ -234,9 +328,16 @@ export class JsonStore {
       const appended = next.policyEvents;
       next.policyEvents = [];
       this.prune(next);
+      // Audit first, and this ordering is the guarantee, not an implementation
+      // detail. Persisting the state before the evidence meant a failed append
+      // -- ENOSPC, EACCES, EROFS -- rejected the mutation while the state it
+      // describes was already durable, so a restart came back to a run or a
+      // message with no policy event beside it. In this order a failure at any
+      // point leaves at most an event whose state update never landed, which is
+      // the direction an audit trail is allowed to be wrong in.
+      for (const event of appended) await this.log.append(event);
       await this.persist(next);
       this.data = next;
-      for (const event of appended) await this.log.append(event);
     });
     this.queue = operation.catch(() => undefined);
     await operation;
