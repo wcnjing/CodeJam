@@ -85,6 +85,11 @@ export function ResolvedApprovalCard({ approval }: { approval: ApprovalRequest }
       <strong>
         Approval {approval.status}
         {approval.resolvedBy ? " by " + approval.resolvedBy : ""}
+        {approval.resolvedByAttribution === "self-asserted" && (
+          // Predates credential-derived approvers: this name was typed into the
+          // request, not proven. Saying so is the point of storing attribution.
+          <span className="policy-note"> (self-asserted, not authenticated)</span>
+        )}
       </strong>
       <span>
         {approval.status === "denied"

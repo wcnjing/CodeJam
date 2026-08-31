@@ -216,6 +216,7 @@ export class AgentService {
         }
         approval.status = "denied";
         approval.resolvedBy = principal.id;
+        approval.resolvedByAttribution = "credential";
         approval.decisionReason = trimmedReason;
         approval.resolvedAt = now();
         return structuredClone(approval);
@@ -266,6 +267,7 @@ export class AgentService {
       agent.updatedAt = timestamp;
       approval.status = "approved";
       approval.resolvedBy = principal.id;
+      approval.resolvedByAttribution = "credential";
       approval.decisionReason = trimmedReason;
       approval.resolvedAt = now();
       approval.continuationRunId = run.id;
@@ -563,6 +565,7 @@ export class AgentService {
               status: "pending",
               requestedAt: completedAt,
               resolvedBy: null,
+              resolvedByAttribution: null,
               decisionReason: null,
               resolvedAt: null,
               continuationRunId: null,

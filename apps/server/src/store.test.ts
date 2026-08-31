@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -129,6 +129,7 @@ describe("JsonStore", () => {
         status: "approved",
         requestedAt: twoDaysAgo,
         resolvedBy: "operator",
+        resolvedByAttribution: "credential",
         decisionReason: "known-good registry",
         resolvedAt: twoDaysAgo,
         continuationRunId: null,
@@ -136,5 +137,103 @@ describe("JsonStore", () => {
     });
 
     expect(store.snapshot().approvals).toEqual([]);
+  });
+});
+
+/** A resolved approval exactly as a pre-v2 release wrote it: no attribution. */
+const v1Approval = (over: Record<string, unknown> = {}) => ({
+  id: "ap-1",
+  agentId: "agent-1",
+  runId: "run-1",
+  prompt: "fetch it",
+  rule: "network-egress-denied",
+  command: "curl https://registry.npmjs.org/react",
+  detail: "non-allowlisted host",
+  hosts: ["registry.npmjs.org"],
+  status: "approved",
+  requestedAt: "2026-08-30T10:00:00.000Z",
+  resolvedBy: "operator",
+  decisionReason: "known-good registry",
+  resolvedAt: "2026-08-30T10:00:05.000Z",
+  continuationRunId: null,
+  ...over,
+});
+
+const v1File = (approvals: unknown[]) =>
+  JSON.stringify({
+    version: 1,
+    agents: [],
+    messages: [],
+    runs: [],
+    policyEvents: [],
+    approvals,
+  });
+
+async function storeOn(contents?: string) {
+  const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
+  temporaryDirectories.push(root);
+  const filePath = path.join(root, "db.json");
+  if (contents !== undefined) await writeFile(filePath, contents, "utf8");
+  const store = new JsonStore(filePath);
+  await store.initialize();
+  return { store, filePath };
+}
+
+describe("JsonStore schema migration", () => {
+  it("labels a v1 record's approver self-asserted rather than letting it pass as authenticated", async () => {
+    // Before v2 the approver was a free-text body field, so "operator" here was
+    // asserted by whoever held the shared token. Loading it unlabelled would
+    // make it indistinguishable from a credential-derived one.
+    const { store } = await storeOn(
+      v1File([
+        v1Approval(),
+        v1Approval({ id: "ap-2", status: "pending", resolvedBy: null, resolvedAt: null }),
+      ]),
+    );
+    const { approvals, version } = store.snapshot();
+    expect(version).toBe(2);
+    expect(approvals[0]!.resolvedByAttribution).toBe("self-asserted");
+    expect(approvals[0]!.resolvedBy).toBe("operator");
+    // Still pending, so there is no approver to attribute either way.
+    expect(approvals[1]!.resolvedByAttribution).toBeNull();
+  });
+
+  it("writes the upgrade back so it is not redone on every start", async () => {
+    const { filePath } = await storeOn(v1File([v1Approval()]));
+    const onDisk = JSON.parse(await readFile(filePath, "utf8"));
+    expect(onDisk.version).toBe(2);
+    expect(onDisk.approvals[0].resolvedByAttribution).toBe("self-asserted");
+
+    // Reopening must read it as v2 and change nothing.
+    const reopened = new JsonStore(filePath);
+    await reopened.initialize();
+    expect(reopened.snapshot().approvals[0]!.resolvedByAttribution).toBe("self-asserted");
+  });
+
+  it("leaves a v2 record's attribution alone", async () => {
+    const { store } = await storeOn(
+      JSON.stringify({
+        version: 2,
+        agents: [],
+        messages: [],
+        runs: [],
+        policyEvents: [],
+        approvals: [v1Approval({ resolvedBy: "alice", resolvedByAttribution: "credential" })],
+      }),
+    );
+    expect(store.snapshot().approvals[0]!.resolvedByAttribution).toBe("credential");
+  });
+
+  it("starts a fresh store at the current version", async () => {
+    const { store } = await storeOn();
+    expect(store.snapshot().version).toBe(2);
+  });
+
+  it("still refuses a version it cannot migrate", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
+    temporaryDirectories.push(root);
+    const filePath = path.join(root, "db.json");
+    await writeFile(filePath, JSON.stringify({ version: 3, agents: [], approvals: [] }), "utf8");
+    await expect(new JsonStore(filePath).initialize()).rejects.toThrow(/Unsupported/i);
   });
 });

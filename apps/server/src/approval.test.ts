@@ -114,9 +114,15 @@ describe("human approval gate", () => {
     await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
     expect(service.getRun(continuationRun!.id).output).toContain("registry.npmjs.org");
 
-    // The decision is recorded with the named approver and reason.
+    // The decision is recorded with the named approver and reason. The record
+    // also says for itself that the approver came from a credential, so it can
+    // never be read as equivalent to a self-asserted one migrated from v1.
     const resolved = service.getApproval(pending[0]!.id);
-    expect(resolved).toMatchObject({ status: "approved", resolvedBy: "ops-alice" });
+    expect(resolved).toMatchObject({
+      status: "approved",
+      resolvedBy: "ops-alice",
+      resolvedByAttribution: "credential",
+    });
     expect(resolved.decisionReason).toContain("trusted");
     expect(resolved.continuationRunId).toBe(continuationRun!.id);
   });
@@ -156,6 +162,7 @@ describe("human approval gate", () => {
     expect(service.getApproval(approval.id)).toMatchObject({
       status: "denied",
       resolvedBy: "ops-bob",
+      resolvedByAttribution: "credential",
     });
     // Held run stays held; no new run was created.
     expect(service.getRun(run.id).status).toBe("held");

@@ -198,7 +198,7 @@ export const THREAT_REGISTER: Threat[] = [
     ],
     residual: { likelihood: 2, impact: 3 },
     residualNote:
-      "Approver is now an authenticated principal derived from the credential and cannot be asserted by a client, but authentication is not authorization: every configured principal may approve any held run, including one its own request caused; the registry is static (no roles, no rotation, no revocation without a restart); and automation bias remains, so override rates should still be reviewed.",
+      "Approver is now an authenticated principal derived from the credential and cannot be asserted by a client, but authentication is not authorization: every configured principal may approve any held run, including one its own request caused; the registry is static (no roles, no rotation, no revocation without a restart); decisions recorded before this change keep the name the client asserted and are labelled self-asserted rather than presented as authenticated; and automation bias remains, so override rates should still be reviewed.",
     owner: "runtime-security",
     status: "mitigated",
     reviewTriggers: ["reviewable rule set changed", "identity provider added"],

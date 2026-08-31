@@ -94,8 +94,14 @@ export interface ApprovalRequest {
   hosts: string[];
   status: "pending" | "approved" | "denied";
   requestedAt: string;
-  /** Authenticated principal that resolved it. Never client-supplied. */
+  /** Whoever resolved it. Trustworthy only when the attribution says so. */
   resolvedBy: string | null;
+  /**
+   * Where `resolvedBy` came from. "credential" is derived from the request's
+   * credential and cannot be client-supplied; "self-asserted" marks a record
+   * migrated from the old free-text approver field.
+   */
+  resolvedByAttribution: "credential" | "self-asserted" | null;
   decisionReason: string | null;
   resolvedAt: string | null;
   continuationRunId: string | null;
