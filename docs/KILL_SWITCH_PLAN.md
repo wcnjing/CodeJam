@@ -12,6 +12,17 @@
 > than after. It also exposed that every real command is wrapped in
 > `/bin/bash -lc '...'`, which the rules did not match — see finding 8 in
 > `POLICY_EVALUATION.md`.
+>
+> **Superseded in one respect: this plan deferred network-layer egress control,
+> and it was subsequently built.** Where the text below says that control is
+> "deliberately deferred", read it as a record of what this plan chose, not as a
+> description of the current tree. Under `RUNTIME_PROVIDER=container` each run
+> now gets an `--internal` network with no outbound route and a per-run egress
+> broker with a narrow allowlist, and a human approval can add one host to that
+> allowlist for one continuation run. The current design is described once in the
+> README's [Current Security Model](../README.md#current-security-model), with the
+> network layer's mechanics in [EGRESS_CONTAINMENT.md](EGRESS_CONTAINMENT.md).
+> `RUNTIME_PROVIDER=local-process` still has no equivalent containment.
 
 ## Context
 
@@ -96,8 +107,9 @@ immediately upon detecting a violation, blocking continuation and retries,"
 **not** "zero bytes ever reach the destination" — the stronger claim is
 only accurate if `item.started` timing is confirmed. The alternative that
 would fully close this gap regardless of event timing is network-level
-egress control, deliberately deferred (see the alternatives note above) in
-favor of the portable, pure-application-layer approach.
+egress control, deferred *by this plan* (see the alternatives note above) in
+favor of the portable, pure-application-layer approach — and built afterwards,
+for the container runtime only. See the status note at the top.
 
 ### 2. New types (`apps/server/src/types.ts`)
 
@@ -203,8 +215,10 @@ no orphaned containers after a block (`docker ps` check). Run a safe task
 immediately after a blocked one to prove recovery. Write the README section
 naming Kill Switch as the selected track, the threat model, how to
 reproduce the demo, and explicit known limitations (detection is
-post-hoc-per-command, not pre-execution; no network-layer egress control —
-documented as residual risk, not silently omitted). Draw the one-page
+post-hoc-per-command, not pre-execution; and, as this plan scoped it, no
+network-layer egress control — documented as residual risk, not silently
+omitted. That last item is the one the status note above supersedes: the
+network layer exists now on the container runtime.) Draw the one-page
 architecture diagram (trust boundary at `AgentRunner`, policy engine
 intercepting the event stream, `Database.policyEvents` as the audit trail).
 Rehearse the 3-minute demo.

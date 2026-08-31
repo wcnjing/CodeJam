@@ -250,6 +250,14 @@ The closed figure is CI-verified on all three runners:
 [run 33369414249](https://github.com/wcnjing/CodeJam/actions/runs/33369414249)
 reports `2250/2250 = 100.00%` and `ratchet 0`.
 
+**Read that as a record of that round, not as the current figure.** The bank has
+since been widened again along the carrier axis and is no longer 2,250 variants;
+it found more of the same materialisation class, and the enforcement rate and
+ratchet moved with it. The current numbers, and what the residual now means given
+that network containment exists, are in the README's
+[Limitations](../README.md#limitations) — this document does not carry a second
+copy of them.
+
 The check this implies is unglamorous and has no automation: **periodically read
 the instrument's raw output rather than its summary.** Every other failure here
 is caught by a machine. This one is caught by looking.
@@ -1234,5 +1242,8 @@ for the other — do not merge them.
 - Writing or extending policy rules (Person 1).
 - Writing new attack cases or obfuscations for the corpus (Person 2).
 - Dashboard, approval UI, audit timeline, or recovery UX (Person 3).
-- Network-layer egress enforcement — deliberately deferred by the project, see
-  [docs/KILL_SWITCH_PLAN.md](KILL_SWITCH_PLAN.md).
+- Network-layer egress enforcement — out of scope for *this lane*. It was
+  deferred when this plan was written and has since been built for the container
+  runtime; see
+  [Current Security Model](../README.md#current-security-model) and
+  [docs/EGRESS_CONTAINMENT.md](EGRESS_CONTAINMENT.md).

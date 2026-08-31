@@ -1,6 +1,7 @@
 import { createConnection, createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  brokerAllowlist,
   createEgressBroker,
   isForbiddenAddress,
   parseEgressEndpoint,
@@ -41,7 +42,8 @@ function connect(port: number, request: string, thenSend?: string): Promise<stri
   });
 }
 
-const ALLOW = { host: "ark.example.invalid", port: 443 };
+/** The standing allowlist: the model endpoint and nothing else. */
+const ALLOW = [{ host: "ark.example.invalid", port: 443 }];
 
 describe("isForbiddenAddress", () => {
   it("blocks loopback, RFC1918, link-local and CGNAT", () => {
@@ -121,7 +123,69 @@ describe("parseEgressEndpoint", () => {
   });
 });
 
+describe("brokerAllowlist", () => {
+  it("keeps the Ark endpoint first and appends what a human approved", () => {
+    expect(
+      brokerAllowlist("https://ark.example.invalid/api/v3", "https://registry.npmjs.org"),
+    ).toEqual([
+      { host: "ark.example.invalid", port: 443 },
+      { host: "registry.npmjs.org", port: 443 },
+    ]);
+  });
+
+  it("refuses to run at all with no Ark endpoint", () => {
+    // A broker with no allowlist is not a broker; it is an open question about
+    // what it would permit. Refusing is the only failing-closed answer.
+    expect(() => brokerAllowlist("", "https://registry.npmjs.org")).toThrow(
+      /EGRESS_ALLOW_URL is required/,
+    );
+    expect(() => brokerAllowlist("not-a-url")).toThrow(/EGRESS_ALLOW_URL is not usable/);
+  });
+
+  it("refuses an approved entry it cannot parse, rather than dropping it", () => {
+    // Silently dropping gives the worst pairing there is: an approval the
+    // operator was told was honoured, an Agent that still cannot reach the
+    // host, and an absence as the only evidence.
+    expect(() =>
+      brokerAllowlist("https://ark.example.invalid", "https://registry.npmjs.org,ftp://x"),
+    ).toThrow(/EGRESS_APPROVED_URLS entry is not usable/);
+  });
+
+  it("ignores blank entries from a trailing comma", () => {
+    expect(brokerAllowlist("https://ark.example.invalid", "https://a.example, ,")).toHaveLength(2);
+  });
+});
+
 describe("egress broker", () => {
+  it("permits any entry on the allowlist, not only the first", async () => {
+    // The regression this pins: the allowlist used to be one endpoint, so an
+    // approved host was let through by policy and refused here.
+    const upstream = createServer((socket) => socket.end("ok"));
+    const upstreamPort = await listen(upstream);
+    const port = await listen(
+      createEgressBroker({
+        allow: brokerAllowlist("https://ark.example.invalid", "https://registry.npmjs.org"),
+        resolve: async () => ["93.184.216.34"],
+        dial: (_target, onReady) =>
+          createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
+      }),
+    );
+    expect(await connect(port, "CONNECT registry.npmjs.org:443 HTTP/1.1\r\n\r\n")).toContain(
+      "200 Connection Established",
+    );
+    expect(await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain(
+      "200 Connection Established",
+    );
+    expect(await connect(port, "CONNECT other.example:443 HTTP/1.1\r\n\r\n")).toContain("403");
+  });
+
+  it("refuses everything when the allowlist is empty", async () => {
+    // An empty list means "nothing", never "anything": the failing-closed
+    // reading of a caller that computed no endpoints.
+    const port = await listen(createEgressBroker({ allow: [], resolve: async () => ["8.8.8.8"] }));
+    expect(await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain("403");
+  });
+
   it("refuses a destination that is not the allowlisted one", async () => {
     const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
     const response = await connect(port, "CONNECT evil.example.invalid:443 HTTP/1.1\r\n\r\n");

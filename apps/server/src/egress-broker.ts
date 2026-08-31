@@ -9,8 +9,15 @@ import { isIP } from "node:net";
  * reach; anything it fails to recognise — a base64-encoded command, a binary it
  * did not model — reaches the internet anyway. This broker removes the network
  * instead of describing it: the Agent container is attached to a network with
- * no route out, and this process is its only edge. A destination that is not
- * the one configured endpoint has nowhere to go, encoded or not.
+ * no route out, and this process is its only edge. A destination that is not on
+ * the configured allowlist has nowhere to go, encoded or not.
+ *
+ * The allowlist is a LIST, not a single endpoint: the model endpoint the
+ * platform always needs, plus whatever a human approval added for this one run.
+ * Every entry is treated identically — an approved host is not a trusted host,
+ * it is merely a named one, so the post-DNS re-check below runs for it exactly
+ * as it does for the model endpoint. Approval buys a name on the list and
+ * nothing else.
  *
  * Fails closed everywhere: an unparseable request, a non-allowlisted target, a
  * DNS failure, or a resolved address in a private range all end the socket
@@ -160,8 +167,52 @@ export function parseEgressEndpoint(baseUrl: string): EgressEndpoint {
   return { host: url.hostname.toLowerCase(), port };
 }
 
+/**
+ * Builds the broker's allowlist from the two environment variables that feed
+ * it, and refuses anything it cannot express.
+ *
+ * The two sources stay separate all the way down — `EGRESS_ALLOW_URL` is the
+ * model endpoint the platform always needs, `EGRESS_APPROVED_URLS` is what a
+ * human granted for this one continuation run — so an operator inspecting a
+ * live broker can tell a standing allowance from a granted one.
+ *
+ * Every failure is a throw, never a skip. A grant that is silently dropped
+ * gives the worst possible pairing: an approval recorded as honoured and an
+ * Agent that still cannot reach the host, with an absence as the only evidence.
+ * The caller turns the throw into a non-zero exit, which fails the run closed.
+ */
+export function brokerAllowlist(allowUrl: string, approvedUrls = ""): EgressEndpoint[] {
+  const allow = allowUrl.trim();
+  if (!allow) {
+    throw new Error("EGRESS_ALLOW_URL is required: the broker refuses to run without an allowlist.");
+  }
+  let base: EgressEndpoint;
+  try {
+    base = parseEgressEndpoint(allow);
+  } catch (error) {
+    throw new Error("EGRESS_ALLOW_URL is not usable: " + (error as Error).message);
+  }
+
+  const endpoints = [base];
+  for (const entry of approvedUrls.split(",").map((item) => item.trim()).filter(Boolean)) {
+    try {
+      endpoints.push(parseEgressEndpoint(entry));
+    } catch (error) {
+      throw new Error(
+        "EGRESS_APPROVED_URLS entry is not usable: " + entry + ": " + (error as Error).message,
+      );
+    }
+  }
+  return endpoints;
+}
+
 export interface BrokerOptions {
-  allow: EgressEndpoint;
+  /**
+   * Every endpoint this broker may reach. Empty is legal and means "nothing":
+   * a caller that computed an empty allowlist gets a broker that refuses
+   * everything, which is the failing-closed reading of that mistake.
+   */
+  allow: EgressEndpoint[];
   /** Injectable for tests; defaults to real DNS. */
   resolve?: (hostname: string) => Promise<string[]>;
   /**
@@ -297,7 +348,12 @@ export function createEgressBroker(options: BrokerOptions): Server {
 
       // Allowlist first: an unknown name is never even resolved, so the
       // broker cannot be used as a DNS oracle for arbitrary hostnames.
-      if (target.host !== options.allow.host || target.port !== options.allow.port) {
+      // Host AND port both have to match one entry; an approved name does not
+      // open every port on that name.
+      const allowed = options.allow.some(
+        (entry) => entry.host === target.host && entry.port === target.port,
+      );
+      if (!allowed) {
         return deny(client, "403 Forbidden", "destination not allowlisted", label);
       }
 

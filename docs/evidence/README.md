@@ -33,9 +33,14 @@ reasoning about them.
 | A held Run is approved by a credential-derived principal and resumes | **proven** | `run-records.md`, approval record |
 | The Agent stays usable after containment | **proven** | run 6 wrote `hello.txt` |
 
-One thing an approval does **not** do is widen the network allowlist — see
-"What approval actually grants" below. That is the loop behaving as designed,
-and it is not what `README.md` used to say.
+**These records predate the approval fix.** At the time of this session an
+approval reached the command policy and stopped there, so the granted host was
+still refused by the broker — see "What approval actually grants" below. That
+behaviour is now closed: an approval adds the host to the continuation run's
+broker allowlist as well as its policy context, scoped to that one run
+([Current Security Model](../../README.md#current-security-model)). The session
+is kept unedited because an approval honoured at one layer and denied at another
+is the exact failure worth being able to recognise again.
 
 ## The bug this run found
 
@@ -98,15 +103,31 @@ own summary of run 5 is the interesting part:
 > attempts failed with `EAI_AGAIN` (DNS resolution).
 
 The approval released the *policy* hold. It did not widen the *network*
-allowlist, which the broker derives from `ARK_BASE_URL` alone: `EAI_AGAIN` is the
-internal network having no resolver for an outside name, and the `403` is the
-broker refusing a CONNECT to a destination that is not the model endpoint.
+allowlist, which at the time the broker derived from `ARK_BASE_URL` alone:
+`EAI_AGAIN` is the internal network having no resolver for an outside name, and
+the `403` is the broker refusing a CONNECT to a destination that was not the
+model endpoint.
 
-This is the two controls doing different jobs, and it is the stronger property —
-no decision made inside the application can talk the network layer into a route.
-It also means the demo script's "approve → the continuation reaches the
-registry" was only ever true with `CONTAINER_EGRESS_ISOLATION=false`. `README.md`
-now says so.
+**This was read as a feature, and it was a bug.** The reasoning recorded here —
+"the two controls doing different jobs", "no decision made inside the application
+can talk the network layer into a route" — describes something real, but it is
+not what was happening. `extraAllowedHosts` reached the policy context and never
+reached the broker, so a human approving a host got it honoured at one layer and
+denied at the other: the operator was told the grant was made, and the Agent
+behaved as though it was not. That is the worst of both readings, not a stronger
+property.
+
+**What is true now.** An approval adds the named host to *that continuation
+run's* broker allowlist, as `EGRESS_APPROVED_URLS` on the broker container the
+run creates, and it dies with that container. No standing allowlist is widened,
+no other agent sees it, and the next run of the same agent is held again. What an
+approval still cannot do is buy a route to a private address — the broker
+re-checks the resolved address for every allowlisted name, approved ones included
+— or reach anything beyond the named host and port. The demo script's "approve →
+the continuation reaches the registry" is true again under the default
+`CONTAINER_EGRESS_ISOLATION=true`. A re-recorded live session is the outstanding
+gap; see "What is still not proven" in
+[EGRESS_CONTAINMENT.md](../EGRESS_CONTAINMENT.md).
 
 ## The files
 

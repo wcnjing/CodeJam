@@ -222,6 +222,18 @@ prose:
 
 ---
 
+## The whole system on one page
+
+![Sentinel one-page architecture: six layers top to bottom - frontend, control plane, middleware, runtime, network enforcement, and data/evidence - with trust boundaries drawn between them and the allow, deny, hold, approve, continue and cleanup decisions marked where each occurs](architecture-one-page.png)
+
+Source: [architecture-one-page.mmd](architecture-one-page.mmd). Regenerate with
+`npm run diagram`; the `.png` is generated and must not be hand-edited. The two
+amber nodes are the two enforcement points, and they are in different bands on
+purpose — the command policy reads text and can be defeated by text it cannot
+read, the egress broker reads nothing and cannot be defeated by an encoding. The
+narrative version of the same thing is the README's
+[Current Security Model](../README.md#current-security-model).
+
 ## Extension seams
 
 These exist and have implementations today. Their contracts are written up in
@@ -234,7 +246,7 @@ These exist and have implementations today. Their contracts are written up in
 | Figure contract | Every published number traces to the run its text cites | `scripts/verify-figures.mjs`, gated in CI |
 | Ratchet contract | Named residual signatures; fails in **both** directions | `bench:generate`, `bench:injection`, `verify:figures` |
 
-### Not built
+### Track status
 
 Kept because they were the challenge's suggested tracks, and separated because
 listing aspiration beside working seams makes both harder to read.
@@ -243,7 +255,7 @@ listing aspiration beside working seams makes both harder to read.
 | --- | --- | --- |
 | Glass Box | `AgentRunner`, `AgentRun` | Not built — correlated execution events are recorded but not visualised as a trace. |
 | Bouncer | API routes, Agent ownership | Partial — identity landed (named principals, credential-derived approvers); per-Agent authorization did not. |
-| Kill Switch | Network layer | Not built — egress is governed by reading commands, not by network control. See Limitations in the README. |
+| Kill Switch | Network layer | **Built** — per-run `--internal` network with no outbound route plus a dual-homed egress broker with a narrow allowlist, under `RUNTIME_PROVIDER=container`. `network-isolation.ts`, `egress-broker.ts`. Not available on `RUNTIME_PROVIDER=local-process`. See [Current Security Model](../README.md#current-security-model). |
 
 ---
 
@@ -253,7 +265,8 @@ listing aspiration beside working seams makes both harder to read.
 | --- | --- | --- |
 | Browser / control plane | HTTP + principal credential | The UI never receives the Ark key. |
 | Control plane / Runtime | Process spawn, argv only | No shell on any path; a metacharacter-laden prompt arrives as one argument. |
-| Runtime / network | The Agent's own commands | The enforcement point. Text-based, and that ceiling is documented. |
+| Runtime / network | The Agent's own commands | Command policy: the text-based enforcement point, and that ceiling is documented. |
+| Runtime network / outside | TCP through the egress broker only | Container runtime: the run's network is `--internal`, so there is no route out except the broker, and the broker allows only the model endpoint plus hosts approved for that run. Local-process runtime: no such boundary exists. |
 | Runtime / host filesystem | Declared write roots | Per-runner, fail-closed on an empty list. |
 
 The container or ECS instance is the POC trust boundary. Ordinary containers are

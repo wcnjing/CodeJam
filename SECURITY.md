@@ -15,7 +15,7 @@ credentials, personal data, or exploit details in an issue.
 - No CSRF protection
 - No per-Agent container boundary in ECS mode
 - Ordinary local containers, not hardened multi-tenant sandboxes
-- Broad outbound network access
+- Outbound network access is default-deny under `RUNTIME_PROVIDER=container` (per-run internal network, egress broker, narrow allowlist) and **unrestricted** under `RUNTIME_PROVIDER=local-process`, which is a development-only path
 - Prompt-triggered command and file execution
 - Ark key available to the server and active Runtime container
 - Ark key stored in Terraform POC state

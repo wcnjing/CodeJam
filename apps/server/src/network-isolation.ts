@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
+import { parseEgressEndpoint } from "./egress-broker.js";
 import { agentBrokerName, agentNetworkName } from "./container-codex-runner.js";
 
 const execFileAsync = promisify(execFile);
@@ -44,14 +45,78 @@ export function buildNetworkRemoveArgs(network: string): string[] {
   return ["network", "rm", network];
 }
 
+/**
+ * Turns an approved host into a URL the broker can parse.
+ *
+ * The approval carries what the policy engine extracted from the command, which
+ * is a bare hostname or IP literal — `registry.npmjs.org`, not a URL. A host on
+ * its own gets 443, because the entry that produced it was an HTTPS
+ * destination; an entry that names its own port keeps it, so an approval for
+ * `example.com:8443` does not silently become an approval for 443.
+ *
+ * Bare IPv6 literals arrive unbracketed (the policy layer strips the brackets),
+ * and a URL needs them back or `2001:db8::1` parses as host `2001` port `db8`.
+ *
+ * Throws on anything it cannot turn into an endpoint. That is the same call the
+ * broker CLI makes about its own env: a grant we cannot express is a run that
+ * does not start, never a run that starts with the grant quietly missing.
+ */
+export function approvedHostUrl(entry: string): string {
+  const trimmed = entry.trim();
+  if (!trimmed) throw new Error("Approved host is empty");
+  // The comma is the list delimiter in EGRESS_APPROVED_URLS, and it is NOT a
+  // forbidden host code point for the URL parser: `https://a,b` parses happily
+  // with hostname "a,b". One entry containing a comma would therefore become
+  // two allowlist entries inside the broker — one grant silently buying two
+  // destinations. The policy layer's host extraction cannot produce a comma
+  // today, so this closes a latent widening rather than a live one, which is
+  // the only moment it is cheap to close.
+  if (trimmed.includes(",")) {
+    throw new Error("Approved host may not contain a comma: " + trimmed);
+  }
+  const withScheme = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : "https://" + (isBareIPv6(trimmed) ? "[" + trimmed + "]" : trimmed);
+  // Parse here rather than at the broker only: a malformed grant should fail
+  // the run's setup on the host, where the error is readable, rather than as a
+  // sidecar that exits 2 and presents as "the broker never became ready".
+  parseEgressEndpoint(withScheme);
+  return withScheme;
+}
+
+/** Unbracketed and containing at least two colons: a raw IPv6 literal, not host:port. */
+function isBareIPv6(value: string): boolean {
+  return !value.startsWith("[") && (value.match(/:/g) ?? []).length > 1;
+}
+
+/** Deduplicates while preserving order, so the broker env is stable per run. */
+export function buildApprovedUrls(hosts: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const host of hosts) {
+    const url = approvedHostUrl(host);
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
+}
+
 export function buildBrokerRunArgs(options: {
   broker: string;
   network: string;
   image: string;
   allowUrl: string;
+  /**
+   * Hosts a human approved for THIS run, as parseable URLs. Passed in its own
+   * variable rather than folded into allowUrl so the granted allowance stays
+   * visible as a grant in `inspect` output and in the broker's readiness log.
+   */
+  approvedUrls?: readonly string[];
   port: number;
   user: string;
 }): string[] {
+  const approved = options.approvedUrls ?? [];
   return [
     "run",
     "--detach",
@@ -75,6 +140,9 @@ export function buildBrokerRunArgs(options: {
     options.user,
     "--env",
     "EGRESS_ALLOW_URL=" + options.allowUrl,
+    // Omitted entirely when nothing was approved, so the ordinary run's broker
+    // has no approval variable at all rather than an empty one.
+    ...(approved.length > 0 ? ["--env", "EGRESS_APPROVED_URLS=" + approved.join(",")] : []),
     "--env",
     "EGRESS_LISTEN_PORT=" + options.port,
     options.image,
@@ -157,10 +225,21 @@ export class EgressIsolation {
    * whatever was already created and throws: a half-built topology would leave
    * the Agent on an internal network with no broker, which is a hang rather
    * than an error, and leak a network besides.
+   *
+   * `approvedHosts` are the hosts a human granted for THIS run. They go into
+   * the broker container's env, and the broker container is created here and
+   * destroyed in teardown(), so the grant's lifetime IS the run's: there is no
+   * store to forget to clear and no cache to invalidate. Another agent's run
+   * builds its own topology from its own approval list, and the next run of
+   * this same agent starts from an empty one.
    */
-  async setup(agentId: string): Promise<IsolationHandle> {
+  async setup(agentId: string, approvedHosts: readonly string[] = []): Promise<IsolationHandle> {
     const network = agentNetworkName(agentId, this.config);
     const broker = agentBrokerName(agentId, this.config);
+    // Before anything is created: an unusable grant fails here, with the bad
+    // entry named, rather than as a broker that exits 2 during the readiness
+    // wait and reads as an infrastructure flake.
+    const approvedUrls = buildApprovedUrls(approvedHosts);
     // A previous crash can leave both behind; the names are deterministic, so
     // clear them before creating rather than failing on "already exists".
     await this.teardown({ network, broker });
@@ -176,6 +255,7 @@ export class EgressIsolation {
         network,
         image: this.config.containerEgressBrokerImage,
         allowUrl: this.config.arkBaseUrl,
+        approvedUrls,
         port: this.config.containerEgressBrokerPort,
         user: this.config.containerUser,
       }),

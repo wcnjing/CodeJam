@@ -35,16 +35,24 @@ single execution because a human approved a held Run. That field is the entire
 mechanism by which an approval is *scoped*: it is passed to one execution and
 never persisted to config, so approving a request cannot widen the policy.
 
+A runner that has a network layer of its own **must honour it there too.**
+`ContainerCodexRunner` passes `extraAllowedHosts` into the run's policy context
+*and* into `EgressIsolation.setup()`, which puts them on the broker container's
+allowlist for that run only. Honouring it at one layer and not the other is a
+worse outcome than honouring it at neither: the operator is told the grant was
+made and the Agent behaves as though it was not. `approval-egress.test.ts` is the
+test that holds this.
+
 `RunnerResult` returns `output`, `threadId`, `usage`, and `violations` — the last
 populated only in monitor mode, where a Run completes despite denials. In enforce
 mode a denial ends the Run, so there is nothing to report at the end.
 
 **Implementations today — three.**
 
-| Implementation | Executes | Declares as write roots | Notes |
+| Implementation | Executes | Declares as write roots | Network containment |
 | --- | --- | --- | --- |
-| `ContainerCodexRunner` | One disposable container per turn | `/workspace`, `/tmp`, `/var/tmp` | `--rm`, two bind mounts |
-| `CodexRunner` | Codex child process | `request.workspacePath` only | `/tmp` here is the real host `/tmp` |
+| `ContainerCodexRunner` | One disposable container per turn (`--rm`, two bind mounts) | `/workspace`, `/tmp`, `/var/tmp` | Per-run `--internal` network, no outbound route, egress broker with a narrow allowlist |
+| `CodexRunner` | Codex child process (`/tmp` here is the real host `/tmp`) | `request.workspacePath` only | **None** — the host's network. Development-only |
 | `ReplayRunner` | Nothing — recorded output | n/a | No key, no network, no spawn |
 
 **What a new implementation must provide.**
@@ -57,10 +65,16 @@ mode a denial ends the Run, so there is nothing to report at the end.
    moves enforcement from prevention to forensics.
 3. **Its own write roots.** "Inside the sandbox" is a property of the runner, not
    a platform constant. An empty list fails closed.
-4. **Honest termination.** `cancel` returns whether it actually cancelled
+4. **Network containment, or a plain statement that it has none.** The
+   guarantees in
+   [Current Security Model](../README.md#current-security-model) steps 6 and 7
+   are properties of `ContainerCodexRunner`, not of the interface. A runner
+   without them is a development path and the documentation must say so rather
+   than letting the container runtime's claims read as platform-wide.
+5. **Honest termination.** `cancel` returns whether it actually cancelled
    something. `ReplayRunner` returning `true` when no run was in flight was a real
    bug caught in review.
-5. **A declaration of what it does not prove.** `ReplayRunner` spawns nothing, so
+6. **A declaration of what it does not prove.** `ReplayRunner` spawns nothing, so
    it cannot demonstrate containment, and it prints that at the end of every run
    rather than letting a green result imply more than it earned.
 

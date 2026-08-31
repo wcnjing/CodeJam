@@ -72,10 +72,19 @@ notes in the register):
 | TM-AGENT-007 | Agent writes outside the sandboxed workspace | 9 MED | Write-root-scoped FILE_WRITE denial (tool-name based — see scope note) | 9 MED | ✅ |
 | TM-OPS-001 | Unbounded audit-log growth | 6 LOW | Redaction + retention bound (`AUDIT_RETENTION_DAYS`) | 2 LOW | ✅ |
 
-**Scope note (egress):** the egress control is a reactive command-text guard, not a
-network allowlist — commands with an implicit destination (bare `npm install`,
-`git push` to a preconfigured remote) are not blocked, and the container keeps
-bridge networking. True default-deny needs network-layer enforcement (deferred).
+**Scope note (egress):** the egress control above is a reactive command-text
+guard, not a network allowlist — commands with an implicit destination (bare
+`npm install`, `git push` to a preconfigured remote) are not blocked *by it*.
+Default-deny egress is a second, independent layer: under
+`RUNTIME_PROVIDER=container` each run gets an internal network with no outbound
+route and reaches only a per-run egress broker with a narrow allowlist, so an
+implicit destination is refused by the network even when the command-text guard
+did not recognise it. `RUNTIME_PROVIDER=local-process` has no equivalent
+containment and is a development-only path. Both layers, and the approval that
+can add one host to the broker allowlist for one continuation run, are described
+once in the README's
+[Current Security Model](../README.md#current-security-model); this document does
+not restate them.
 
 **Scope note (file writes):** the `file-write-outside-workspace` rule inspects
 only shell redirects (`>`, `>>`, `>|`) and a five-tool list
@@ -141,8 +150,17 @@ budget default. These are recorded per-threat in the register.
 
 ## Known residual risks
 
-- **Text-matching bypass:** a fully base64-encoded command evades the policy;
-  only network-layer egress control closes it (deliberately deferred).
+- **Text-matching bypass:** the command policy reasons about command text, so a
+  payload it cannot read — historically a fully base64-encoded command, today a
+  script written into a Makefile or git hook and executed later — is not
+  recognised by that layer. Network-layer egress control is what removes the
+  dependence on reading text, and it is built: on the container runtime the
+  destination is unreachable whether or not the classifier recognised the
+  command
+  ([Current Security Model](../README.md#current-security-model)). That bounds
+  the *network* half of the residual on *that runtime only* — it does not make
+  the command visible, does not raise a policy event, and does nothing for a
+  non-network capability or for `RUNTIME_PROVIDER=local-process`.
 - **The write rule is tool-name based** (TM-AGENT-007): `touch`, `dd`, `sed -i`,
   `install`, `ln`, `chmod` and interpreter file writes are not inspected at all.
   Not deferred obfuscation-hardening — a first-pass detector whose residual

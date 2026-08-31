@@ -46,6 +46,10 @@ const NET = `verify-egress-${suffix}`;
 // model while every other check stays green. Checking at the boundary here
 // means the live run exercises the same length the product does.
 const BROKER = `verify-egress-broker-${suffix}`.padEnd(63, "x");
+// The approval leg gets its OWN broker, because that is how the product works:
+// a grant is an environment variable on a broker container created for one run
+// and destroyed with it, never a mutation of a broker already running.
+const GRANT_BROKER = `verify-egress-grant-${suffix}`.padEnd(63, "x");
 
 let failures = 0;
 const results = [];
@@ -66,9 +70,9 @@ async function engine(args, options = {}) {
 }
 
 /** Runs curl inside a container on the isolated network and returns its code. */
-async function curlFrom(url, { viaProxy }) {
+async function curlFrom(url, { viaProxy, broker = BROKER }) {
   const proxyEnv = viaProxy
-    ? ["-e", `HTTPS_PROXY=http://${BROKER}:8080`, "-e", `HTTP_PROXY=http://${BROKER}:8080`, "-e", "NO_PROXY="]
+    ? ["-e", `HTTPS_PROXY=http://${broker}:8080`, "-e", `HTTP_PROXY=http://${broker}:8080`, "-e", "NO_PROXY="]
     : [];
   const { stdout } = await engine([
     "run", "--rm", "--network", NET, ...proxyEnv,
@@ -79,8 +83,10 @@ async function curlFrom(url, { viaProxy }) {
 }
 
 async function cleanup() {
-  await engine(["stop", "--timeout", "5", BROKER]);
-  await engine(["rm", "--force", BROKER]);
+  for (const broker of [BROKER, GRANT_BROKER]) {
+    await engine(["stop", "--timeout", "5", broker]);
+    await engine(["rm", "--force", broker]);
+  }
   await engine(["network", "rm", NET]);
 }
 
@@ -178,6 +184,55 @@ try {
   // every check above is measuring the proxy rather than the containment.
   const direct = await curlFrom(ALLOW_URL, { viaProxy: false });
   record(direct === "000", "No route without the broker", `curl exit code ${direct}`);
+
+  // --- the granted allowance ------------------------------------------------
+  //
+  // A human approval adds ONE host to ONE run's broker. Everything above proves
+  // the standing allowlist; this proves the granted one, and proves the grant is
+  // a property of a container rather than of a running process: it arrives as
+  // EGRESS_APPROVED_URLS on a broker started for the granted run and dies with
+  // that container.
+  const grantStarted = await engine([
+    "run", "--detach", "--rm", "--name", GRANT_BROKER, "--network", NET,
+    "--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
+    "-e", `EGRESS_ALLOW_URL=${ALLOW_URL}`,
+    "-e", `EGRESS_APPROVED_URLS=https://${DENY_HOST}`, BROKER_IMAGE,
+  ]);
+  record(
+    grantStarted.code === 0,
+    "Granted-run broker started",
+    grantStarted.code === 0 ? `approving ${DENY_HOST}` : grantStarted.stderr.trim(),
+  );
+  await engine(["network", "connect", "bridge", GRANT_BROKER]);
+
+  const grantProbe = buildBrokerProbeArgs(GRANT_BROKER, 8080);
+  let grantReady = false;
+  for (const deadline = Date.now() + 15_000; Date.now() < deadline; ) {
+    if ((await engine(grantProbe)).code === 0) {
+      grantReady = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  record(grantReady, "Granted-run broker ready", "for this run only");
+
+  // The host the standing broker refused, reached through the granted one. This
+  // is the whole point of an approval: policy and the network now agree.
+  const grantedReach = await curlFrom(`https://${DENY_HOST}`, { viaProxy: true, broker: GRANT_BROKER });
+  record(grantedReach === "200", "Approved host reachable via granted broker", `HTTP ${grantedReach}`);
+
+  // The grant added a name to the list; it did not empty the list or open it.
+  const grantedAllow = await curlFrom(ALLOW_URL, { viaProxy: true, broker: GRANT_BROKER });
+  record(grantedAllow === "200", "Standing allowlist survives the grant", `HTTP ${grantedAllow}`);
+
+  const grantedThird = await curlFrom("https://www.wikipedia.org", { viaProxy: true, broker: GRANT_BROKER });
+  record(grantedThird === "000", "Grant does not widen to a third host", `curl exit code ${grantedThird}`);
+
+  // Scope: the run that was NOT granted still cannot reach it. Same network,
+  // same moment, different broker — which is exactly the per-run boundary the
+  // approval is supposed to draw.
+  const ungranted = await curlFrom(`https://${DENY_HOST}`, { viaProxy: true });
+  record(ungranted === "000", "Grant invisible to the ungranted run", `curl exit code ${ungranted}`);
 
   // CONTAINER_READ_ONLY_ROOT defaults on, and the PR claims the Agent is
   // unaffected because bind mounts are not part of the container root. That is

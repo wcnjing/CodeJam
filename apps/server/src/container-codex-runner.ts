@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
-import { EgressIsolation, type IsolationHandle } from "./network-isolation.js";
+import { EgressIsolation, type EngineExec, type IsolationHandle } from "./network-isolation.js";
 import {
   buildCodexArgs,
   emptyParsedEvents,
@@ -163,8 +163,17 @@ export class ContainerCodexRunner implements AgentRunner {
   /** Live topology per agent, so teardown can run even if the run throws. */
   private readonly isolated = new Map<string, IsolationHandle>();
 
-  constructor(private readonly config: AppConfig) {
-    this.isolation = new EgressIsolation(config);
+  /**
+   * `exec` is the same injectable engine seam EgressIsolation already exposes,
+   * surfaced one level up so a test can drive the real start path — setup,
+   * readiness, teardown — without a container engine. Production passes
+   * nothing and gets the real engine.
+   */
+  constructor(
+    private readonly config: AppConfig,
+    exec?: EngineExec,
+  ) {
+    this.isolation = new EgressIsolation(config, exec);
   }
 
   /**
@@ -172,10 +181,20 @@ export class ContainerCodexRunner implements AgentRunner {
    * until the broker answers. A run started against a broker that has not bound
    * yet fails as what looks like a model outage — the failure mode most likely
    * to be misread as flakiness rather than as containment being broken.
+   *
+   * `approvedHosts` is the run's own `extraAllowedHosts`. It has to be here and
+   * not only in the policy context below: policy and the network are two
+   * independent layers, and a grant that reaches one of them is an approval
+   * that a human sees honoured and the Agent sees refused. The topology is
+   * built fresh per run from this list, never cached, so the grant cannot
+   * outlive the run that was granted it.
    */
-  private async startIsolation(agentId: string): Promise<IsolationHandle | null> {
+  private async startIsolation(
+    agentId: string,
+    approvedHosts: readonly string[] = [],
+  ): Promise<IsolationHandle | null> {
     if (!this.config.containerEgressIsolation) return null;
-    const handle = await this.isolation.setup(agentId);
+    const handle = await this.isolation.setup(agentId, approvedHosts);
     this.isolated.set(agentId, handle);
     const ready = await this.isolation.waitUntilReady(
       handle,
@@ -256,7 +275,7 @@ export class ContainerCodexRunner implements AgentRunner {
       throw new Error("Agent already has an active Runtime container");
     }
 
-    await this.startIsolation(request.agentId);
+    await this.startIsolation(request.agentId, request.extraAllowedHosts ?? []);
     try {
       return await this.runContained(request);
     } catch (error) {

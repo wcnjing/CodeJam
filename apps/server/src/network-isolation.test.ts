@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import {
   EgressIsolation,
+  approvedHostUrl,
+  buildApprovedUrls,
   buildBrokerConnectArgs,
   buildBrokerRunArgs,
   buildNetworkCreateArgs,
@@ -64,6 +66,64 @@ describe("isolation argv", () => {
   it("gives the broker a second, outbound network", () => {
     expect(buildBrokerConnectArgs("b", "bridge")).toEqual(["network", "connect", "bridge", "b"]);
   });
+
+  it("passes an approved host in its own variable, not folded into the Ark one", () => {
+    // Separate variables are the point: an operator reading `inspect` on a live
+    // broker has to be able to tell the standing allowance from the one a human
+    // granted for this run.
+    const args = buildBrokerRunArgs({
+      broker: "b", network: "n", image: "img", allowUrl: "https://ark.example.invalid",
+      approvedUrls: ["https://registry.npmjs.org"], port: 8080, user: "1000:1000",
+    });
+    expect(args).toContain("EGRESS_ALLOW_URL=https://ark.example.invalid");
+    expect(args).toContain("EGRESS_APPROVED_URLS=https://registry.npmjs.org");
+  });
+
+  it("omits the approval variable entirely when nothing was granted", () => {
+    // Absent, not empty: an ordinary run's broker should carry no approval
+    // state at all, so "was anything granted here?" is answerable by looking.
+    const args = buildBrokerRunArgs({
+      broker: "b", network: "n", image: "img", allowUrl: "https://ark.example.invalid",
+      port: 8080, user: "1000:1000",
+    });
+    expect(args.some((arg) => arg.startsWith("EGRESS_APPROVED_URLS"))).toBe(false);
+  });
+});
+
+describe("approved hosts become endpoints", () => {
+  it("defaults a bare host to 443", () => {
+    // What the policy engine extracts is a hostname, not a URL. The entry that
+    // produced it was an HTTPS destination, so 443 is the honest default.
+    expect(approvedHostUrl("registry.npmjs.org")).toBe("https://registry.npmjs.org");
+  });
+
+  it("keeps a port the entry names for itself", () => {
+    // An approval for :8443 must not silently widen into an approval for 443.
+    expect(approvedHostUrl("example.com:8443")).toBe("https://example.com:8443");
+  });
+
+  it("brackets a bare IPv6 literal", () => {
+    // The policy layer strips the brackets; a URL needs them back, or
+    // 2001:db8::1 parses as host "2001" on port "db8".
+    expect(approvedHostUrl("2001:db8::1")).toBe("https://[2001:db8::1]");
+  });
+
+  it("refuses an entry it cannot turn into an endpoint", () => {
+    // Fail closed and loudly. Dropping it would leave an approval recorded as
+    // honoured and an Agent that still cannot reach the host.
+    expect(() => approvedHostUrl("not a host")).toThrow();
+    expect(() => approvedHostUrl("")).toThrow();
+  });
+
+  it("refuses a comma, which is the delimiter and not a forbidden host character", () => {
+    // `new URL("https://a,b")` parses with hostname "a,b", so without this one
+    // grant would arrive at the broker as two allowlist entries.
+    expect(() => approvedHostUrl("registry.npmjs.org,attacker.example")).toThrow(/comma/);
+  });
+
+  it("deduplicates so the broker env is stable", () => {
+    expect(buildApprovedUrls(["example.com", "example.com"])).toEqual(["https://example.com"]);
+  });
 });
 
 describe("EgressIsolation lifecycle", () => {
@@ -84,6 +144,24 @@ describe("EgressIsolation lifecycle", () => {
       "run",
       "network connect",
     ]);
+  });
+
+  it("refuses to create anything for a grant it cannot express", async () => {
+    // Before the network exists, so a malformed grant is a readable error on
+    // the host rather than a sidecar that exits 2 during the readiness wait
+    // and reads as an infrastructure flake.
+    const { calls, exec } = recorder();
+    await expect(
+      new EgressIsolation(config, exec).setup("agent-1", ["not a host"]),
+    ).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("carries the run's approved hosts into the broker it starts", async () => {
+    const { calls, exec } = recorder();
+    await new EgressIsolation(config, exec).setup("agent-1", ["registry.npmjs.org"]);
+    const run = calls.find((c) => c[0] === "run")!;
+    expect(run).toContain("EGRESS_APPROVED_URLS=https://registry.npmjs.org");
   });
 
   it("removes the network when the broker will not start", async () => {

