@@ -123,13 +123,10 @@ export class AgentService {
       database.agents = database.agents.filter((item) => item.id !== id);
       database.messages = database.messages.filter((item) => item.agentId !== id);
       database.runs = database.runs.filter((item) => item.agentId !== id);
-      // Policy events are deleted separately, below: they live in the
-      // append-only log now, not in this blob, so filtering the array here would
-      // silently do nothing.
+      // Delete the Agent's safety evidence too, so it is not orphaned in the store.
+      database.policyEvents = database.policyEvents.filter((item) => item.agentId !== id);
       database.approvals = database.approvals.filter((item) => item.agentId !== id);
     });
-    // The Agent's safety evidence goes too, so it is not orphaned in the store.
-    await this.store.removePolicyEventsForAgent(id);
     return { archivedWorkspace };
   }
 

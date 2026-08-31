@@ -136,29 +136,8 @@ export interface DatabaseV1 {
   approvals: Omit<ApprovalRequest, "resolvedByAttribution">[];
 }
 
-/**
- * Frozen history: the shape v2 wrote, with policy events inside the blob. Kept
- * for the same reason DatabaseV1 is -- the v2->v3 migration step is typed
- * against what a v2 record actually had, not against today's Database. Never
- * widen this to fix a compile error in a newer migration; add the next step.
- */
-export interface DatabaseV2 {
-  version: 2;
-  agents: Agent[];
-  messages: Message[];
-  runs: AgentRun[];
-  policyEvents: PolicyDecision[];
-  approvals: ApprovalRequest[];
-}
-
 export interface Database {
-  /**
-   * 3: policy events moved out of this blob into an append-only JSONL log
-   * beside it, so recording one decision stopped costing O(events already
-   * stored). `policyEvents` below is still the read shape -- callers and the
-   * API are unchanged -- it is simply no longer where the events are persisted.
-   */
-  version: 3;
+  version: 2;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];

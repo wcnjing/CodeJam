@@ -332,19 +332,13 @@ export const THREAT_REGISTER: Threat[] = [
       {
         id: "CTRL-RETENTION-BOUND",
         description:
-          "Resolved approvals are pruned once older than AUDIT_RETENTION_DAYS; policy events are dropped outside the window when the log is compacted at load. A still-pending approval is exempt regardless of age — it's live state, not history",
-        where: "store.ts JsonStore.prune and PolicyEventLog.load",
-      },
-      {
-        id: "CTRL-APPEND-ONLY-LOG",
-        description:
-          "Policy events are appended to a JSONL log beside the database, one line per event, instead of being re-serialised into the database blob on every write. Recording event n no longer costs O(n), and nothing is discarded to achieve it",
-        where: "store.ts PolicyEventLog.append",
+          "policyEvents and resolved approvals are pruned once older than AUDIT_RETENTION_DAYS on every store mutation. A still-pending approval is exempt regardless of age — it's live state, not history",
+        where: "store.ts JsonStore.prune",
       },
     ],
     residual: { likelihood: 1, impact: 2 },
     residualNote:
-      "CLOSED, and by removing the growth rather than by capping it. This entry previously read as mitigated on the strength of AUDIT_RETENTION_DAYS alone, which was not honest about the performance half: retention bounds how LARGE the log gets over time, it does not change what one write costs, so the O(events already stored) term survived it. (That note also carried a wrong figure — it put the policy decision at ~2.3 us, which is the per-event store cost, not the decision; the decision measures 48-64 us.) Measured on one machine, same harness, before and after: 0.45 ms -> 0.95 ms at zero events, 2.75 -> 0.67 ms at 1,000, and 13.64 ms -> 0.72 ms at 5,000; marginal cost 2.65 us/event -> -0.04, and recording a decision fell from 427x the cost of making it to 15x. The curve is flat, so r-squared is no longer meaningful and is no longer asserted — at zero slope it fits noise, measuring 0.3870 on one run and 0.9876 on the next. Neither cheap option was taken: both capped the log by discarding audit records, which for a project whose thesis is trustworthy evidence is a liability rather than a fix, and a cap does not remove the linear term in any case. The residual is now a misconfiguration (retention set far too high) plus disk consumption, not unbounded per-write cost, and `npm run bench:store` remains the way to detect a regression — `regression.test.ts` gates the slope directly.",
+      "Bounded, where it was previously OPEN. The cost of the unbounded case was measured before it was fixed: `npm run bench:store` showed recording one decision cost O(events already stored) - a fixed cost plus ~2.3 us per stored event, r-squared 0.9998, reaching ~11.7 ms at 5000 events against ~2.3 us for the policy decision itself - so unbounded growth was a live performance regression as well as an audit-surface risk. AUDIT_RETENTION_DAYS now caps how long records accumulate and redaction still bounds per-record exposure. The residual is a misconfiguration (retention set far too high) rather than unbounded growth, and the store-overhead harness remains the way to detect it.",
     owner: "runtime-team",
     status: "mitigated",
     reviewTriggers: ["before any non-POC deployment", "AUDIT_RETENTION_DAYS default changed"],

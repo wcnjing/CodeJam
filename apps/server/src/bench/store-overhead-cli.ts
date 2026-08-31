@@ -46,7 +46,7 @@ console.log(
     " ms   filesystem-bound; ~3x platform spread",
 );
 console.log(
-  "  marginal (per stored event)        " +
+  "  marginal (clone + stringify)       " +
     marginalMicrosecondsPerEvent.toFixed(2).padStart(7) +
     " us per stored event   ~1.4x platform spread",
 );
@@ -75,16 +75,8 @@ if (largest && decision.p50 > 0) {
 }
 
 console.log("");
-console.log("TM-OPS-001 is CLOSED. Policy events are appended to an append-only JSONL log");
-console.log("beside the database rather than re-serialised into it, so recording event n");
-console.log("no longer costs O(n). The marginal term above should now read as noise around");
-console.log("zero; if it climbs back into a clean linear fit, the fix has come undone and");
-console.log("`regression.test.ts` fails on the slope.");
-console.log("");
-console.log("Nothing was truncated to achieve it. Both cheap options capped the log by");
-console.log("discarding audit records, which for a project whose thesis is trustworthy");
-console.log("evidence is a liability rather than a fix -- and a cap does not remove the");
-console.log("linear term, it only moves the ceiling. That is why this stayed open through a");
-console.log("full engine rewrite instead of being closed cheaply. Retention still applies,");
-console.log("by compaction at startup: age is a property of a record, not of a write.");
+console.log("Not fixed here, deliberately. `store.ts` is imported by agent-service.ts,");
+console.log("index.ts and three test files, and truncating an audit log to go faster is a");
+console.log("governance decision, not a performance one. Options are scoped in");
+console.log("docs/EVALUATION_RELIABILITY_PLAN.md §2.3; the gap is tracked as TM-OPS-001.");
 console.log("");
