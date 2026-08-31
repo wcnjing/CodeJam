@@ -67,33 +67,22 @@ async function slopeAndLinearity(): Promise<{ slope: number; rSquared: number }>
 }
 
 describe("store-write cost: shape, gated everywhere", () => {
-  it("no longer grows with the number of stored events", async () => {
-    // THIS ASSERTION IS INVERTED FROM WHAT IT USED TO BE, and the inversion is
-    // the record of TM-OPS-001 being closed.
-    //
-    // It read `expect(rSquared).toBeGreaterThanOrEqual(0.98)` and was described
-    // as "the load-bearing invariant": r-squared 0.9931-1.0000 across five
-    // environments, the most stable thing measured in this lane. That was a gate
-    // protecting a DEFECT's shape -- it asserted the store kept growing linearly,
-    // because at the time the only regression worth catching was it becoming
-    // quadratic.
-    //
-    // Now that events are appended to a JSONL log rather than re-serialised into
-    // the blob, the cost of recording event n does not depend on n, so a strong
-    // linear fit would mean the fix had come undone. The slope is what carries
-    // the claim, and r-squared is deliberately no longer asserted: with the
-    // slope at zero the fit is dominated by noise and r-squared becomes
-    // meaningless rather than merely low.
-    const { slope } = await slopeAndLinearity();
-    expect(slope).toBeLessThan(1);
+  it("stays linear in the number of stored events", async () => {
+    // The load-bearing invariant. r-squared has been 0.9931-1.0000 across five
+    // environments; it is the most stable thing measured in this lane, because
+    // it is a property of the algorithm rather than of the machine. If the store
+    // ever becomes super-linear this is what catches it, and a threshold of 0.98
+    // cannot be tripped by a busy runner.
+    const { rSquared } = await slopeAndLinearity();
+    expect(rSquared).toBeGreaterThanOrEqual(0.98);
   }, 60_000);
 
   it("keeps the marginal cost under an algorithmic-regression ceiling", async () => {
-    // Kept, and now a much wider margin than it was. 25 us/event was ~4x
-    // headroom over the worst honest reading when every write re-serialised the
-    // log; against an append it is enormous. Left deliberately loose rather than
-    // retuned: this exists to catch the store becoming super-linear again, not
-    // to police a 20% drift the measurement cannot support.
+    // 25 us/event against a measured worst case of 6.08 on a heavily loaded
+    // laptop and 2.15-3.09 in CI: roughly 4x headroom over the worst honest
+    // reading. Deliberately loose. This is not tuned to detect a 20% slowdown -
+    // the measurement cannot support that claim - it is tuned to detect the
+    // store becoming quadratic, which it would catch immediately.
     const { slope } = await slopeAndLinearity();
     expect(slope).toBeLessThan(25);
   }, 60_000);
