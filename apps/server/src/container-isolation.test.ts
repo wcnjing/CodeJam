@@ -50,6 +50,9 @@ async function fakeEngine(logPath: string): Promise<string> {
       "const argv = process.argv.slice(2);",
       "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify(argv) + '\\n');",
       "const verb = argv[0];",
+      // The broker's address on the isolated network, exactly as `docker
+      // inspect --format ...` would print it; the runner needs it for --dns.
+      "if (verb === 'inspect') { process.stdout.write('172.30.0.9\\n'); process.exit(0); }",
       // The broker runs detached; the Agent does not. Only the Agent streams.
       "if (verb === 'run' && !argv.includes('--detach')) {",
       "  " + emit,
@@ -102,6 +105,16 @@ describe("container runner with egress isolation on", () => {
       threadId: null,
     });
     expect(result.threadId).toBe("t1");
+
+    // The Agent's DNS points at the broker's address on the isolated network:
+    // the only resolver the --internal network can reach.
+    const calls: string[][] = (await readFile(logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+    const agent = calls.find((c) => c[0] === "run" && !c.includes("--detach"));
+    expect(agent, "the Agent was never started").toBeDefined();
+    expect(agent![agent!.indexOf("--dns") + 1]).toBe("172.30.0.9");
   }, 30_000);
 
   it("asks the engine about the broker instead of probing from the host", async () => {
@@ -174,6 +187,7 @@ describe("container runner with egress isolation on", () => {
         "const argv = process.argv.slice(2);",
         "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify(argv) + '\\n');",
         // Everything works except the broker, which never accepts a connection.
+        "if (argv[0] === 'inspect') { process.stdout.write('172.30.0.9\\n'); process.exit(0); }",
         "process.exit(argv[0] === 'exec' ? 1 : 0);",
         "",
       ].join("\n"),

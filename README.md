@@ -114,9 +114,12 @@ and destroys the Runtime container on the first denial.
 > broker permits exactly the effective allowlist (model API + `POLICY_ALLOWED_HOSTS`
 > + the hosts added in the Allowlist panel or by an “approve and widen”
 > decision), so an allowlisted host is reachable and everything else has no
-> route out. With the `local-process` runtime, where there is no broker, the
-> command-text guard is the only control and the claims below are scoped to
-> what it can actually enforce.
+> route out. The broker also answers the Agent network's DNS (the embedded
+> resolver refuses external queries on `--internal` networks), so allowlisted
+> hosts resolve by name from inside the Agent; the runtime image ships `curl`
+> by default (`CONTAINER_RUNTIME_APT_PACKAGES`). With the `local-process`
+> runtime, where there is no broker, the command-text guard is the only control
+> and the claims below are scoped to what it can actually enforce.
 
 The engine is layered so that a rule is a statement about capabilities, not a
 pattern over shell syntax:

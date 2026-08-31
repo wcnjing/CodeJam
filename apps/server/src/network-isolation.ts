@@ -52,6 +52,7 @@ export function buildBrokerRunArgs(options: {
   allowUrls: string[];
   port: number;
   user: string;
+  dns?: string[];
 }): string[] {
   return [
     "run",
@@ -64,13 +65,24 @@ export function buildBrokerRunArgs(options: {
     "io.codejam.sentinel=agent-egress",
     "--network",
     options.network,
+    // The broker resolves allowlisted hostnames itself (node:dns) before
+    // connecting, so its resolvers decide whether the isolated Agent's only
+    // edge can reach anything. Inherited resolvers are the default; an explicit
+    // CONTAINER_DNS keeps the broker working when the host resolver is
+    // unreachable from containers.
+    ...(options.dns ?? []).flatMap((dns) => ["--dns", dns]),
     // The broker is the thing an escaped Agent attacks next, so it gets the
     // same containment as the Agent: no new privileges, no capabilities, a
-    // read-only root, and no writable /tmp it could stage anything in.
+    // read-only root, and no writable /tmp it could stage anything in. The one
+    // exception is NET_BIND_SERVICE: the broker answers the Agent network's
+    // DNS on port 53 (privileged), so it needs exactly that capability —
+    // binding low ports — and nothing else.
     "--security-opt",
     "no-new-privileges",
     "--cap-drop",
     "ALL",
+    "--cap-add",
+    "NET_BIND_SERVICE",
     "--read-only",
     "--user",
     options.user,
@@ -79,6 +91,22 @@ export function buildBrokerRunArgs(options: {
     "--env",
     "EGRESS_LISTEN_PORT=" + options.port,
     options.image,
+  ];
+}
+
+/**
+ * Asks the engine for the broker's address on the isolated network — the
+ * address the Agent's `--dns` must point at. The broker is dual-homed, so it
+ * has more than one address; the network name pins the query to the one the
+ * Agent can actually reach. The name contains hyphens, hence the `index` form
+ * (a bare `.Networks.<name>` is not valid Go template syntax).
+ */
+export function buildBrokerInspectArgs(broker: string, network: string): string[] {
+  return [
+    "inspect",
+    "--format",
+    '{{(index .NetworkSettings.Networks "' + network + '").IPAddress}}',
+    broker,
   ];
 }
 
@@ -163,6 +191,13 @@ async function defaultExec(engine: string, args: string[]): Promise<EngineResult
 export interface IsolationHandle {
   network: string;
   broker: string;
+  /**
+   * The broker's address on the isolated network. The Agent's `--dns` points
+   * here: the broker answers DNS for the Agent network (the embedded resolver
+   * refuses external queries on --internal networks), so this is the only
+   * reachable resolver the Agent has.
+   */
+  brokerIp: string;
 }
 
 export class EgressIsolation {
@@ -205,6 +240,7 @@ export class EgressIsolation {
         allowUrls: buildEgressAllowUrls(this.config, extraAllowedHosts),
         port: this.config.containerEgressBrokerPort,
         user: this.config.containerUser,
+        dns: this.config.containerDns,
       }),
     );
     if (started.code !== 0) {
@@ -222,7 +258,22 @@ export class EgressIsolation {
       );
     }
 
-    return { network, broker };
+    // The Agent must be told where its only resolver lives (--dns takes an IP,
+    // not a name), so the broker's address on the isolated network has to come
+    // from the engine. Failure here is a containment failure: without it the
+    // Agent cannot resolve anything at all, so refuse the run rather than
+    // start it half-configured.
+    const inspected = await this.exec(buildBrokerInspectArgs(broker, network));
+    const brokerIp = inspected.stdout.trim().split(/\s+/)[0] ?? "";
+    if (inspected.code !== 0 || !brokerIp) {
+      await this.teardown({ network, broker });
+      throw new Error(
+        "Could not determine the broker's address on the isolated network: " +
+          inspected.stderr.trim(),
+      );
+    }
+
+    return { network, broker, brokerIp };
   }
 
   /**
@@ -234,7 +285,7 @@ export class EgressIsolation {
    * never bound means — here, refusing to start the Agent at all.
    */
   async waitUntilReady(
-    handle: IsolationHandle,
+    handle: Pick<IsolationHandle, "network" | "broker">,
     timeoutMs = 15_000,
     intervalMs = 200,
   ): Promise<boolean> {
@@ -249,7 +300,7 @@ export class EgressIsolation {
   }
 
   /** Best-effort and idempotent: teardown runs on paths that already failed. */
-  async teardown(handle: IsolationHandle): Promise<void> {
+  async teardown(handle: Pick<IsolationHandle, "network" | "broker">): Promise<void> {
     await this.exec(buildBrokerStopArgs(handle.broker));
     await this.exec(buildNetworkRemoveArgs(handle.network));
   }

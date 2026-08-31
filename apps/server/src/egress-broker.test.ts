@@ -1,6 +1,8 @@
 import { createConnection, createServer, type Server } from "node:net";
+import { createSocket, type Socket as DgramSocket } from "node:dgram";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createDnsForwarder,
   createEgressBroker,
   isForbiddenAddress,
   parseEgressEndpoint,
@@ -393,5 +395,163 @@ describe("egress broker", () => {
     );
     await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(denials).toContain("resolves to a private address");
+  });
+});
+
+describe("DNS forwarder", () => {
+  // A fake upstream resolver: echoes the query back with the QR bit set, so the
+  // tests can verify the answer was relayed AND that the client's original
+  // transaction id survives the round trip (an upstream may rewrite it).
+  async function fakeUpstream(): Promise<{
+    udp: DgramSocket;
+    tcp: Server;
+    udpPort: number;
+    tcpPort: number;
+  }> {
+    const udp = createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      const answer = Buffer.from(msg);
+      answer.writeUInt16BE(0x8180, 2); // QR+RD+RA
+      udp.send(answer, rinfo.port, rinfo.address);
+    });
+    const tcp = createServer((socket) => {
+      socket.on("data", (chunk) => socket.write(chunk));
+    });
+    const udpPort = await new Promise<number>((resolve) =>
+      udp.bind(0, "127.0.0.1", () => resolve(udp.address().port)),
+    );
+    const tcpPort = await new Promise<number>((resolve) =>
+      tcp.listen(0, "127.0.0.1", () => resolve((tcp.address() as { port: number }).port)),
+    );
+    return { udp, tcp, udpPort, tcpPort };
+  }
+
+  // Starts the forwarder (it binds on creation) and reports the bound ports.
+  async function startForwarder(opts: Parameters<typeof createDnsForwarder>[0]): Promise<{
+    udp: DgramSocket;
+    tcp: Server;
+    udpPort: number;
+    tcpPort: number;
+  }> {
+    // Port 53 is privileged; tests bind 0 and read the assigned ports.
+    const { udp, tcp } = createDnsForwarder({ ...opts, port: opts.port ?? 0 });
+    await Promise.all([
+      new Promise<void>((resolve) => udp.once("listening", () => resolve())),
+      new Promise<void>((resolve) => tcp.once("listening", () => resolve())),
+    ]);
+    return {
+      udp,
+      tcp,
+      udpPort: udp.address().port,
+      tcpPort: (tcp.address() as { port: number }).port,
+    };
+  }
+
+  function udpQuery(port: number, query: Buffer): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const client = createSocket("udp4");
+      const timer = setTimeout(() => {
+        client.close();
+        reject(new Error("dns query timed out"));
+      }, 2000);
+      client.on("message", (answer) => {
+        clearTimeout(timer);
+        client.close();
+        resolve(answer);
+      });
+      client.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      client.send(query, port, "127.0.0.1");
+    });
+  }
+
+  function tcpQuery(port: number, query: Buffer): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const socket = createConnection({ host: "127.0.0.1", port }, () => {
+        const framed = Buffer.alloc(2 + query.length);
+        framed.writeUInt16BE(query.length, 0);
+        query.copy(framed, 2);
+        socket.write(framed);
+      });
+      let buffer = Buffer.alloc(0);
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new Error("tcp dns query timed out"));
+      }, 2000);
+      socket.on("data", (chunk: Buffer) => {
+        buffer = Buffer.concat([buffer, chunk]);
+        if (buffer.length >= 2 && buffer.length >= 2 + buffer.readUInt16BE(0)) {
+          clearTimeout(timer);
+          const length = buffer.readUInt16BE(0);
+          socket.destroy();
+          resolve(buffer.subarray(2, 2 + length));
+        }
+      });
+      socket.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
+  // One query, hex: id 0x1234, RD, one question for example.com A.
+  const QUERY = Buffer.from(
+    "123401000001000000000000" + "076578616d706c6503636f6d0000010001",
+    "hex",
+  );
+
+  it("relays a UDP query to the upstream and keeps the client's transaction id", async () => {
+    const upstream = await fakeUpstream();
+    const forwarder = await startForwarder({
+      upstreams: ["127.0.0.1:" + upstream.udpPort],
+      upstreamTimeoutMs: 500,
+    });
+    try {
+      const answer = await udpQuery(forwarder.udpPort, QUERY);
+      expect(answer.readUInt16BE(0)).toBe(0x1234);
+      expect(answer.readUInt16BE(2) & 0x8000).toBe(0x8000); // QR set: an answer
+    } finally {
+      forwarder.udp.close();
+      forwarder.tcp.close();
+      upstream.udp.close();
+      upstream.tcp.close();
+    }
+  });
+
+  it("answers over TCP, the retry path for large responses", async () => {
+    const upstream = await fakeUpstream();
+    const forwarder = await startForwarder({
+      upstreams: ["127.0.0.1:" + upstream.tcpPort],
+      upstreamTimeoutMs: 500,
+    });
+    try {
+      const answer = await tcpQuery(forwarder.tcpPort, QUERY);
+      expect(answer.readUInt16BE(0)).toBe(0x1234);
+    } finally {
+      forwarder.udp.close();
+      forwarder.tcp.close();
+      upstream.udp.close();
+      upstream.tcp.close();
+    }
+  });
+
+  it("tries the next upstream when the first one never answers", async () => {
+    // A dead first resolver must not hang the Agent's DNS; the next one serves.
+    const upstream = await fakeUpstream();
+    const forwarder = await startForwarder({
+      upstreams: ["127.0.0.1:1", "127.0.0.1:" + upstream.udpPort],
+      upstreamTimeoutMs: 200,
+    });
+    try {
+      const answer = await udpQuery(forwarder.udpPort, QUERY);
+      expect(answer.readUInt16BE(0)).toBe(0x1234);
+    } finally {
+      forwarder.udp.close();
+      forwarder.tcp.close();
+      upstream.udp.close();
+      upstream.tcp.close();
+    }
   });
 });

@@ -4,11 +4,28 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
+# Load .env so variables set there (CONTAINER_RUNTIME_APT_PACKAGES,
+# CONTAINER_ENGINE, ...) apply to the image build AND the server. Parsed as
+# KEY=value lines rather than sourced, so values with $, quotes or spaces
+# survive verbatim. The script's own exports below still take precedence.
+if [[ -f .env ]]; then
+  while IFS='=' read -r key value; do
+    case "$key" in
+      \#*|"") continue ;;
+      *)
+        value="${value%\"}"
+        value="${value#\"}"
+        export "$key=$value"
+        ;;
+    esac
+  done < .env
+fi
+
 runtime_image="${CONTAINER_RUNTIME_IMAGE:-volc-agent-runtime:local}"
 runtime_base_image="${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}"
 runtime_apt_mirror="${CONTAINER_APT_MIRROR:-}"
 runtime_apt_security_mirror="${CONTAINER_APT_SECURITY_MIRROR:-}"
-runtime_apt_packages="${CONTAINER_RUNTIME_APT_PACKAGES:-ca-certificates git ripgrep}"
+runtime_apt_packages="${CONTAINER_RUNTIME_APT_PACKAGES:-ca-certificates git ripgrep curl}"
 codex_sandbox_mode="${CODEX_SANDBOX_MODE:-workspace-write}"
 
 log() {
