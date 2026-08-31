@@ -265,6 +265,43 @@ export const THREAT_REGISTER: Threat[] = [
     ],
   },
   {
+    id: "TM-AGENT-008",
+    title: "The Agent redirects a host write out of its workspace",
+    methodology: ["STRIDE: Tampering", "STRIDE: Elevation of Privilege"],
+    assets: ["audit store", "host filesystem", "agent instructions"],
+    actor: "a compromised or prompt-injected agent writing in its own workspace",
+    trustBoundary: "host process writing into agent-controlled ground",
+    entryPoint: "the platform files the host rewrites inside the workspace",
+    attackPath: [
+      "replace a platform-written file with a symlink out of the workspace",
+      "wait for the host to rewrite that file",
+      "the host follows the link and writes where the agent cannot",
+    ],
+    inherent: { likelihood: 3, impact: 5 },
+    controls: [
+      {
+        id: "CTRL-SAFE-WRITE",
+        description:
+          "Host writes into a workspace resolve the parent with realpath, refuse a " +
+          "non-regular destination via lstat, and land through an O_EXCL temp file " +
+          "renamed over the target so a swapped symlink cannot redirect them",
+        where: "safe-write.ts safeWriteFile, called by workspace.ts",
+      },
+    ],
+    residual: { likelihood: 1, impact: 5 },
+    residualNote:
+      "Impact stays at 5 because the natural target is the audit store this product exists " +
+      "to protect. Every host write into a workspace goes through safeWriteFile; the residual " +
+      "is code added later that calls writeFile directly, which nothing but review currently " +
+      "prevents. Archival moves the whole directory with rename and never follows a link.",
+    owner: "runtime-security",
+    status: "mitigated",
+    reviewTriggers: [
+      "a new host-written file inside the workspace",
+      "workspace archival or cleanup changed",
+    ],
+  },
+  {
     id: "TM-OPS-001",
     title: "Unbounded audit-log growth",
     methodology: ["LINDDUN: Non-compliance", "OWASP: secret leakage through logs"],
