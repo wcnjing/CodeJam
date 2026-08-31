@@ -28,6 +28,23 @@ const envSchema = z.object({
     .default("2g"),
   CONTAINER_PIDS_LIMIT: z.coerce.number().int().positive().default(256),
   CONTAINER_USER: z.string().optional(),
+  // Defence in depth for the runtime container. Both default on; they exist as
+  // switches because a runtime image that writes outside its bind mounts needs
+  // the read-only root lifted to run at all, and that should be a deliberate act.
+  CONTAINER_READ_ONLY_ROOT: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+  // Defaults OFF, unlike the read-only root. The argv this produces is tested,
+  // but the sidecar that has to exist on the isolated network is not yet
+  // orchestrated here, so turning it on without starting a broker leaves the
+  // Agent on a network with no route to anything. Flip it on together with a
+  // broker, not before. See docs/EGRESS_CONTAINMENT.md.
+  CONTAINER_EGRESS_ISOLATION: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+  CONTAINER_EGRESS_BROKER_HOST: z.string().min(1).default("launchpad-egress-broker"),
   RUNTIME_INSTANCE_ID: z
     .string()
     .trim()
@@ -106,6 +123,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerMemoryLimit: env.CONTAINER_MEMORY_LIMIT,
     containerPidsLimit: env.CONTAINER_PIDS_LIMIT,
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
+    containerReadOnlyRoot: env.CONTAINER_READ_ONLY_ROOT,
+    containerEgressIsolation: env.CONTAINER_EGRESS_ISOLATION,
+    containerEgressBrokerHost: env.CONTAINER_EGRESS_BROKER_HOST,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
     principals,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",

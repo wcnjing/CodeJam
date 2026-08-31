@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import {
+  agentNetworkName,
   buildContainerRunArgs,
   containerName,
 } from "./container-codex-runner.js";
@@ -59,5 +60,79 @@ describe("Container Codex runner", () => {
     );
     expect(args.slice(-3)).toEqual(["resume", "thread-123", "continue"]);
     expect(args).not.toContain("keep-id");
+  });
+});
+
+const baseEnv = {
+  NODE_ENV: "test",
+  ARK_API_KEY: "secret-that-must-not-appear-in-argv",
+  ARK_MODEL: "ep-test",
+  CODEX_HOME: "/tmp/codex-home",
+  RUNTIME_PROVIDER: "container",
+  CONTAINER_RUNTIME_IMAGE: "runtime:test",
+  RUNTIME_INSTANCE_ID: "test-instance",
+} as const;
+
+const request = {
+  agentId: "agent-1",
+  workspacePath: "/tmp/workspace",
+  prompt: "go",
+  threadId: null,
+};
+
+/** The value following `flag` in an argv pair list. */
+const valueAfter = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
+
+describe("container hardening controls", () => {
+  it("mounts a read-only root with a noexec tmpfs by default", () => {
+    const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
+    expect(args).toContain("--read-only");
+    expect(valueAfter(args, "--tmpfs")).toBe("/tmp:rw,nodev,nosuid,noexec,size=64m");
+  });
+
+  it("leaves the workspace and CODEX_HOME writable under a read-only root", () => {
+    // Bind mounts are not part of the container root filesystem, so --read-only
+    // must not cost the Agent its own workspace. If this ever regresses, the
+    // Agent cannot work at all.
+    const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
+    expect(args).toContain("type=bind,src=/tmp/workspace,dst=/workspace");
+    expect(args).toContain("type=bind,src=/tmp/codex-home,dst=/codex-home");
+  });
+
+  it("can lift the read-only root deliberately", () => {
+    const args = buildContainerRunArgs(
+      request,
+      loadConfig({ ...baseEnv, CONTAINER_READ_ONLY_ROOT: "false" }),
+    );
+    expect(args).not.toContain("--read-only");
+    expect(args).not.toContain("--tmpfs");
+  });
+
+  it("stays on the bridge network while egress isolation is off", () => {
+    // The default: the sidecar is not orchestrated yet, so an isolated network
+    // would strand the Agent with no route to anything.
+    const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
+    expect(valueAfter(args, "--network")).toBe("bridge");
+    expect(args.join(" ")).not.toContain("HTTPS_PROXY");
+  });
+
+  it("joins a per-run isolated network and points at the broker when enabled", () => {
+    const config = loadConfig({ ...baseEnv, CONTAINER_EGRESS_ISOLATION: "true" });
+    const args = buildContainerRunArgs(request, config);
+    expect(valueAfter(args, "--network")).toBe("launchpad-test-instance-agent-1-net");
+    expect(agentNetworkName("agent-1", config)).toBe("launchpad-test-instance-agent-1-net");
+    expect(args).toContain("HTTPS_PROXY=http://launchpad-egress-broker:8080");
+    expect(args).toContain("HTTP_PROXY=http://launchpad-egress-broker:8080");
+    // An empty NO_PROXY matters: a default bypass list would let the Agent
+    // reach anything it could name as "local" without going through the broker.
+    expect(args).toContain("NO_PROXY=");
+  });
+
+  it("never puts the API key value in argv", () => {
+    const args = buildContainerRunArgs(
+      request,
+      loadConfig({ ...baseEnv, CONTAINER_EGRESS_ISOLATION: "true" }),
+    );
+    expect(args.join(" ")).not.toContain("secret-that-must-not-appear-in-argv");
   });
 });

@@ -30,6 +30,11 @@ export function containerName(agentId: string, instanceId = "default"): string {
   return "launchpad-" + safeInstance + "-" + safeAgent;
 }
 
+/** Per-run isolated network. Named from the same parts as the container. */
+export function agentNetworkName(agentId: string, config: AppConfig): string {
+  return containerName(agentId, config.runtimeInstanceId) + "-net";
+}
+
 export function buildContainerRunArgs(
   request: RunnerRequest,
   config: AppConfig,
@@ -49,8 +54,30 @@ export function buildContainerRunArgs(
     "--label",
     "io.codejam.instance-id=" + config.runtimeInstanceId,
     ...(engineName === "podman" ? ["--userns", "keep-id"] : []),
+    // With egress isolation on, the Agent joins a per-run network the engine
+    // creates with no outbound route at all, and reaches the model only through
+    // the broker sidecar named in the proxy variables below. The command policy
+    // still runs; it just stops being the only thing between the Agent and the
+    // internet, which is what our README's base64 residual turns on.
     "--network",
-    "bridge",
+    config.containerEgressIsolation ? agentNetworkName(request.agentId, config) : "bridge",
+    ...(config.containerEgressIsolation
+      ? [
+          "--env",
+          "HTTPS_PROXY=http://" + config.containerEgressBrokerHost + ":8080",
+          "--env",
+          "HTTP_PROXY=http://" + config.containerEgressBrokerHost + ":8080",
+          "--env",
+          "NO_PROXY=",
+        ]
+      : []),
+    // A read-only root still leaves the workspace and CODEX_HOME writable: bind
+    // mounts are not part of the container's root filesystem. It stops an Agent
+    // writing anywhere else inside its own image, and the tmpfs is mounted
+    // noexec so /tmp cannot be used to stage a binary.
+    ...(config.containerReadOnlyRoot
+      ? ["--read-only", "--tmpfs", "/tmp:rw,nodev,nosuid,noexec,size=64m"]
+      : []),
     "--security-opt",
     "no-new-privileges",
     "--cap-drop",
