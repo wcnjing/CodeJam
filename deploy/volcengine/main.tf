@@ -34,7 +34,7 @@ locals {
     "PORT=3000",
     "PUBLIC_PORT=80",
     "LOG_LEVEL=info",
-    "APP_AUTH_TOKEN=${var.app_auth_token}",
+    "APP_PRINCIPALS=${var.app_principals}",
     "ARK_API_KEY=${var.ark_api_key}",
     "ARK_MODEL=${var.ark_model}",
     "ARK_BASE_URL=${var.ark_base_url}",

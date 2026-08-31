@@ -24,8 +24,10 @@ Runs. It never receives the Ark API key.
 
 ### Fastify API
 
-Validates requests, protects remote demos with a shared bearer token, and
-serves the compiled Web UI. The token is not user identity or authorization.
+Validates requests, authenticates callers as named principals from
+`APP_PRINCIPALS`, and serves the compiled Web UI. The credential establishes
+identity — the id it resolves to is what an approval records — but not
+authorization: every configured principal may do everything.
 
 ### AgentService
 

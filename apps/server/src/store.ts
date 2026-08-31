@@ -2,14 +2,36 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Database } from "./types.js";
 
+const CURRENT_VERSION = 2;
+
 const emptyDatabase = (): Database => ({
-  version: 1,
+  version: CURRENT_VERSION,
   agents: [],
   messages: [],
   runs: [],
   policyEvents: [],
   approvals: [],
 });
+
+/** Shape as found on disk: the version is whatever release last wrote it. */
+type StoredDatabase = Omit<Database, "version"> & { version: number };
+
+/**
+ * v1 -> v2. Before v2 the approver was a free-text `actor` field on the request
+ * body, so any name a v1 record carries was asserted by the client rather than
+ * derived from its credential. Stamping those "self-asserted" is the whole
+ * point of the bump: without it, migrated records would sit beside
+ * credential-derived ones in the same shape, and the guarantee the type now
+ * documents would be false for part of the store with no way to tell which.
+ * Retention keeps approvals for 90 days, so a real deployment carries them
+ * across the upgrade.
+ */
+function migrateV1ToV2(database: StoredDatabase): void {
+  for (const approval of database.approvals ?? []) {
+    approval.resolvedByAttribution = approval.resolvedBy === null ? null : "self-asserted";
+  }
+  database.version = CURRENT_VERSION;
+}
 
 export class JsonStore {
   private data: Database = emptyDatabase();
@@ -24,11 +46,20 @@ export class JsonStore {
     await mkdir(path.dirname(this.filePath), { recursive: true });
     try {
       const raw = await readFile(this.filePath, "utf8");
-      const parsed = JSON.parse(raw) as Database;
-      if (parsed.version !== 1 || !Array.isArray(parsed.agents)) {
+      const parsed = JSON.parse(raw) as StoredDatabase;
+      if (!Array.isArray(parsed.agents)) {
         throw new Error("Unsupported database format");
       }
-      this.data = { ...emptyDatabase(), ...parsed };
+      const migrated = parsed.version === 1;
+      if (migrated) {
+        migrateV1ToV2(parsed);
+      } else if (parsed.version !== CURRENT_VERSION) {
+        throw new Error("Unsupported database format");
+      }
+      this.data = { ...emptyDatabase(), ...parsed, version: CURRENT_VERSION };
+      // Write the upgrade back once, so the labelling survives a crash and the
+      // next start is not a second migration of the same records.
+      if (migrated) await this.persist();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         throw error;

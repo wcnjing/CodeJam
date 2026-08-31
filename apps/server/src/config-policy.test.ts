@@ -43,6 +43,40 @@ describe("POLICY_REVIEW_RULES invariant", () => {
   });
 });
 
+describe("credential configuration", () => {
+  it("refuses to start when the retired APP_AUTH_TOKEN is still set", () => {
+    expect(() => loadConfig({ ...base, APP_AUTH_TOKEN: "a-strong-legacy-token" })).toThrow(
+      /APP_PRINCIPALS/,
+    );
+  });
+
+  it("requires at least one principal on a non-loopback production server", () => {
+    expect(() => loadConfig({ ...base, NODE_ENV: "production", HOST: "0.0.0.0" })).toThrow(
+      /APP_PRINCIPALS/,
+    );
+  });
+
+  it("requires production tokens of at least 24 characters", () => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        NODE_ENV: "production",
+        HOST: "0.0.0.0",
+        APP_PRINCIPALS: "alice:tok_short",
+      }),
+    ).toThrow(/at least 24/);
+  });
+
+  it("allows a loopback development server with no principals", () => {
+    expect(loadConfig(base).principals.size).toBe(0);
+  });
+
+  it("resolves a configured token through the parsed config", () => {
+    const config = loadConfig({ ...base, APP_PRINCIPALS: "alice:tok_alice_0123456789abcdef" });
+    expect(config.principals.resolve("tok_alice_0123456789abcdef")).toEqual({ id: "alice" });
+  });
+});
+
 // @covers TM-AGENT-002
 describe("Codex shell credential isolation", () => {
   it("keeps the Ark key available to Codex but excludes it from shell commands", () => {

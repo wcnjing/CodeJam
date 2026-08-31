@@ -97,7 +97,7 @@ Set these values in `.env.production`:
 PUBLIC_PORT=80
 ARK_API_KEY=your-ark-api-key
 ARK_MODEL=ep-your-endpoint-id
-APP_AUTH_TOKEN=the-random-token-generated-above
+APP_PRINCIPALS=alice:the-random-token-generated-above
 ```
 
 Deploy:
@@ -111,8 +111,8 @@ Verify:
 
 ```bash
 curl http://127.0.0.1/api/health
-export APP_AUTH_TOKEN=your-shared-demo-token
-curl -H "Authorization: Bearer $APP_AUTH_TOKEN" \
+export SENTINEL_TOKEN=the-token-you-configured-for-your-principal
+curl -H "Authorization: Bearer $SENTINEL_TOKEN" \
   http://127.0.0.1/api/system
 docker compose --env-file .env.production ps
 ```
@@ -124,7 +124,7 @@ Deploy updates with `git pull --ff-only`, then rerun the deployment script.
 - Allow TCP 80 only from the event network.
 - Allow TCP 22 only from administrator IP addresses.
 - Allow outbound HTTPS to Ark and package registries.
-- Add HTTPS before using `APP_AUTH_TOKEN` across an untrusted network.
+- Add HTTPS before sending principal tokens across an untrusted network.
 
 Stop the application without deleting Agent data:
 

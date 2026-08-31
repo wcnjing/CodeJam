@@ -58,6 +58,7 @@ const approval = (over: Partial<ApprovalRequest> = {}): ApprovalRequest => ({
   status: "pending",
   requestedAt: "2026-08-30T10:00:04.000Z",
   resolvedBy: null,
+  resolvedByAttribution: null,
   decisionReason: null,
   resolvedAt: null,
   continuationRunId: null,
