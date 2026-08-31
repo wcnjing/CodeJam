@@ -127,16 +127,37 @@ export function runsWrittenScript(command: string): boolean {
   }
   if (written.size === 0) return false;
 
+  // `eval "$(cat run.sh)"`: `executableSegments` unwraps the substitution, so by
+  // the time the loop below sees `eval` its argument list is already empty and
+  // the written name has moved into a `cat` segment of its own. The relationship
+  // that matters -- this executor runs that file -- is only visible in the raw
+  // text, so it is asked there.
+  for (const name of written) {
+    if (!name) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // `.` is the `source` shorthand and must be a WORD, not any dot. Written as
+    // `\b(?:eval|source|\.)\b` it matched the dot inside `example.com` and made
+    // `echo 'see https://example.com' > notes.md && bash build.sh` a false
+    // positive -- a corpus entry whose whole purpose is that the script which
+    // runs is not the file that was written.
+    if (new RegExp(`(?:^|\\s)(?:eval|source|\\.)\\s[^\\n]*${escaped}`, "i").test(command)) return true;
+  }
+
   for (const segment of executableSegments(command)) {
     const invocation = invocationFromSegment(segment, true);
     if (!invocation) continue;
     const { tool, args } = invocation;
     // Executing the file directly, e.g. `./run.sh`.
     if (written.has(scriptIdentity(tool))) return true;
-    if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== ".") continue;
+    if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== "." && tool !== "eval") continue;
     for (const argument of args) {
       if (argument.startsWith("-")) continue;
       if (written.has(scriptIdentity(argument))) return true;
+      // `eval "$(cat run.sh)"` names the written file inside a substitution
+      // rather than as a script operand. The file is still what gets executed.
+      for (const name of written) {
+        if (name && argument.toLowerCase().includes(name)) return true;
+      }
     }
   }
   return false;
@@ -688,7 +709,88 @@ const TEXT_EMITTERS = new Set(["echo", "printf"]);
 const FORMAT_ONLY = /^[%\\a-z:\t\n ]*$/i;
 
 /** Tools that write a file without a shell redirect. */
-const WRITE_TOOLS = new Set(["tee", "dd", "sed", "awk"]);
+const WRITE_TOOLS = new Set([
+  "tee",
+  "dd",
+  "sed",
+  "awk",
+  // Interpreters write files too, and `python3 -c 'open(f,"w").write(...)'`
+  // followed by `sh f` is the same carrier with a different pen.
+  "python",
+  "python3",
+  "node",
+  "perl",
+  "ruby",
+]);
+
+/**
+ * Every literal string the command carries, from anywhere.
+ *
+ * The three existing materialisers each harvest text from exactly one place:
+ * `echo`/`printf` ARGUMENTS. That is why a herestring body, an interpreter's own
+ * program text and a `$(cat f)` read-back all stayed invisible after the file
+ * carrier was closed -- not because they are new classes, but because the
+ * harvester only ever looked in one pocket.
+ *
+ * This looks in all of them: single- and double-quoted literals, herestring
+ * bodies, heredoc bodies. Nesting resolves through the existing recursion --
+ * `awk 'BEGIN{print "nc host" > "f"}'` yields the awk program at one depth and
+ * the inner command at the next -- so this needs no special case per interpreter.
+ *
+ * It is only ever called behind `executesMaterialisedText`, and that gate is
+ * what keeps it affordable: `git commit -m "see https://x" && git status`
+ * carries a literal too, and must never be re-asked, because nothing in it
+ * executes what the literal says.
+ */
+const LITERAL = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"/g;
+
+function materialisedLiterals(command: string): string[] {
+  if (!executesMaterialisedText(command)) return [];
+  const out: string[] = [];
+  for (const match of command.matchAll(LITERAL)) {
+    const text = (match[1] ?? match[2] ?? "").trim();
+    if (text) out.push(text);
+  }
+  for (const match of command.matchAll(/<<<\s*([^\n]+)/g)) {
+    out.push(match[1]!.replace(/^['"]/, "").replace(/['"]$/, "").trim());
+  }
+  for (const match of command.matchAll(/<<-?\s*['"]?(\w+)['"]?\n([\s\S]*?)\n\1/g)) {
+    out.push(match[2]!.trim());
+  }
+  // Literals nested inside literals, harvested here rather than left to the
+  // recursion. `awk 'BEGIN{print "nc host" > "f"}'` yields the awk program at
+  // this level, and the payload is one quote deeper. The recursion would re-ask
+  // the gate of that program text, and the program text on its own does not
+  // execute anything -- the awk INVOCATION did. Having established at this level
+  // that materialised text gets run, the nested text is materialised text too.
+  for (const literal of [...out]) {
+    for (const match of literal.matchAll(LITERAL)) {
+      const text = (match[1] ?? match[2] ?? "").trim();
+      if (text) out.push(text);
+    }
+  }
+  return [...new Set(out)].filter(Boolean);
+}
+
+/** `eval "$(...)"` / `sh -c "$(...)"`: a substitution IS the script. */
+const EVAL_OF_SUBSTITUTION = /\b(?:eval|source)\b[^\n]*\$\(/;
+
+/**
+ * Whether anything in this command executes text the command itself produced.
+ *
+ * The union of every carrier shape, and the single gate the literal harvester
+ * hangs off. Being coarse here is safe: materialising extra text cannot by
+ * itself deny, because the ordinary rules still require an untrusted
+ * destination to fire.
+ */
+function executesMaterialisedText(command: string): boolean {
+  return (
+    runsWrittenScript(command) ||
+    writesByToolThenRuns(command) ||
+    feedsAnExecutor(command) ||
+    EVAL_OF_SUBSTITUTION.test(command)
+  );
+}
 
 /**
  * A file written by a TOOL rather than a redirect, and then executed.
@@ -799,6 +901,7 @@ export function extractCapabilities(
       ...decodedPayloads(command),
       ...pipedScriptPayloads(command),
       ...writtenScriptPayloads(command),
+      ...materialisedLiterals(command),
     ]) {
       for (const inner of extractCapabilities(payload, context, depth + 1)) {
         const key = inner.capability + "\u0000" + inner.resource;

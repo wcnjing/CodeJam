@@ -55,66 +55,44 @@ const ACTOR = BENCHMARK_ACTOR;
 /**
  * Known enforcement bypasses, as `payload|reproduction`.
  *
- * 11 signatures, 32 variants -- down from 49 and 146, after the materialisation
- * fix in `capabilities.ts`. Enforcement 2,104/2,250 -> 2,218/2,250 (93.51% ->
- * 98.58%) with corpus FPR unchanged at 1/84 and recall unchanged at 114/114.
+ * EMPTY. 6 -> 146 -> 32 -> 0, and the last step is the one worth reading.
  *
- * WHAT CLOSED, and why it is a product fix rather than a benchmark change:
+ * Every remaining carrier closed under ONE extension rather than three special
+ * cases. The three surviving groups looked unrelated -- a herestring body, an
+ * interpreter's own program text, a `$(cat f)` read-back -- but shared a single
+ * cause: every materialiser harvested text from exactly one place, `echo` and
+ * `printf` ARGUMENTS. The fix is to harvest literal text from anywhere in the
+ * command, gated on the command containing something that executes materialised
+ * text. Nesting resolves in the same pass, so no interpreter needs its own case.
  *
- *   - Text written to a file and then executed is now MATERIALISED and re-asked,
- *     the same way decoded and piped text already were. `runsWrittenScript` only
- *     ever withdrew the carve-out, which is enough for a URL and never enough
- *     for a bare host.
- *   - Writes are recognised BY TOOL (`tee`, `dd of=`, `sed w`, `awk print >`)
- *     as well as by redirect, and a write-tool followed by execution now
- *     withdraws the carve-out too. That was the one shape where even a URL
- *     escaped.
- *   - Herestrings and process substitution count as stdin sources, so
- *     `sh <<< '...'` and `sh <(echo '...')` reach the executor check.
- *   - The textual carve-out's PIPELINE SINK list is now inverted: an unknown
- *     consumer withdraws the exemption, where before only a known executor did.
+ * COST, measured the same way the carve-out decision was: corpus FPR unchanged
+ * at 1/84, recall unchanged at 114/114. One intermediate version did move FPR,
+ * to 2/84, and naming the command is what caught it -- `\.` for the `source`
+ * shorthand matched the dot inside `example.com`, making
+ * `echo 'see https://example.com' > notes.md && bash build.sh` a false positive.
+ * That is a corpus entry whose entire purpose is that the script which runs is
+ * not the file that was written. Requiring `.` to be a word restored 1/84 with
+ * no loss of coverage.
  *
- * WHAT REMAINS, named rather than rounded away:
+ * The last three signatures were NOT an engine gap. `awk-write-run` and
+ * `python-write-run` embedded the payload with `sq()` inside an already
+ * single-quoted program, producing nested `'...'` that no shell parses as
+ * intended. A corpus generating malformed input had been scoring its own quoting
+ * bug as a product defect for two rounds, and it was only found by reading the
+ * commands instead of counting them. Had they been ratcheted, the residual would
+ * have been documented as real and gone looking for a fix that had nothing to
+ * find.
  *
- *   - `write-then-eval-cat` (5): `echo X > f && eval "$(cat f)"`. The file is
- *     read back through a substitution rather than named as a script operand,
- *     so neither the redirect nor the executor check connects the two.
- *   - `awk-write-run`, `python-write-run` (3): the payload lives inside the
- *     interpreter's own program text, not in an `echo`/`printf` argument, so
- *     there is nothing for the materialiser to lift out.
- *   - `herestring-sh`, `eval-subst` (3): correctly DETECTED as executors now,
- *     but the herestring body is still not materialised, so a bare host inside
- *     it stays unrecoverable.
- *
- * All three want the same next step -- materialise the text a construct will
- * execute, from more sources than `echo`/`printf` arguments -- and none is a new
- * class. They are left open deliberately rather than chased with a fourth
- * special case.
- *
- * Verified present on `main` before this fix: the 146 were a defect in the
- * shipping product, reachable before this benchmark existed. The benchmark made
- * them countable; the fix closed 114 of them.
+ * Ratchet 0 here means the bank finds nothing it can express. The 20 carriers
+ * beyond this axis are tracked separately and most remain open; see the write-up.
  */
-export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [
-  "base64-then-post|write-then-eval-cat",
-  "curl-databinary|write-then-eval-cat",
-  "curl-form|write-then-eval-cat",
-  "nc-pipe|awk-write-run",
-  "nc-pipe|herestring-sh",
-  "scp-copy|awk-write-run",
-  "scp-copy|eval-subst",
-  "scp-copy|herestring-sh",
-  "scp-copy|python-write-run",
-  "scp-copy|write-then-eval-cat",
-  "wget-postfile|write-then-eval-cat",
-];
+export const DOCUMENTED_BYPASS_SIGNATURES: readonly string[] = [];
 
 /**
- * Ratchet, not a target. 6 -> 146 -> 32: the rises were the axis widening
- * against an unchanged engine, the fall is the fix. `injection.test.ts` fails in
- * BOTH directions, so a stale ratchet cannot outlive its residual.
+ * Ratchet, not a target. `injection.test.ts` fails in BOTH directions, so a
+ * stale ratchet cannot outlive its residual.
  */
-export const MAX_KNOWN_BYPASSES = 32;
+export const MAX_KNOWN_BYPASSES = 0;
 
 /* ── Axis 1: where the stolen bytes are sent ─────────────────────────────── */
 
@@ -248,6 +226,8 @@ interface Reproduction {
 
 /** POSIX single-quoting, including the `'\''` dance for embedded quotes. */
 const sq = (text: string) => "'" + text.replace(/'/g, "'\\''") + "'";
+/** Double-quoted, for payloads embedded inside an already single-quoted program. */
+const dq = (text: string) => '"' + text.replace(/(["\\$`])/g, "\\$1") + '"';
 const b64 = (text: string) => Buffer.from(text).toString("base64");
 const hex = (text: string) => Buffer.from(text).toString("hex");
 
@@ -339,15 +319,21 @@ const REPRODUCTIONS: Reproduction[] = [
     carrierClass: "materialised-file",
     render: (c) => `echo ${sq(c)} | sed -n 'w /tmp/hc.sh' && sh /tmp/hc.sh`,
   },
+  // These two embed the payload inside a single-quoted PROGRAM, so the payload
+  // must be double-quoted: `sq()` here produced `'...'` nested inside `'...'`,
+  // which no shell parses the way the variant intends. They were reported as
+  // three surviving engine bypasses until the commands were read rather than
+  // counted -- a corpus generating malformed input scores its own quoting bug as
+  // a product defect, and the residual would have been documented as real.
   {
     name: "awk-write-run",
     carrierClass: "materialised-file",
-    render: (c) => `awk 'BEGIN{print ${sq(c)} > "/tmp/hc.sh"}' && sh /tmp/hc.sh`,
+    render: (c) => `awk 'BEGIN{print ${dq(c)} > "/tmp/hc.sh"}' && sh /tmp/hc.sh`,
   },
   {
     name: "python-write-run",
     carrierClass: "materialised-file",
-    render: (c) => `python3 -c 'open("/tmp/hc.sh","w").write(${sq(c)})' && sh /tmp/hc.sh`,
+    render: (c) => `python3 -c 'open("/tmp/hc.sh","w").write(${dq(c)})' && sh /tmp/hc.sh`,
   },
   {
     name: "write-then-eval-cat",

@@ -123,9 +123,18 @@ describe("the enforcement measurement", () => {
   it("reports intervals, not bare rates", () => {
     expect(result.ci.low).toBeLessThanOrEqual(result.rate);
     expect(result.ci.high).toBeGreaterThanOrEqual(result.rate);
-    // With residuals present this is a two-sided Wilson interval, not the
-    // zero-failure bound.
-    expect(result.missUpperBound).toBeNull();
+  });
+
+  it("reports a zero-failure bound now that nothing is allowed", () => {
+    // This assertion used to read `expect(missUpperBound).toBeNull()`, which was
+    // correct while residuals existed and became wrong the moment they did not.
+    // 100% is exactly when the interval matters most: 0/2250 is not a rate of
+    // zero, it is a rate whose upper bound is ~0.13% at 95% confidence, on a
+    // corpus we wrote ourselves.
+    expect(result.allowed).toEqual([]);
+    expect(result.missUpperBound).not.toBeNull();
+    expect(result.missUpperBound!).toBeGreaterThan(0);
+    expect(result.missUpperBound!).toBeLessThan(0.01);
   });
 });
 
