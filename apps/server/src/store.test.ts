@@ -16,7 +16,7 @@ afterEach(async () => {
 
 describe("JsonStore", () => {
   it("does not publish a mutation in memory when persistence fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
     temporaryDirectories.push(root);
     const originalPath = path.join(root, "db.json");
     const store = new JsonStore(originalPath);
@@ -56,7 +56,7 @@ describe("JsonStore", () => {
 
   // @covers TM-OPS-001
   it("prunes policyEvents older than retentionDays on the next mutation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
     temporaryDirectories.push(root);
     const store = new JsonStore(path.join(root, "db.json"), 1);
     await store.initialize();
@@ -79,7 +79,7 @@ describe("JsonStore", () => {
   });
 
   it("never prunes a pending approval, however old its requestedAt is", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
     temporaryDirectories.push(root);
     const store = new JsonStore(path.join(root, "db.json"), 1);
     await store.initialize();
@@ -110,7 +110,7 @@ describe("JsonStore", () => {
   });
 
   it("prunes a resolved approval once resolvedAt is older than retentionDays", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
     temporaryDirectories.push(root);
     const store = new JsonStore(path.join(root, "db.json"), 1);
     await store.initialize();
@@ -170,7 +170,7 @@ const v1File = (approvals: unknown[]) =>
   });
 
 async function storeOn(contents?: string) {
-  const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
+  const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-migrate-"));
   temporaryDirectories.push(root);
   const filePath = path.join(root, "db.json");
   if (contents !== undefined) await writeFile(filePath, contents, "utf8");
@@ -230,7 +230,7 @@ describe("JsonStore schema migration", () => {
   });
 
   it("still refuses a version it cannot migrate", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-migrate-"));
     temporaryDirectories.push(root);
     const filePath = path.join(root, "db.json");
     await writeFile(filePath, JSON.stringify({ version: 3, agents: [], approvals: [] }), "utf8");

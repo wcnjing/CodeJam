@@ -1,4 +1,4 @@
-# Threat model: Agent Launchpad Kill Switch
+# Threat model: Agent sentinel Kill Switch
 
 Answers the four questions of the Threat Modeling Manifesto for this platform:
 what we are working on, what can go wrong, what we do about it, and whether we

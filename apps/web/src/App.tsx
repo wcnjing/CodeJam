@@ -880,7 +880,13 @@ export default function App() {
         </button>
 
         <button
-          className="button button-primary create-button eval-nav"
+          className={"button button-ghost eval-nav " + (view === "evaluation" ? "active" : "")}
+          onClick={openEvaluation}
+        >
+          <span>◈</span> Security Evaluation
+        </button>
+        <button
+          className="button button-primary create-button"
           onClick={() => {
             setForm(emptyForm);
             setShowCreate(true);
@@ -888,13 +894,6 @@ export default function App() {
           }}
         >
           <span>＋</span> Create Agent
-        </button>
-
-        <button
-          className={"button button-ghost eval-nav " + (view === "evaluation" ? "active" : "")}
-          onClick={openEvaluation}
-        >
-          <span>◈</span> Security Evaluation
         </button>
 
         <div className="sidebar-label">

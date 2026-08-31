@@ -1,6 +1,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
+import { EgressIsolation, type IsolationHandle } from "./network-isolation.js";
 import {
   buildCodexArgs,
   emptyParsedEvents,
@@ -27,7 +28,28 @@ interface ActiveContainer {
 export function containerName(agentId: string, instanceId = "default"): string {
   const safeInstance = instanceId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 32);
   const safeAgent = agentId.replace(/[^a-zA-Z0-9_.-]/g, "-").slice(0, 48);
-  return "launchpad-" + safeInstance + "-" + safeAgent;
+  return "sentinel-" + safeInstance + "-" + safeAgent;
+}
+
+/**
+ * Per-run isolation names. Both derive from the container name so a crashed run
+ * leaves behind something the next run can find and clear deterministically.
+ * They live here, beside containerName, so network-isolation.ts can import them
+ * without the two modules importing each other.
+ */
+export function agentNetworkName(agentId: string, config: AppConfig): string {
+  return containerName(agentId, config.runtimeInstanceId) + "-net";
+}
+
+export function agentBrokerName(agentId: string, config: AppConfig): string {
+  return containerName(agentId, config.runtimeInstanceId) + "-broker";
+}
+
+/** Resolvable by the network's embedded DNS from inside the isolated network. */
+function brokerUrl(agentId: string, config: AppConfig): string {
+  return (
+    "http://" + agentBrokerName(agentId, config) + ":" + config.containerEgressBrokerPort
+  );
 }
 
 export function buildContainerRunArgs(
@@ -43,14 +65,36 @@ export function buildContainerRunArgs(
     "--name",
     name,
     "--label",
-    "io.codejam.launchpad=agent-runtime",
+    "io.codejam.sentinel=agent-runtime",
     "--label",
     "io.codejam.agent-id=" + request.agentId,
     "--label",
     "io.codejam.instance-id=" + config.runtimeInstanceId,
     ...(engineName === "podman" ? ["--userns", "keep-id"] : []),
+    // With egress isolation on, the Agent joins a per-run network the engine
+    // creates with no outbound route at all, and reaches the model only through
+    // the broker sidecar named in the proxy variables below. The command policy
+    // still runs; it just stops being the only thing between the Agent and the
+    // internet, which is what our README's base64 residual turns on.
     "--network",
-    "bridge",
+    config.containerEgressIsolation ? agentNetworkName(request.agentId, config) : "bridge",
+    ...(config.containerEgressIsolation
+      ? [
+          "--env",
+          "HTTPS_PROXY=" + brokerUrl(request.agentId, config),
+          "--env",
+          "HTTP_PROXY=" + brokerUrl(request.agentId, config),
+          "--env",
+          "NO_PROXY=",
+        ]
+      : []),
+    // A read-only root still leaves the workspace and CODEX_HOME writable: bind
+    // mounts are not part of the container's root filesystem. It stops an Agent
+    // writing anywhere else inside its own image, and the tmpfs is mounted
+    // noexec so /tmp cannot be used to stage a binary.
+    ...(config.containerReadOnlyRoot
+      ? ["--read-only", "--tmpfs", "/tmp:rw,nodev,nosuid,noexec,size=64m"]
+      : []),
     "--security-opt",
     "no-new-privileges",
     "--cap-drop",
@@ -85,8 +129,43 @@ export function buildContainerRunArgs(
 
 export class ContainerCodexRunner implements AgentRunner {
   private readonly active = new Map<string, ActiveContainer>();
+  private readonly isolation: EgressIsolation;
+  /** Live topology per agent, so teardown can run even if the run throws. */
+  private readonly isolated = new Map<string, IsolationHandle>();
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: AppConfig) {
+    this.isolation = new EgressIsolation(config);
+  }
+
+  /**
+   * Brings up the isolated network and broker, and refuses to start the Agent
+   * until the broker answers. A run started against a broker that has not bound
+   * yet fails as what looks like a model outage — the failure mode most likely
+   * to be misread as flakiness rather than as containment being broken.
+   */
+  private async startIsolation(agentId: string): Promise<IsolationHandle | null> {
+    if (!this.config.containerEgressIsolation) return null;
+    const handle = await this.isolation.setup(agentId);
+    this.isolated.set(agentId, handle);
+    const ready = await this.isolation.waitUntilReady(
+      handle,
+      this.config.containerEgressReadyTimeoutMs,
+    );
+    if (!ready) {
+      await this.stopIsolation(agentId);
+      throw new Error(
+        "The egress broker did not become ready; refusing to start the Agent with no route out.",
+      );
+    }
+    return handle;
+  }
+
+  private async stopIsolation(agentId: string): Promise<void> {
+    const handle = this.isolated.get(agentId);
+    if (!handle) return;
+    this.isolated.delete(agentId);
+    await this.isolation.teardown(handle);
+  }
 
   async isAvailable(): Promise<boolean> {
     try {
@@ -99,6 +178,16 @@ export class ContainerCodexRunner implements AgentRunner {
         ["image", "inspect", this.config.containerRuntimeImage],
         { timeout: 5_000, env: this.childEnvironment() },
       );
+      // With isolation on, the broker image is as load-bearing as the runtime
+      // image: without it every run fails at setup. Report that here rather
+      // than letting the first run discover it.
+      if (this.config.containerEgressIsolation) {
+        await execFileAsync(
+          this.config.containerEngine,
+          ["image", "inspect", this.config.containerEgressBrokerImage],
+          { timeout: 5_000, env: this.childEnvironment() },
+        );
+      }
       return true;
     } catch {
       return false;
@@ -137,6 +226,20 @@ export class ContainerCodexRunner implements AgentRunner {
       throw new Error("Agent already has an active Runtime container");
     }
 
+    await this.startIsolation(request.agentId);
+    try {
+      return await this.runContained(request);
+    } catch (error) {
+      // The spawn and the setup after it used to sit outside any teardown path,
+      // so anything throwing there left the network and the broker behind until
+      // the next run for this agent cleared them. stopIsolation is idempotent,
+      // so the inner finally having already run is harmless.
+      await this.stopIsolation(request.agentId);
+      throw error;
+    }
+  }
+
+  private async runContained(request: RunnerRequest): Promise<RunnerResult> {
     const child = spawn(
       this.config.containerEngine,
       buildContainerRunArgs(request, this.config),
@@ -290,6 +393,9 @@ export class ContainerCodexRunner implements AgentRunner {
     } finally {
       clearTimeout(timeout);
       this.active.delete(request.agentId);
+      // Always, including the throw paths above: a leaked network survives the
+      // process and the next run's setup would have to clear it blind.
+      await this.stopIsolation(request.agentId);
     }
   }
 

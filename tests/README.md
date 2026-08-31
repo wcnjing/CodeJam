@@ -97,7 +97,7 @@ a measurement (everything escapes by design) and does not fail the run.
 | `approval` | `approval` | Reviewable-set invariant; only `network-egress-denied` may hold; secret rules never reviewable |
 | `monitor` | `monitor` | Shadow mode observes and records without terminating (real runner) |
 | `config` | `config` | `REVIEWABLE_RULES` fixed; forbidden review config rejected; fail-closed `guardedEvaluate` |
-| `regression` | `all` | Whole stack chained + the project's own `npm test -w @launchpad/server` as a gate |
+| `regression` | `all` | Whole stack chained + the project's own `npm test -w @sentinel/server` as a gate |
 | `perf` | — | µs per decision (p50/p95/mean), ops/s, scan throughput, redaction cost, config-load cost |
 
 Scoring notes: `redaction`, `budget` and `config` are **not classifiers** —

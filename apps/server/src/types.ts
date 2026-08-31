@@ -121,6 +121,21 @@ export interface ApprovalRequest {
  */
 export type ApproverAttribution = "credential" | "self-asserted";
 
+/**
+ * Frozen history: the shape a pre-v2 release wrote. It exists so a migration
+ * step is typed against what a record actually had at the time, rather than
+ * against today's `Database` with fields that did not exist yet. Never widen
+ * this to fix a compile error in a newer migration — add the next step instead.
+ */
+export interface DatabaseV1 {
+  version: 1;
+  agents: Agent[];
+  messages: Message[];
+  runs: AgentRun[];
+  policyEvents: PolicyDecision[];
+  approvals: Omit<ApprovalRequest, "resolvedByAttribution">[];
+}
+
 export interface Database {
   version: 2;
   agents: Agent[];

@@ -26,7 +26,7 @@ Force an engine with `CONTAINER_ENGINE=docker` or
 
 Persistent state defaults to:
 
-- macOS: `~/.volc-agent-launchpad/`
+- macOS: `~/.volc-agent-sentinel/`
 - Linux: `.local/`
 
 Set `LOCAL_POC_DATA_ROOT` to use another directory.

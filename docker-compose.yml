@@ -1,5 +1,5 @@
 services:
-  launchpad:
+  sentinel:
     build:
       context: .
       dockerfile: Dockerfile
@@ -7,10 +7,10 @@ services:
         NODE_IMAGE: ${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}
         DEBIAN_MIRROR: ${CONTAINER_APT_MIRROR:-}
         DEBIAN_SECURITY_MIRROR: ${CONTAINER_APT_SECURITY_MIRROR:-}
-    image: volc-agent-launchpad:local
+    image: volc-agent-sentinel:local
     restart: unless-stopped
     env_file:
-      - ${LAUNCHPAD_ENV_FILE:-.env}
+      - ${sentinel_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0

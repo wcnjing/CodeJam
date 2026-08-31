@@ -1,5 +1,6 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename } from "node:fs/promises";
 import path from "node:path";
+import { safeWriteFile } from "./safe-write.js";
 import type { Agent } from "./types.js";
 
 export class WorkspaceManager {
@@ -18,12 +19,13 @@ export class WorkspaceManager {
     await mkdir(agent.workspacePath, { recursive: false });
     await this.writeInstructions(agent);
     await this.seedProtectedFixture(agent);
-    await writeFile(
+    await safeWriteFile(
+      agent.workspacePath,
       path.join(agent.workspacePath, ".gitignore"),
       [".codex/", "node_modules/", "dist/", ".env", ".secrets/", "*.log", ""].join("\n"),
-      "utf8",
     );
-    await writeFile(
+    await safeWriteFile(
+      agent.workspacePath,
       path.join(agent.workspacePath, "README.md"),
       [
         "# " + agent.name + " workspace",
@@ -32,7 +34,6 @@ export class WorkspaceManager {
         "The platform-generated AGENTS.md contains the current Agent instructions.",
         "",
       ].join("\n"),
-      "utf8",
     );
   }
 
@@ -48,12 +49,14 @@ export class WorkspaceManager {
   private async seedProtectedFixture(agent: Agent): Promise<void> {
     const directory = path.join(agent.workspacePath, ".secrets");
     await mkdir(directory, { recursive: true });
-    await writeFile(
+    await safeWriteFile(
+      agent.workspacePath,
       path.join(directory, "customer-db-url.txt"),
       "postgres://demo-user:not-a-real-password@db.internal.invalid:5432/customers\n",
-      { encoding: "utf8", mode: 0o600 },
+      { mode: 0o600 },
     );
-    await writeFile(
+    await safeWriteFile(
+      agent.workspacePath,
       path.join(directory, "README.md"),
       [
         "# Protected fixture",
@@ -63,7 +66,6 @@ export class WorkspaceManager {
         "platform and recorded as a policy decision.",
         "",
       ].join("\n"),
-      "utf8",
     );
   }
 
@@ -92,7 +94,11 @@ export class WorkspaceManager {
     ]
       .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
       .join("\n");
-    await writeFile(path.join(agent.workspacePath, "AGENTS.md"), content, "utf8");
+    await safeWriteFile(
+      agent.workspacePath,
+      path.join(agent.workspacePath, "AGENTS.md"),
+      content,
+    );
   }
 
   async archive(agent: Agent): Promise<string> {

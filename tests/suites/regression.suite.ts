@@ -34,7 +34,7 @@ export const REGRESSION_SUITE: SuiteModule = {
     // coverage that pure catalog passes cannot reach.
     let gate: CaseVerdict;
     try {
-      await execFileAsync("npm", ["test", "-w", "@launchpad/server", "--", "--reporter=dot"], {
+      await execFileAsync("npm", ["test", "-w", "@sentinel/server", "--", "--reporter=dot"], {
         cwd: ROOT,
         timeout: 300_000,
         env: { ...process.env, CI: "1" },
@@ -44,7 +44,7 @@ export const REGRESSION_SUITE: SuiteModule = {
         decision: "allow",
         rule: null,
         matchesExpected: true,
-        note: "npm test -w @launchpad/server passed",
+        note: "npm test -w @sentinel/server passed",
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

@@ -6,7 +6,7 @@ packages:
   - git
 
 write_files:
-  - path: /opt/agent-launchpad.env
+  - path: /opt/agent-sentinel.env
     permissions: "0600"
     encoding: b64
     content: ${runtime_env_b64}
@@ -15,9 +15,9 @@ runcmd:
   - curl -fsSL https://get.docker.com -o /opt/get-docker.sh
   - sh /opt/get-docker.sh
   - systemctl enable --now docker
-  - mkdir -p /opt/agent-launchpad
-  - git clone --depth 1 --branch '${repository_ref}' '${repository_url}' /opt/agent-launchpad/app
-  - cp /opt/agent-launchpad.env /opt/agent-launchpad/app/.env.production
-  - mkdir -p /opt/agent-launchpad/app/data /opt/agent-launchpad/app/workspaces /opt/agent-launchpad/app/codex-home
-  - chown -R 1000:1000 /opt/agent-launchpad/app/data /opt/agent-launchpad/app/workspaces /opt/agent-launchpad/app/codex-home
-  - cd /opt/agent-launchpad/app && ./scripts/deploy-existing-ecs.sh .env.production
+  - mkdir -p /opt/agent-sentinel
+  - git clone --depth 1 --branch '${repository_ref}' '${repository_url}' /opt/agent-sentinel/app
+  - cp /opt/agent-sentinel.env /opt/agent-sentinel/app/.env.production
+  - mkdir -p /opt/agent-sentinel/app/data /opt/agent-sentinel/app/workspaces /opt/agent-sentinel/app/codex-home
+  - chown -R 1000:1000 /opt/agent-sentinel/app/data /opt/agent-sentinel/app/workspaces /opt/agent-sentinel/app/codex-home
+  - cd /opt/agent-sentinel/app && ./scripts/deploy-existing-ecs.sh .env.production

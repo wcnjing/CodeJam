@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 async function makeService(runner: AgentRunner = new FakeRunner()): Promise<AgentService> {
-  const root = await mkdtemp(path.join(tmpdir(), "launchpad-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "sentinel-test-"));
   temporaryDirectories.push(root);
   const config = loadConfig({
     NODE_ENV: "test",
@@ -301,7 +301,7 @@ class MonitorThenFailRunner implements AgentRunner {
 
 describe("monitor evidence on failure", () => {
   it("persists observed near-misses even when the run fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "launchpad-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-test-"));
     temporaryDirectories.push(root);
     const config = loadConfig({
       NODE_ENV: "test",

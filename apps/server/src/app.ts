@@ -93,7 +93,7 @@ export async function createApp(
 
   app.get("/api/health", async () => ({
     ok: true,
-    service: "volc-agent-launchpad",
+    service: "volc-agent-sentinel",
   }));
 
   app.get("/api/auth", async () => ({ required: config.principals.size > 0 }));

@@ -190,9 +190,14 @@ button {
 .create-button {
   width: 100%;
   justify-content: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+
+  /* width: 100%;
+  justify-content: flex-start;
   min-height: 44px;
   padding-left: 16px;
-  background: #6b56db;
+  background: #6b56db; */
 }
 
 .create-button span {

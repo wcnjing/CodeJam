@@ -17,5 +17,8 @@
     "perf": "tsx runner.ts --perf",
     "all": "tsx runner.ts",
     "test": "vitest run unit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
   }
 }

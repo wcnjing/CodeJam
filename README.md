@@ -46,9 +46,15 @@ Run it locally with Docker, Colima, or rootless Podman.
 
 > [!WARNING]
 > Single-user proof of concept built on the CodeJam starter kit. The command
-> network policy is a **reactive command-text guard, not a network allowlist** (see
-> Limitations). Do not use production data or credentials. See
-> [SECURITY.md](SECURITY.md).
+> network policy is still a **reactive command-text guard**: it reasons about
+> command text, so an encoding it has not modelled is a guard miss by
+> construction. Under `RUNTIME_PROVIDER=container` it is no longer the only
+> layer — the Agent runs on a network with no route out and reaches exactly one
+> allowlisted endpoint through a broker, so a guard miss has nowhere to go
+> ([docs/EGRESS_CONTAINMENT.md](docs/EGRESS_CONTAINMENT.md), verified against a
+> real engine by `npm run verify:egress`). `RUNTIME_PROVIDER=local-process` has
+> no equivalent containment and should not be given an untrusted Agent. Do not
+> use production data or credentials. See [SECURITY.md](SECURITY.md).
 
 ## Direction: threat modeling and safety
 
@@ -722,8 +728,8 @@ Runtime image.
 ### 2. Clone the repository
 
 ```bash
-git clone <repository-url> volc-agent-launchpad
-cd volc-agent-launchpad
+git clone <repository-url> volc-agent-sentinel
+cd volc-agent-sentinel
 ```
 
 Skip this step when already working from the repository root.
@@ -767,7 +773,7 @@ later messages.
 Press `Ctrl+C` in the startup terminal. The script removes temporary Runtime
 containers but keeps Agent workspaces and conversations.
 
-- macOS state: `~/.volc-agent-launchpad/`
+- macOS state: `~/.volc-agent-sentinel/`
 - Linux state: `.local/`
 - Custom location: set `LOCAL_POC_DATA_ROOT`
 
