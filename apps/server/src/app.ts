@@ -162,7 +162,11 @@ export async function createApp(
   // ?refresh=1 bypasses the short cache. Runs inside this process against the
   // real middleware (evaluationDeps) — no model, no external test app.
   app.get("/api/pentest", async (request) => {
-    const refresh = (request.query as { refresh?: string }).refresh === "1";
+    // Fastify query values can be string | string[] (repeated params) or
+    // absent; handle all three instead of casting to a single string.
+    const refreshRaw = (request.query as Record<string, unknown>).refresh;
+    const refresh =
+      refreshRaw === "1" || (Array.isArray(refreshRaw) && refreshRaw.includes("1"));
     return runEvaluationSummary({ deps: evaluationDeps, refresh });
   });
 

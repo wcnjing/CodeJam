@@ -46,7 +46,7 @@ tests/                       # @sentinel/evaluation workspace package + CLI/CI h
     import-past-examples.ts  # regenerate the catalog from the corpus
     copy-cases.mjs           # copies cases next to the built package (dist/cases)
   suites/                    # one suite per middleware layer + baseline + regression + perf
-  scores/                    # JSON scores per suite + summary.json (committed)
+  scores/                    # JSON scores per suite + summary.json (gitignored; regenerated on every run)
   runner.ts                  # CLI entry point
   tsconfig.lib.json          # builds the library -> tests/dist (consumed by the app)
   Dockerfile                 # disposable test image
