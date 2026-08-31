@@ -303,6 +303,7 @@ export class CodexRunner implements AgentRunner {
         throw new BudgetExceededError(
           this.config.policyMaxCommands,
           parsed.commands.length,
+          parsed.threadId,
         );
       }
       if (active.timedOut) {

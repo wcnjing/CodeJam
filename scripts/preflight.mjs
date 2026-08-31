@@ -10,7 +10,15 @@
  * Usage:
  *   npm run doctor            full check, exits non-zero on any hard failure
  *   npm run doctor -- --json  machine-readable, same exit code
- *   npm run doctor -- --offline  skip the network probe
+ *   npm run doctor -- --offline  skip the network probes
+ *   npm run doctor -- --no-inference  keep the network probes, skip the model call
+ *
+ * One check spends money: the inference probe sends a real 16-token completion.
+ * It is there because reachability is not availability — `GET /models` answers
+ * 200 for an account whose model has been paused on a spend limit, so preflight
+ * used to give a green light and every Run then failed several minutes later,
+ * after a full image build. `--no-inference` skips it when you are close to a
+ * cap and only want the cheap checks.
  *
  * Exit codes: 0 = ready, 1 = at least one hard failure.
  *
@@ -25,6 +33,7 @@ import { spawnSync } from "node:child_process";
 const argv = process.argv.slice(2);
 const JSON_OUT = argv.includes("--json");
 const OFFLINE = argv.includes("--offline");
+const NO_INFERENCE = argv.includes("--no-inference");
 
 const PORTS = [
   { port: 3000, used_by: "server (PORT)" },
@@ -270,6 +279,125 @@ async function checkArkBaseUrl() {
   );
 }
 
+// -------------------------------------------------------- Ark inference ---
+
+/** Best-effort code/message out of an Ark error envelope. */
+function arkError(body) {
+  const error = body && typeof body === "object" ? body.error : null;
+  if (!error || typeof error !== "object") return { code: "", message: "" };
+  return {
+    code: typeof error.code === "string" ? error.code : "",
+    message: typeof error.message === "string" ? error.message : "",
+  };
+}
+
+/**
+ * Actually infer once, rather than asking whether the endpoint exists.
+ *
+ * `GET /models` is metadata: it answers 200 for an account whose model has been
+ * paused on a spend limit, so the only thing that distinguishes "configured" from
+ * "usable" is a completion. This is the check that would have caught
+ * `SetLimitExceeded` before a multi-minute image build rather than after it.
+ *
+ * `max_output_tokens` keeps the bill at a few tokens. A reasoning model spends
+ * its budget on reasoning and comes back `status: "incomplete"` with
+ * `reason: "length"` — which is a pass here. Reaching the model is the signal;
+ * what it said is not.
+ */
+async function checkArkInference() {
+  const raw = (process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").trim();
+  const base = raw.replace(/\/+$/, "");
+  const key = (process.env.ARK_API_KEY || "").trim();
+  const model = (process.env.ARK_MODEL || "").trim();
+
+  if (OFFLINE) return skip("Ark inference", "skipped: --offline");
+  if (NO_INFERENCE) return skip("Ark inference", "skipped: --no-inference");
+  if (!key || !model) return skip("Ark inference", "no ARK_API_KEY/ARK_MODEL to probe with");
+
+  // Nothing to learn from a second failure against a host that is already
+  // unreachable or rejecting the key, and no reason to bill for it.
+  const reachability = results.find((r) => r.name === "ARK_BASE_URL");
+  if (reachability && reachability.status === "fail") {
+    return skip("Ark inference", "skipped: ARK_BASE_URL failed above");
+  }
+
+  let response;
+  let body = null;
+  try {
+    response = await fetch(base + "/responses", {
+      method: "POST",
+      headers: { authorization: "Bearer " + key, "content-type": "application/json" },
+      body: JSON.stringify({ model, input: "Reply with OK", max_output_tokens: 16 }),
+      // Reasoning models are slow to first byte; this is not a latency check.
+      signal: AbortSignal.timeout(45_000),
+    });
+    body = await response.json().catch(() => null);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return fail(
+      "Ark inference",
+      `${model} did not answer (${reason})`,
+      "Check network/proxy/VPN. If ARK_BASE_URL passed above, the endpoint is up and this is the model call itself.",
+    );
+  }
+
+  const { code, message } = arkError(body);
+
+  if (response.ok) {
+    // "incomplete" means max_output_tokens truncated it, which is the point.
+    const status = body && typeof body.status === "string" ? body.status : "ok";
+    return pass("Ark inference", `${model} answered (${response.status}, ${status})`);
+  }
+
+  // The failure this check exists for: a spend cap that pauses the model. It is
+  // an account setting, so no amount of retrying or backoff clears it.
+  if (code.startsWith("SetLimitExceeded") || /inference limit|Safe Experience Mode/i.test(message)) {
+    return fail(
+      "Ark inference",
+      `${model} is PAUSED on a spend limit (${response.status} ${code || "SetLimitExceeded"})`,
+      'Open the ModelArk console -> Model Activation, find this model, and either raise its inference limit or turn off "Safe Experience Mode" (which moves it to pay-as-you-go). Retrying will not clear it. Runs will fail after the image build until it is lifted.',
+    );
+  }
+
+  if (response.status === 429) {
+    return warn(
+      "Ark inference",
+      `${model} returned 429 (${code || "rate limited"})`,
+      "An ordinary rate limit rather than a paused model. Usually transient; retry.",
+    );
+  }
+
+  if (response.status === 404 || code.startsWith("InvalidEndpointOrModel")) {
+    return fail(
+      "Ark inference",
+      `${model} does not exist on this account (${response.status} ${code || "not found"})`,
+      "ARK_MODEL must be a model name or ep- endpoint ID this account has activated in this region. Check it against the ModelArk console, and that ARK_BASE_URL is the right regional host.",
+    );
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return fail(
+      "Ark inference",
+      `${model} refused the key (${response.status} ${code || ""})`.trim(),
+      "The key reached the endpoint but may not be entitled to this model. Check the model is activated for this account.",
+    );
+  }
+
+  if (response.status >= 500) {
+    return warn(
+      "Ark inference",
+      `${model} returned ${response.status}`,
+      "The model service is erroring. Likely transient; retry.",
+    );
+  }
+
+  warn(
+    "Ark inference",
+    `${model} returned ${response.status}${code ? " " + code : ""}`,
+    message ? message.slice(0, 200) : "Unrecognised response; rerun with --json to see it.",
+  );
+}
+
 // ------------------------------------------------------------------ output ---
 
 const GLYPH = { pass: "PASS", warn: "WARN", fail: "FAIL", skip: "SKIP" };
@@ -313,5 +441,6 @@ await checkPorts();
 checkArkApiKey();
 checkArkModel();
 await checkArkBaseUrl();
+await checkArkInference();
 
 process.exit(report());

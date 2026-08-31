@@ -1,9 +1,11 @@
 # Egress containment
 
 Status: **wired and verified against a real engine.** `npm run verify:egress`
-stands the topology up and checks it end to end; the run that accompanied this
-document passed 11/11 on Docker 29.5.2. Read "What is still not proven" before
-citing this anywhere.
+stands the topology up and checks it end to end; the latest run passed 15/15 on
+Docker 29.5.2 via Colima, and a separate hand-driven session measured the same
+containment from inside the real Agent Runtime — see
+[docs/evidence/](evidence/). Read "What is still not proven" before citing this
+anywhere.
 
 ## Why this exists
 
@@ -108,6 +110,18 @@ runtime.
    broker. The second is the one that catches a probe written the wrong way,
    since a unit test pointed at `127.0.0.1` passes either way.
 
+   The probe dials the broker **by name**, and that is not cosmetic. It used to
+   dial `127.0.0.1` inside the broker, which answers yes while the name the
+   Agent is pointed at resolves to nothing — and that is exactly what happened.
+   A container name is also a DNS label, a DNS label is 63 octets, and
+   `sentinel-` + instance id + agent UUID + `-broker` is 73. The first live
+   end-to-end run had no route to the model and failed against the Ark URL as
+   though the endpoint were down. `containerName` is now bounded to a valid
+   label (truncated with a deterministic digest, so cleanup still finds stale
+   topology), the probe resolves the same name the Agent uses, and
+   `verify:egress` pads its own broker name to the full 63 octets so the live
+   check runs at the boundary.
+
 Teardown runs in a `finally`, including on every throwing path, so a failed run
 does not leak a network the next setup would have to clear blind.
 
@@ -116,6 +130,14 @@ half-built topology would leave the Agent on an internal network with no broker,
 which hangs rather than errors.
 
 ## What is still not proven
+
+**An approval does not widen the broker's allowlist.** The broker allowlists the
+model endpoint and nothing else, and a human approving a held egress releases the
+*policy* hold only. In the recorded run the approved continuation ran the command
+and still could not reach `registry.npmjs.org` — `EAI_AGAIN` direct, `403`
+through the proxy. That is the intended split (no in-app decision can create a
+route) but it is not what a reader expects from the word "approve", so it is
+stated here and in `README.md` rather than left to be discovered.
 
 **One engine, one platform.** Verified on Docker 29.5.2 on macOS. Podman is
 wired (`--userns keep-id` is already handled for the Agent container) but has
@@ -127,7 +149,8 @@ claimed.
 `example.com`, not a real Ark endpoint, because the check has to run without a
 model key. The allow/deny boundary is what it proves; that a real Codex run
 completes through the broker is a separate claim, and one this check does not
-make.
+make — it is made instead by the recorded session in [docs/evidence/](evidence/),
+where three live turns reached the model through the broker and nothing else.
 
 **The broker sees TLS as opaque bytes.** It gates the destination, not the
 content. An allowlisted endpoint that is itself hostile, or an exfiltration

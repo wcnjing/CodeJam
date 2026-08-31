@@ -20,6 +20,40 @@ export function PendingApprovalCard({
   onResolve: (decision: "approve" | "deny") => void;
   mode?: PolicyMode | null;
 }) {
+  if (approval.rule === "step-budget-exceeded") {
+    return (
+      <article className="run-held" role="alert">
+        <strong>Command allowance reached</strong>
+        <span>
+          The Run used its command allowance and has been paused. Continue with a fresh
+          allowance, or stop the task here.
+        </span>
+        <DecisionExplanation
+          rule={approval.rule}
+          command={approval.command}
+          detail={approval.detail}
+          mode={mode}
+        />
+        <div className="approval-actions">
+          <button
+            className="button button-primary"
+            disabled={busy}
+            onClick={() => onResolve("approve")}
+          >
+            Continue
+          </button>
+          <button
+            className="button button-danger"
+            disabled={busy}
+            onClick={() => onResolve("deny")}
+          >
+            Stop
+          </button>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <article className="run-held" role="alert">
       <strong>Human approval required</strong>
@@ -80,6 +114,21 @@ export function PendingApprovalCard({
 }
 
 export function ResolvedApprovalCard({ approval }: { approval: ApprovalRequest }) {
+  if (approval.rule === "step-budget-exceeded") {
+    return (
+      <article className="run-held" role="status">
+        <strong>
+          {approval.status === "approved" ? "Command allowance renewed" : "Task stopped"}
+        </strong>
+        <span>
+          {approval.status === "approved"
+            ? "The task continued as a new Run with a fresh command allowance."
+            : "The task did not continue after reaching its command allowance."}
+        </span>
+      </article>
+    );
+  }
+
   return (
     <article className="run-held" role="status">
       <strong>

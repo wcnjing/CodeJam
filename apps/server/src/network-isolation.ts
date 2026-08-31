@@ -99,10 +99,19 @@ export function buildBrokerConnectArgs(broker: string, outboundNetwork: string):
  *
  * `node -e` runs as CommonJS, and the broker image is a node base, so the probe
  * needs nothing installed that is not already there.
+ *
+ * It dials the broker by NAME rather than by `127.0.0.1`. The Agent reaches the
+ * broker as the host in `HTTPS_PROXY`, so name resolution is half of what has
+ * to work, and a loopback probe passes with the name broken — which is exactly
+ * how a container name too long to be a DNS label got as far as a live run:
+ * the broker was up, the Agent could not resolve it, and the run failed against
+ * the Ark URL as though the model were down. The broker is on the same network,
+ * so the embedded DNS answers for its own name and the probe exercises the same
+ * path the Agent will.
  */
 export function buildBrokerProbeArgs(broker: string, port: number): string[] {
   const probe = [
-    "const s=require('net').createConnection({host:'127.0.0.1',port:" + port + "});",
+    "const s=require('net').createConnection({host:" + JSON.stringify(broker) + ",port:" + port + "});",
     "s.on('connect',()=>{s.destroy();process.exit(0)});",
     "s.on('error',()=>process.exit(1));",
     "s.setTimeout(2000,()=>process.exit(1));",

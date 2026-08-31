@@ -203,7 +203,11 @@ export class ReplayRunner implements AgentRunner {
         );
       }
       if (budgetExceeded) {
-        throw new BudgetExceededError(this.config.policyMaxCommands, parsed.commands.length);
+        throw new BudgetExceededError(
+          this.config.policyMaxCommands,
+          parsed.commands.length,
+          parsed.threadId,
+        );
       }
       const output = parsed.messages.at(-1)?.trim();
       if (!output) throw new Error("Replay fixture produced no agent message");

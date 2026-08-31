@@ -26,6 +26,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secret-scan:
+    name: secret scan (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Gitleaks must see every commit, not only the default shallow tip.
+          fetch-depth: 0
+
+      - name: Gitleaks — committed history
+        run: >-
+          docker run --rm
+          --volume "$PWD:/repo"
+          --workdir /repo
+          ghcr.io/gitleaks/gitleaks:v8.29.1
+          git --config .gitleaks.toml --redact --no-banner --log-opts="--all"
+
   # BLOCKING. This is the job that closes the POSIX pass claim in
   # docs/EVALUATION_RELIABILITY_PLAN.md §0, which until now rested on a single
   # run on one contributor's machine.

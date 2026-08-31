@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import {
+  agentBrokerName,
   agentNetworkName,
   buildContainerRunArgs,
   containerName,
@@ -135,5 +136,48 @@ describe("container hardening controls", () => {
   it("never puts the API key value in argv", () => {
     const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
     expect(args.join(" ")).not.toContain("secret-that-must-not-appear-in-argv");
+  });
+
+  // Regression: the first live end-to-end run under the default egress
+  // isolation failed with a transport error against the Ark URL. The cause was
+  // not the network — it was this name. `sentinel-local-501-3099439417-` plus a
+  // UUID plus `-broker` is 73 characters, a DNS label may be 63, so the Agent
+  // resolved nothing for its HTTPS_PROXY host and had no route to the model.
+  // Nothing in the unit tests or in verify:egress used a production-shaped
+  // name, so every check was green.
+  it("keeps the broker and network names inside the 63-octet DNS label limit", () => {
+    const config = loadConfig({
+      ...baseEnv,
+      RUNTIME_INSTANCE_ID: "local-501-3099439417",
+    });
+    const agentId = "d8da4472-7657-4c04-a087-ea659fc6f4f3";
+
+    const broker = agentBrokerName(agentId, config);
+    const network = agentNetworkName(agentId, config);
+
+    expect(broker.length).toBeLessThanOrEqual(63);
+    expect(network.length).toBeLessThanOrEqual(63);
+    // A dot would split the label and a `_` is not a legal hostname character,
+    // so the name has to be narrower than what the engine would accept.
+    expect(broker).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9-]*$/);
+    // The Agent must be pointed at the same name the broker is created with.
+    expect(buildContainerRunArgs({ ...request, agentId }, config)).toContain(
+      "HTTPS_PROXY=http://" + broker + ":8080",
+    );
+  });
+
+  it("keeps truncated names deterministic and distinct per agent", () => {
+    const config = loadConfig({
+      ...baseEnv,
+      RUNTIME_INSTANCE_ID: "an-instance-id-long-enough-to-tr",
+    });
+    const first = "0000000000000000000000000000000-aaaa";
+    const second = "0000000000000000000000000000000-bbbb";
+
+    // Deterministic, or stale-topology cleanup cannot find what to remove.
+    expect(agentBrokerName(first, config)).toBe(agentBrokerName(first, config));
+    // Distinct, or two agents sharing a prefix share a broker.
+    expect(agentBrokerName(first, config)).not.toBe(agentBrokerName(second, config));
+    expect(agentBrokerName(first, config).length).toBeLessThanOrEqual(63);
   });
 });

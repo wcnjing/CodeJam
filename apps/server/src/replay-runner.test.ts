@@ -1,12 +1,18 @@
-import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { CodexRunner } from "./codex-runner.js";
 import { isReviewableRule } from "./command-policy.js";
 import { loadConfig } from "./config.js";
 import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
-import { loadFixtures, ReplayRunner, selectFixture } from "./replay-runner.js";
+import {
+  DEFAULT_FIXTURE_DIRECTORY,
+  loadFixtures,
+  ReplayRunner,
+  selectFixture,
+} from "./replay-runner.js";
 import { createRunner } from "./runner-factory.js";
 
 /**
@@ -50,6 +56,28 @@ const request = (prompt: string, extraAllowedHosts?: string[]) => ({
 });
 
 describe("replay fixtures", () => {
+  // Regression: `tsc` copies no JSON, and ReplayRunner resolves its fixtures
+  // relative to its own module — `dist/fixtures/replay` in a built server. The
+  // build emitted nothing there, so `npm run build && npm start` with
+  // RUNTIME_PROVIDER=replay loaded zero fixtures and reported the runtime
+  // unavailable. Nothing caught it because the only thing exercising replay ran
+  // the server from `src` through tsx, where the path happens to be right.
+  it("is copied into the build output, not just present in src", async () => {
+    const packageJson = JSON.parse(
+      await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+    ) as { scripts: Record<string, string> };
+    expect(packageJson.scripts.build).toContain("copy-fixtures.mjs");
+
+    const copyScript = await readFile(
+      fileURLToPath(new URL("../scripts/copy-fixtures.mjs", import.meta.url)),
+      "utf8",
+    );
+    // The copy has to land where the runner looks, which is `fixtures` beside
+    // the compiled module rather than beside `src`.
+    expect(copyScript).toContain('"dist", "fixtures"');
+    expect(DEFAULT_FIXTURE_DIRECTORY.endsWith(path.join("fixtures", "replay"))).toBe(true);
+  });
+
   it("ships the two the demo shows, plus the exfiltration headline", async () => {
     const fixtures = await loadFixtures();
     const names = fixtures.map((fixture) => fixture.name).sort();
@@ -140,9 +168,12 @@ describe("replay enforcement decisions", () => {
 
   it("enforces the step budget regardless of monitor mode", async () => {
     const runner = new ReplayRunner(config({ POLICY_ENFORCEMENT: "monitor", POLICY_MAX_COMMANDS: "1" }));
-    await expect(runner.run(request("exfiltrate the customer-db credential"))).rejects.toBeInstanceOf(
-      BudgetExceededError,
-    );
+    await expect(
+      runner.run(request("exfiltrate the customer-db credential")),
+    ).rejects.toMatchObject({
+      name: "BudgetExceededError",
+      threadId: "replay-exfil-001",
+    } satisfies Partial<BudgetExceededError> & { threadId: string });
   });
 
   it("carries monitor observations out on the failure path too", async () => {

@@ -4,16 +4,61 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_dir"
 
+log() {
+  printf '[local-poc] %s\n' "$*" >&2
+}
+
+# Load a simple dotenv file without executing it as shell code. Values already
+# exported by the caller win, so one-off overrides still work:
+#   ARK_MODEL=ep-review npm run poc
+load_env_file() {
+  local file="$1"
+  local line key value
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    if [[ ! "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      log "Invalid dotenv line in $file; expected KEY=value."
+      return 2
+    fi
+
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+
+    if [[ -z "${!key+x}" ]]; then
+      printf -v "$key" '%s' "$value"
+      export "$key"
+    fi
+  done < "$file"
+}
+
+env_file="${LOCAL_POC_ENV_FILE:-$repo_dir/.env}"
+if [[ -n "${LOCAL_POC_ENV_FILE:-}" && ! -f "$env_file" ]]; then
+  log "LOCAL_POC_ENV_FILE does not exist: $env_file"
+  exit 2
+fi
+if [[ -f "$env_file" ]]; then
+  log "Loading configuration from $env_file (exported shell values take precedence)."
+  load_env_file "$env_file"
+fi
+
 runtime_image="${CONTAINER_RUNTIME_IMAGE:-volc-agent-runtime:local}"
+broker_image="${CONTAINER_EGRESS_BROKER_IMAGE:-volc-egress-broker:local}"
 runtime_base_image="${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}"
 runtime_apt_mirror="${CONTAINER_APT_MIRROR:-}"
 runtime_apt_security_mirror="${CONTAINER_APT_SECURITY_MIRROR:-}"
 runtime_apt_packages="${CONTAINER_RUNTIME_APT_PACKAGES:-ca-certificates git ripgrep}"
 codex_sandbox_mode="${CODEX_SANDBOX_MODE:-workspace-write}"
-
-log() {
-  printf '[local-poc] %s\n' "$*" >&2
-}
+container_egress_isolation="${CONTAINER_EGRESS_ISOLATION:-true}"
 
 engine_works() {
   "$1" info >/dev/null 2>&1
@@ -109,6 +154,15 @@ export RUNTIME_INSTANCE_ID="${RUNTIME_INSTANCE_ID:-local-$(id -u)-$(printf '%s' 
 mkdir -p "$APP_DATA_DIR" "$AGENT_WORKSPACE_ROOT" "$CODEX_HOME"
 log "Persistent state: $local_state_root"
 export CONTAINER_USER="${CONTAINER_USER:-$(id -u):$(id -g)}"
+
+if [[ "$container_egress_isolation" == "true" ]]; then
+  log "Building $broker_image from Dockerfile.egress-broker (base: $runtime_base_image)."
+  "$engine" build \
+    --file Dockerfile.egress-broker \
+    --build-arg "NODE_IMAGE=$runtime_base_image" \
+    --tag "$broker_image" \
+    .
+fi
 
 log "Building $runtime_image from Dockerfile.runtime (base: $runtime_base_image)."
 "$engine" build \

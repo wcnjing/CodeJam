@@ -66,6 +66,28 @@ const approval = (over: Partial<ApprovalRequest> = {}): ApprovalRequest => ({
 });
 
 describe("audit timeline", () => {
+  it("labels budget continuation decisions separately from security approvals", () => {
+    const pending = buildAuditTimeline(
+      [],
+      [],
+      [approval({ rule: "step-budget-exceeded", hosts: [], status: "pending" })],
+    );
+    const continued = buildAuditTimeline(
+      [],
+      [],
+      [approval({ rule: "step-budget-exceeded", hosts: [], status: "approved" })],
+    );
+    const stopped = buildAuditTimeline(
+      [],
+      [],
+      [approval({ rule: "step-budget-exceeded", hosts: [], status: "denied" })],
+    );
+
+    expect(pending[0]?.title).toBe("Awaiting command-allowance decision");
+    expect(continued[0]?.title).toBe("Command allowance renewed");
+    expect(stopped[0]?.title).toBe("Task stopped at command allowance");
+  });
+
   it("orders most recent first, which is what the copy claims", () => {
     const events = buildAuditTimeline(
       [run({ id: "r-old", completedAt: "2026-08-30T09:00:00.000Z" })],

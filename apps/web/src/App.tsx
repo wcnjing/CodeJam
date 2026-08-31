@@ -748,11 +748,13 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      const result = await api.resolveApproval(
-        approval.id,
-        decision,
-        approvalReason.trim(),
-      );
+      const result =
+        approval.rule === "step-budget-exceeded"
+          ? await api.resolveBudgetContinuation(
+              approval.id,
+              decision === "approve" ? "continue" : "stop",
+            )
+          : await api.resolveApproval(approval.id, decision, approvalReason.trim());
       setApprovalReason("");
       await Promise.all([refreshApprovals(selected.id), refreshAgents(), refreshRuns(selected.id)]);
       if (result.continuationRun) {

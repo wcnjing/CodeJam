@@ -97,13 +97,16 @@ export function buildAuditTimeline(
 
   for (const approval of approvals) {
     const explanation = explainRule(approval.rule);
+    const budgetContinuation = approval.rule === "step-budget-exceeded";
     if (approval.status === "pending") {
       events.push({
         id: "approval-" + approval.id,
         at: approval.requestedAt,
         kind: "approval",
         severity: "review",
-        title: "Awaiting human approval",
+        title: budgetContinuation
+          ? "Awaiting command-allowance decision"
+          : "Awaiting human approval",
         detail: approval.detail,
         command: approval.command,
       });
@@ -115,7 +118,11 @@ export function buildAuditTimeline(
       kind: "approval",
       severity: approval.status === "approved" ? "success" : "critical",
       title:
-        approval.status === "approved"
+        budgetContinuation
+          ? approval.status === "approved"
+            ? "Command allowance renewed"
+            : "Task stopped at command allowance"
+          : approval.status === "approved"
           ? explanation.label + " — approved and resumed"
           : explanation.label + " — denied",
       detail: approval.decisionReason ?? undefined,

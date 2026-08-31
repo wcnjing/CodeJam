@@ -16,6 +16,20 @@ Requirements:
 ARK_API_KEY=your-ark-api-key ARK_MODEL=ep-your-endpoint-id npm run poc
 ```
 
+That one command is the whole setup. It reads `.env` if there is one, builds
+both the Runtime image and the egress broker image, installs dependencies on a
+cold checkout, checks the bind mounts, builds the Web and API, and starts the
+server — so with a filled-in `.env` the invocation is just:
+
+```bash
+npm run poc
+```
+
+Values already exported in the shell win over `.env`, so a one-off override
+still works (`ARK_MODEL=ep-review npm run poc`). Point it at a different file
+with `LOCAL_POC_ENV_FILE`. The file is parsed, never sourced: it may only
+contain `KEY=value` lines, and anything else is refused rather than executed.
+
 Open <http://localhost:3000>. Press `Ctrl+C` to stop the server and remove this
 instance's remaining Runtime containers.
 
