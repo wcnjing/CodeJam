@@ -22,6 +22,7 @@
   "dependencies": {
     "@fastify/cors": "^11.1.0",
     "@fastify/static": "^10.1.0",
+    "@sentinel/evaluation": "*",
     "fastify": "^5.6.2",
     "zod": "^4.1.13"
   },

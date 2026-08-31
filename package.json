@@ -5,16 +5,18 @@
   "description": "A middleware-free Agent platform starter kit running Codex CLI locally or on Volcengine ECS.",
   "type": "module",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "tests"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @launchpad/server\" \"npm run dev -w @launchpad/web\"",
-    "build": "npm run build -w @launchpad/web && npm run build -w @launchpad/server",
+    "prepare": "npm run build -w @sentinel/evaluation",
+    "build": "npm run build -w @sentinel/evaluation && npm run build -w @launchpad/web && npm run build -w @launchpad/server",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test -w @launchpad/server && npm run test -w @launchpad/web",
+    "test": "npm run test -w @launchpad/server && npm run test -w @launchpad/web && npm run test -w @sentinel/evaluation",
     "check": "npm run typecheck && npm run test && npm run build",
     "poc": "./scripts/start-local-poc.sh",
     "start": "npm run start -w @launchpad/server",

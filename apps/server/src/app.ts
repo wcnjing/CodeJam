@@ -7,6 +7,8 @@ import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 import { buildEvaluationSummary } from "./evaluation-summary.js";
+import { runEvaluationSummary } from "@sentinel/evaluation";
+import { evaluationDeps } from "./evaluation-deps.js";
 import type { Principal } from "./principals.js";
 
 declare module "fastify" {
@@ -181,6 +183,19 @@ export async function createApp(
   });
 
   app.get("/api/evaluation", async () => buildEvaluationSummary());
+
+  // The pentest suite ("library of tests") as an on-demand measurement: every
+  // middleware profile over the tagged bypass catalog plus operational cost.
+  // ?refresh=1 bypasses the short cache. Runs inside this process against the
+  // real middleware (evaluationDeps) — no model, no external test app.
+  app.get("/api/pentest", async (request) => {
+    // Fastify query values can be string | string[] (repeated params) or
+    // absent; handle all three instead of casting to a single string.
+    const refreshRaw = (request.query as Record<string, unknown>).refresh;
+    const refresh =
+      refreshRaw === "1" || (Array.isArray(refreshRaw) && refreshRaw.includes("1"));
+    return runEvaluationSummary({ deps: evaluationDeps, refresh });
+  });
 
   app.get("/api/runs/:id", async (request) => {
     const { id } = runIdParams.parse(request.params);

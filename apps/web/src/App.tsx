@@ -6,6 +6,7 @@ import type {
   ApprovalRequest,
   EvaluationSummary,
   Message,
+  EvaluationRunSummary,
   PolicyDecision,
   Principal,
   SystemInfo,
@@ -52,9 +53,11 @@ const pct = (value: number) => (value * 100).toFixed(1) + "%";
 
 function EvaluationView({
   summary,
+  pentest,
   onReload,
 }: {
   summary: EvaluationSummary | null;
+  pentest: EvaluationRunSummary | null;
   onReload: () => void;
 }) {
   const [tourStep, setTourStep] = useState<number | null>(null);
@@ -255,7 +258,183 @@ function EvaluationView({
           ))}
         </div>
       </section>
+
+      <PentestView pentest={pentest} />
     </div>
+  );
+}
+
+/**
+ * The pentest suite — the tagged bypass library run through every middleware
+ * layer individually and as a whole, plus measured operational cost. Backed by
+ * /api/pentest, computed on demand from the code actually running.
+ */
+// Layers that are not allow/deny classifiers: their block/detection/escape/FP
+// rates are meaningless and render as "n/a"; only the Pass rate is shown.
+const NON_CLASSIFIER_PROFILES = new Set(["redaction", "budget", "config"]);
+function PentestView({ pentest }: { pentest: EvaluationRunSummary | null }) {
+  if (!pentest) {
+    return (
+      <section className="pentest">
+        <span className="eyebrow">Pentest suite — the bypass library</span>
+        <div className="eval-loading">
+          <Spinner /> Running the bypass library…
+        </div>
+      </section>
+    );
+  }
+  const commandPolicy = pentest.suites.find((s) => s.profileId === "command-policy");
+  return (
+    <section className="pentest">
+      <div className="eval-panel">
+        <span className="eyebrow">Pentest suite — the bypass library</span>
+        <div className="pentest-local-banner">
+          <strong>Runs locally on the middleware itself — no model involved.</strong>
+          Every figure here is computed directly against the running middleware code (command
+          policy, redaction, step budget, approval, config invariants) as pure functions over
+          command text: no model is queried, no API key is used, and no request leaves this
+          machine. The CLI additionally drives the real <code>CodexRunner</code> with a fake{" "}
+          <code>codex</code> script for budget/monitor — still never a real model.
+        </div>
+        <p className="pentest-intro">
+          {pentest.catalogSize} unique tagged commands (obfuscation, encoding, indirection,
+          quoting, alternate channels, allowlist abuse, env dumps, …) run through every
+          middleware layer individually and as a whole, plus measured operational cost.
+          Revision {pentest.revision}. A suite's "escape" is a malicious command the layer
+          would allow; its "false positive" is legitimate work it would block.
+        </p>
+        <table className="pentest-table">
+          <thead>
+            <tr>
+              <th>Middleware layer</th>
+              <th>Pass</th>
+              <th>Block rate</th>
+              <th>Detection</th>
+              <th>Escape rate</th>
+              <th>False positives</th>
+              <th>Cases</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pentest.suites.map((s) => {
+              // Non-classifier layers (redaction, budget, config) are not
+              // allow/deny controls, so the block/detection/escape/FP columns
+              // are meaningless for them; their Pass rate is the measurement.
+              const classifier = !NON_CLASSIFIER_PROFILES.has(s.profileId);
+              return (
+                <tr key={s.profileId} className={s.profileId === "all" ? "pentest-total" : undefined}>
+                  <td>{s.profileName}</td>
+                  <td className={s.totals.passed === s.totals.cases ? "pentest-good" : undefined}>
+                    {pct(s.totals.passed / s.totals.cases)}
+                  </td>
+                  <td>{classifier ? pct(s.totals.attackBlockRate) : "n/a"}</td>
+                  <td className={s.totals.detectionRate === 1 ? "pentest-good" : undefined}>
+                    {classifier ? pct(s.totals.detectionRate) : "n/a"}
+                  </td>
+                  <td className={s.totals.escapeRate === 0 ? "pentest-good" : undefined}>
+                    {classifier ? pct(s.totals.escapeRate) : "n/a"}
+                  </td>
+                  <td className={s.totals.falsePositiveRate === 0 ? "pentest-good" : undefined}>
+                    {classifier ? pct(s.totals.falsePositiveRate) : "n/a"}
+                  </td>
+                  <td>{s.totals.cases}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {commandPolicy && (
+        <div className="eval-panel">
+          <span className="eyebrow">Command policy coverage by bypass tag</span>
+          <ul className="eval-family">
+            {Object.entries(commandPolicy.byTag).map(([tag, bucket]) => {
+              const ok = bucket.rate === 1;
+              return (
+                <li key={tag}>
+                  <span className={"eval-family-mark " + (ok ? "ok" : "gap")}>
+                    {ok ? "✓" : "✗"}
+                  </span>
+                  <span className="eval-family-name">{tag}</span>
+                  <span className="eval-family-bar">
+                    <span
+                      className={"eval-family-fill " + (ok ? "ok" : "gap")}
+                      style={{ width: pct(bucket.rate) }}
+                    />
+                  </span>
+                  <span className="eval-family-count">
+                    {bucket.passed}/{bucket.total}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      <div className="eval-panel">
+        <span className="eyebrow">Operational cost per layer</span>
+        <table className="pentest-table">
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Mean</th>
+              <th>p95</th>
+              <th>Throughput</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pentest.perf.samples.map((sample) => (
+              <tr key={sample.metric}>
+                <td>{sample.metric}</td>
+                <td>{sample.meanMicroseconds.toFixed(2)} µs</td>
+                <td>{sample.p95Microseconds.toFixed(2)} µs</td>
+                <td>{Math.round(sample.opsPerSecond).toLocaleString("en-US")} ops/s</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {(pentest.residuals.escapes.length > 0 || pentest.residuals.falsePositives.length > 0) && (
+        <div className="eval-panel">
+          <span className="eyebrow">Residuals — named, not hidden</span>
+          {pentest.residuals.escapes.length > 0 && (
+            <>
+              <span className="pentest-residual-label">
+                Escapes ({pentest.residuals.escapes.length} malicious commands the whole stack would allow)
+              </span>
+              {pentest.residuals.escapes.map((residual) => (
+                <div className="pentest-residual" key={residual.caseId}>
+                  <code>{residual.caseId}</code>
+                  <span className="pentest-residual-cmd">{residual.command.slice(0, 120)}</span>
+                </div>
+              ))}
+            </>
+          )}
+          {pentest.residuals.falsePositives.length > 0 && (
+            <>
+              <span className="pentest-residual-label">
+                False positives ({pentest.residuals.falsePositives.length} legitimate commands blocked)
+              </span>
+              {pentest.residuals.falsePositives.map((residual) => (
+                <div className="pentest-residual" key={residual.caseId}>
+                  <code>{residual.caseId}</code>
+                  <span className="pentest-residual-cmd">{residual.command.slice(0, 120)}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      <ul className="pentest-limits">
+        {pentest.limitations.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -284,6 +463,7 @@ export default function App() {
   const [approvalReason, setApprovalReason] = useState("");
   const [view, setView] = useState<"welcome" | "agents" | "evaluation">("welcome");
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
+  const [pentest, setPentest] = useState<EvaluationRunSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -377,7 +557,11 @@ export default function App() {
     setView("evaluation");
     setError(null);
     try {
-      setEvaluation(await api.evaluation());
+      // The pentest suite runs on demand beside the live evaluation; both are
+      // computed from the code actually running, so the page cannot drift.
+      const [evaluation, pentest] = await Promise.all([api.evaluation(), api.pentest()]);
+      setEvaluation(evaluation);
+      setPentest(pentest);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -696,7 +880,7 @@ export default function App() {
         </button>
 
         <button
-          className="button button-primary create-button"
+          className="button button-primary create-button eval-nav"
           onClick={() => {
             setForm(emptyForm);
             setShowCreate(true);
@@ -783,7 +967,7 @@ export default function App() {
         {view === "welcome" ? (
           <WelcomePage onOpenPlayground={openPlayground} onOpenEvaluation={openEvaluation} />
         ) : view === "evaluation" ? (
-          <EvaluationView summary={evaluation} onReload={openEvaluation} />
+          <EvaluationView summary={evaluation} pentest={pentest} onReload={openEvaluation} />
         ) : selected ? (
           <>
             <header className="agent-header">
