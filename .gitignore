@@ -2,8 +2,10 @@ node_modules/
 dist/
 **/dist/**
 
-.env
-.env.production
+# Never commit local credentials or their editor/backup variants. Keep only the
+# intentionally placeholder-only template under version control.
+.env*
+!.env.example
 
 .data/
 .local/

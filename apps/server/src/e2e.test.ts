@@ -80,6 +80,28 @@ class ScopedEgressRunner implements AgentRunner {
   }
 }
 
+/** Exhausts two consecutive allowances, then completes the same Codex thread. */
+class RepeatedBudgetRunner implements AgentRunner {
+  public calls: RunnerRequest[] = [];
+
+  async run(request: RunnerRequest): Promise<RunnerResult> {
+    this.calls.push(request);
+    if (this.calls.length <= 2) {
+      // Models the real runner, which learns the thread id before command 51.
+      throw new BudgetExceededError(50, 51, "budget-thread");
+    }
+    return { output: "finished after two renewals", threadId: "budget-thread", usage: null };
+  }
+
+  async cancel(): Promise<boolean> {
+    return false;
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
 /** Throws whatever it is given, once per run. Used for fault injection. */
 class ThrowingRunner implements AgentRunner {
   constructor(private readonly makeError: () => Error) {}
@@ -160,6 +182,76 @@ const runStatus = async (app: FastifyInstance, runId: string): Promise<string> =
 
 // @covers TM-AGENT-005
 describe("full governance loop over HTTP", () => {
+  it("renews the command allowance and asks again when the next allowance is exhausted", async () => {
+    const runner = new RepeatedBudgetRunner();
+    const { app } = await makeApp(runner);
+    const created = await post(app, "/api/agents", { name: "Long task" });
+    const agent = (created.json() as { agent: { id: string } }).agent;
+
+    const sent = await post(app, `/api/agents/${agent.id}/messages`, {
+      content: "complete the long task",
+    });
+    const firstRunId = (sent.json() as { run: { id: string } }).run.id;
+    await expect.poll(() => runStatus(app, firstRunId)).toBe("held");
+
+    const firstRequests = await get(app, `/api/agents/${agent.id}/approvals`);
+    const firstRequest = (
+      firstRequests.json() as { approvals: { id: string; rule: string; status: string }[] }
+    ).approvals[0]!;
+    expect(firstRequest).toMatchObject({
+      rule: "step-budget-exceeded",
+      status: "pending",
+    });
+
+    const firstDecision = await post(app, `/api/budget-continuations/${firstRequest.id}`, {
+      decision: "continue",
+    });
+    expect(firstDecision.statusCode).toBe(200);
+    const secondRun = (
+      firstDecision.json() as { continuationRun: { id: string } | null }
+    ).continuationRun!;
+    await expect.poll(() => runStatus(app, secondRun.id)).toBe("held");
+    expect(runner.calls[1]).toMatchObject({
+      threadId: "budget-thread",
+      prompt: "Continue the previous task from where you left off.",
+    });
+
+    const secondRequests = await get(app, `/api/agents/${agent.id}/approvals`);
+    const secondRequest = (
+      secondRequests.json() as { approvals: { id: string; status: string }[] }
+    ).approvals.find((request) => request.status === "pending")!;
+    expect(secondRequest.id).not.toBe(firstRequest.id);
+
+    const secondDecision = await post(app, `/api/budget-continuations/${secondRequest.id}`, {
+      decision: "continue",
+    });
+    const thirdRun = (
+      secondDecision.json() as { continuationRun: { id: string } | null }
+    ).continuationRun!;
+    await expect.poll(() => runStatus(app, thirdRun.id)).toBe("completed");
+    expect(runner.calls[2]?.threadId).toBe("budget-thread");
+  });
+
+  it("stops a held task without starting another run", async () => {
+    const runner = new RepeatedBudgetRunner();
+    const { app, service } = await makeApp(runner);
+    const created = await post(app, "/api/agents", { name: "Long task" });
+    const agent = (created.json() as { agent: { id: string } }).agent;
+    const sent = await post(app, `/api/agents/${agent.id}/messages`, { content: "work" });
+    const runId = (sent.json() as { run: { id: string } }).run.id;
+    await expect.poll(() => runStatus(app, runId)).toBe("held");
+    const request = service.listApprovals(agent.id)[0]!;
+
+    const decision = await post(app, `/api/budget-continuations/${request.id}`, {
+      decision: "stop",
+    });
+
+    expect(decision.statusCode).toBe(200);
+    expect((decision.json() as { continuationRun: unknown }).continuationRun).toBeNull();
+    expect(service.getApproval(request.id).status).toBe("denied");
+    expect(service.getRuns(agent.id)).toHaveLength(1);
+  });
+
   it("runs intercept -> hold -> approve -> continue -> recover without leaving the HTTP API", async () => {
     const runner = new ScopedEgressRunner();
     const { app } = await makeApp(runner);
@@ -488,10 +580,11 @@ const FAILURE_MODES: FailureMode[] = [
   {
     name: "step budget exceeded (runaway loop)",
     runner: () => new ThrowingRunner(() => new BudgetExceededError(50, 51)),
-    runStatus: "terminated",
+    runStatus: "held",
     agentStatus: "ready",
     agentLastError: false,
     policyEventRule: "step-budget-exceeded",
+    raisesApproval: true,
   },
   {
     name: "non-reviewable denial (secret exfiltration)",

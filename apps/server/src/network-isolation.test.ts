@@ -132,7 +132,10 @@ describe("broker readiness", () => {
     const args = buildBrokerProbeArgs("b", 8080);
     expect(args.slice(0, 3)).toEqual(["exec", "b", "node"]);
     expect(args.at(-1)).toContain("port:8080");
-    expect(args.at(-1)).toContain("127.0.0.1");
+    // By name, not by loopback. A loopback probe is green while the Agent
+    // cannot resolve the broker at all, which is the failure this catches.
+    expect(args.at(-1)).toContain('host:"b"');
+    expect(args.at(-1)).not.toContain("127.0.0.1");
   });
 
   it("returns true as soon as the probe succeeds", async () => {

@@ -1,0 +1,23 @@
+title = "Sentinel secret scanning"
+minVersion = "v8.25.0"
+
+[extend]
+useDefault = true
+
+# These are deliberately inert fixtures used in documentation and policy tests.
+# Keep each exception scoped to one rule and the exact fake value so nearby real
+# credentials still fail the scan.
+[[allowlists]]
+description = "Documented local-only example approver token"
+targetRules = ["curl-auth-header"]
+regexTarget = "line"
+regexes = [
+  '''Authorization:\s*Bearer\s+tok_local_dev_at_least_24_chars_ok''',
+]
+
+[[allowlists]]
+description = "Synthetic API-key-shaped policy test fixture"
+targetRules = ["generic-api-key"]
+regexes = [
+  '''^sk-live-abcdef123456$''',
+]

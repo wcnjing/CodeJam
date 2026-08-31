@@ -40,7 +40,12 @@ const RUNTIME_IMAGE = process.env.CONTAINER_RUNTIME_IMAGE || "volc-agent-runtime
 
 const suffix = Math.random().toString(36).slice(2, 8);
 const NET = `verify-egress-${suffix}`;
-const BROKER = `verify-egress-broker-${suffix}`;
+// Padded to the full 63-octet DNS label. The names the runner generates are
+// long — an instance id plus an agent UUID plus `-broker` — and a broker whose
+// name is one octet over resolves to nothing, so the Agent has no route to the
+// model while every other check stays green. Checking at the boundary here
+// means the live run exercises the same length the product does.
+const BROKER = `verify-egress-broker-${suffix}`.padEnd(63, "x");
 
 let failures = 0;
 const results = [];

@@ -40,7 +40,9 @@ not see. The residual documented
 here for most of this project's life — a fully base64-encoded command — is
 closed; see Limitations for what is still open, which is the part that matters.
 The physical "zero bytes left" claim comes from the live collector demo, not
-from this table.*
+from this table — recorded against Docker in
+[docs/evidence/](docs/evidence/), which also says which part of that demo is
+still unproven.*
 
 Run it locally with Docker, Colima, or rootless Podman.
 
@@ -186,11 +188,12 @@ flowchart LR
   audit trail cannot leak what the control protects.
 - **Monitor mode:** `POLICY_ENFORCEMENT=monitor` records decisions without
   terminating, for trialling a policy change against real traffic.
-- **Step budget (runaway control):** the platform kills any run exceeding
-  `POLICY_MAX_COMMANDS` shell commands (default 50) and marks it `terminated`.
-  Unlike the command policy, this is **always enforced** — a resource limit is
-  not a toggle. Distinct from the Starter Kit's wall-clock timeout and output
-  cap.
+- **Step budget (runaway control):** the platform stops the active process after
+  `POLICY_MAX_COMMANDS` shell commands (default 50), holds the task, and asks the
+  user whether to continue. Continuing resumes the same Codex thread with a
+  fresh allowance; reaching the limit again asks again. Unlike the command
+  policy, the boundary is **always enforced** — a resource limit is not a
+  toggle. Distinct from the Starter Kit's wall-clock timeout and output cap.
 - **Human approval (held runs):** a denied *egress* — a plausibly-legitimate
   destination like a package registry — does not have to be final. Instead of
   hard-blocking, it holds the run and raises an approval request. A named human
@@ -234,14 +237,26 @@ the default config this is **`held`**, not blocked: `registry.npmjs.org` is a
 plausibly-legitimate destination, so the Run pauses and raises an approval
 request showing the exact command and rule.
    - **Deny** (with a reason) → the held Run stays denied; nothing continues.
-   - **Approve** (with a reason) → a run-scoped host grant resumes the task
-     as a continuation Run that reaches the registry. A *second* task to the same
-     host is held again — the grant never widened the standing allowlist.
+   - **Approve** (with a reason) → a run-scoped host grant lets the command past
+     the *policy* and resumes the task as a continuation Run. A *second* task to
+     the same host is held again — the grant never widened the standing allowlist.
 
    This is the deterministic spine of the demo: the policy **always** holds this
    command, and approve/deny is a real, recorded human decision. (In a live run
    the model reached for `node -e "fetch(...)"` rather than `curl`; the
    interpreter-egress rule caught it anyway.)
+
+   > **An approval is a policy decision, not a network one.** With the default
+   > `CONTAINER_EGRESS_ISOLATION=true`, the broker allowlists exactly the model
+   > endpoint, and a human approval does **not** widen it. So the resumed Run
+   > runs the command and the destination is still unreachable — in the recorded
+   > run the Agent reported `EAI_AGAIN` on a direct fetch and `403` through the
+   > proxy, then finished and said so. That is the two layers behaving as
+   > designed: a human can release a *policy* hold, and no human decision in the
+   > app can talk the network layer into a route. If you want the continuation to
+   > actually reach the host, run with `CONTAINER_EGRESS_ISOLATION=false`, where
+   > the container has bridge networking and the command policy is the only
+   > control. See [docs/evidence/](docs/evidence/) for the transcript.
 
 **3. Hard block (secret rule, never reviewable).** A command that reads a
 protected secret *and* egresses is `secret-exfiltration` — hard-blocked, never
@@ -261,8 +276,9 @@ and **the collector records zero requests**.
 another ordinary task and it completes — the Agent stays usable after containment.
 
 **5. Runaway control.** With `POLICY_MAX_COMMANDS=5`, ask the Agent to run ten
-`echo` commands one at a time. It is **`terminated`** at the 6th, recorded as a
-`step-budget-exceeded` event, and the Agent recovers.
+`echo` commands one at a time. It is **held** at the 6th, recorded as a
+`step-budget-exceeded` event, and prompts for **Continue** or **Stop**. Continue
+resumes the same Codex thread with a fresh five-command allowance.
 
 Every new workspace is seeded with a deliberately fake credential at
 `.secrets/customer-db-url.txt`. No real secret is ever written to disk, and
@@ -821,9 +837,10 @@ Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage
 classifier quality, and policy latency — computed on demand from the same engine
 that enforces, so it can never drift from what actually runs.
 
-<sub>The screenshot below predates the current numbers (it shows the 1.0%
-base64 residual, since closed). The dashboard is computed live, so run it rather
-than reading figures off the image.</sub>
+<sub>Captured from the running engine at revision `1affb80` — 198 labelled
+cases, 0.0% predicted escape rate, 0/40 secret-channel attacks allowed. The
+dashboard is computed on demand, so run it rather than reading figures off the
+image: latency in particular is hardware-dependent.</sub>
 
 ![Sentinel Security Evaluation dashboard: baseline-vs-Sentinel policy-predicted escape rate, secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
@@ -831,7 +848,15 @@ than reading figures off the image.</sub>
 
 A reviewable egress denial pauses the run and shows the exact command, the rule,
 and requires an authenticated approver + reason before it can continue or be denied.
-The approver is taken from the credential on the request, so it cannot be typed in.
+The approver is taken from the credential on the request, so it cannot be typed in
+— the buttons read "Approve as alice" because `alice` is who the presented token
+identifies, and there is no approver field to fill in.
+
+<sub>A live run: `RUNTIME_PROVIDER=container` on Docker, a real model turn, and a
+throwaway local principal named `alice`. The command in the card is what the
+model chose to run, not what the operator typed. The full record — including
+what approving it did and did not grant — is in
+[docs/evidence/](docs/evidence/).</sub>
 
 ![A held run showing the Human approval required card with the network-egress-denied rule, the exact command, and approve/deny controls](docs/assets/held-approval.png)
 
@@ -864,6 +889,14 @@ Run `npm run doctor` to check all of the above at once, including the ports the
 demo needs and whether your key and `ARK_BASE_URL` actually agree — it exits
 non-zero and names the fix for anything that would otherwise fail after a
 multi-minute image build.
+
+The last check **infers once**, for a few tokens, because reachability is not
+availability: `GET /models` answers `200` for an account whose model has been
+paused on a spend limit, so preflight would otherwise report "credentials
+accepted" and every Run would then fail minutes later, after the image build.
+A paused model is reported as such, with the console setting that clears it —
+retrying never does. Use `npm run doctor -- --no-inference` to keep the cheap
+checks and skip the model call, or `--offline` to skip every network probe.
 
 ### See it work without a key
 
@@ -911,8 +944,17 @@ ARK_MODEL=ep-your-endpoint-id \
 npm run poc
 ```
 
-The first run installs Node.js dependencies and builds the Runtime image. The
-script automatically selects Docker, Colima, or Podman.
+That is the whole setup — one command. It reads `.env` if the repository has
+one (so `npm run poc` on its own is enough once it is filled in), installs
+Node.js dependencies on a cold checkout, builds **both** images the runtime
+needs — `volc-agent-runtime:local` and the `volc-egress-broker:local` sidecar
+that egress isolation depends on — checks the bind mounts, builds the Web and
+API, and starts the server. It selects Docker, Colima, or Podman on its own, and
+starts Colima or the Podman machine if the engine is installed but not running.
+
+Values exported in the shell take precedence over `.env`, so a one-off override
+still works. The file is parsed rather than sourced: `KEY=value` lines only,
+never shell.
 
 ### 4. Open the browser
 
@@ -1048,7 +1090,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `POLICY_ENFORCEMENT` | `enforce` | `monitor` records policy decisions without terminating (shadow mode). |
 | `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. |
 | `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
-| `POLICY_MAX_COMMANDS` | `50` | Step budget: a run exceeding this many shell commands is terminated. Always enforced. |
+| `POLICY_MAX_COMMANDS` | `50` | Commands per allowance. At the boundary the task is held for Continue/Stop; Continue grants a fresh allowance. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
 
 See [.env.example](.env.example) for all Runtime and resource-limit options.

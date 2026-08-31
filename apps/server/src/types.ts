@@ -83,7 +83,7 @@ export interface ApprovalRequest {
   agentId: string;
   /** The run that was held. */
   runId: string;
-  /** Original prompt, kept so an approval can resume the task. */
+  /** Prompt associated with the held run, kept so a continuation can resume it. */
   prompt: string;
   rule: string;
   command: string;
