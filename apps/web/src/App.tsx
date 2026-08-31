@@ -3,6 +3,7 @@ import { api, ApiError, setAuthToken } from "./api";
 import type {
   Agent,
   AgentRun,
+  Allowlist,
   ApprovalRequest,
   EvaluationSummary,
   Message,
@@ -461,6 +462,10 @@ export default function App() {
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [approvalReason, setApprovalReason] = useState("");
+  // The standing allowlist: config baseline (read-only) + store overrides.
+  const [allowlist, setAllowlist] = useState<Allowlist | null>(null);
+  const [showAllowlist, setShowAllowlist] = useState(false);
+  const [allowlistHost, setAllowlistHost] = useState("");
   const [view, setView] = useState<"welcome" | "agents" | "evaluation">("welcome");
   const [evaluation, setEvaluation] = useState<EvaluationSummary | null>(null);
   const [pentest, setPentest] = useState<EvaluationRunSummary | null>(null);
@@ -552,6 +557,52 @@ export default function App() {
     }
     return result.runs;
   }, []);
+
+  const refreshAllowlist = useCallback(async () => {
+    const next = await api.allowlist();
+    if (mountedRef.current) setAllowlist(next);
+    return next;
+  }, []);
+
+  const openAllowlist = useCallback(async () => {
+    setShowAllowlist(true);
+    setError(null);
+    try {
+      await refreshAllowlist();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, [refreshAllowlist]);
+
+  const addAllowlistHost = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const host = allowlistHost.trim();
+    if (!host) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { overrides } = await api.addAllowlistHost(host);
+      setAllowlistHost("");
+      setAllowlist((current) => (current ? { ...current, overrides } : current));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeAllowlistHost = async (host: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { overrides } = await api.removeAllowlistHost(host);
+      setAllowlist((current) => (current ? { ...current, overrides } : current));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const openEvaluation = useCallback(async () => {
     setView("evaluation");
@@ -743,6 +794,7 @@ export default function App() {
   const resolveApproval = async (
     approval: ApprovalRequest,
     decision: "approve" | "deny",
+    addToAllowlist = false,
   ) => {
     if (!selected) return;
     setBusy(true);
@@ -752,9 +804,16 @@ export default function App() {
         approval.id,
         decision,
         approvalReason.trim(),
+        addToAllowlist,
       );
       setApprovalReason("");
-      await Promise.all([refreshApprovals(selected.id), refreshAgents(), refreshRuns(selected.id)]);
+      await Promise.all([
+        refreshApprovals(selected.id),
+        refreshAgents(),
+        refreshRuns(selected.id),
+        // The standing allowlist may have grown; keep the panel honest.
+        addToAllowlist ? refreshAllowlist() : Promise.resolve(),
+      ]);
       if (result.continuationRun) {
         setActiveRun(result.continuationRun);
         void pollRun(result.continuationRun.id, selected.id).catch((reason) =>
@@ -884,6 +943,12 @@ export default function App() {
           onClick={openEvaluation}
         >
           <span>◈</span> Security Evaluation
+        </button>
+        <button
+          className={"button button-ghost eval-nav " + (showAllowlist ? "active" : "")}
+          onClick={openAllowlist}
+        >
+          <span>◉</span> Allowlist
         </button>
         <button
           className="button button-primary create-button"
@@ -1160,13 +1225,16 @@ export default function App() {
                 )}
                 {activeRun?.status === "held" && pendingApproval && (
                   <PendingApprovalCard
+                    key={pendingApproval.id}
                     mode={policyMode}
                     approval={pendingApproval}
                     principal={principal}
                     reason={approvalReason}
                     onReasonChange={setApprovalReason}
                     busy={busy}
-                    onResolve={(decision) => resolveApproval(pendingApproval, decision)}
+                    onResolve={(decision, addToAllowlist) =>
+                      resolveApproval(pendingApproval, decision, addToAllowlist)
+                    }
                   />
                 )}
                 {activeRun?.status === "blocked" && (
@@ -1254,6 +1322,94 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {showAllowlist && (
+        <div className="modal-backdrop" onMouseDown={() => setShowAllowlist(false)}>
+          <div
+            className="modal allowlist-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="eyebrow">Command policy</span>
+                <h2>Standing allowlist</h2>
+                <p>
+                  Hosts the Agent may contact. A command naming any other host is
+                  held for human approval; approving it with “add to the
+                  allowlist” — or adding it here — permits future commands to it
+                  without another approval. Ark&apos;s own host and loopback are
+                  always reachable.
+                </p>
+              </div>
+              <button type="button" onClick={() => setShowAllowlist(false)}>×</button>
+            </div>
+
+            {!allowlist ? (
+              <div className="eval-loading">
+                <Spinner /> Loading the allowlist…
+              </div>
+            ) : (
+              <>
+                <form className="allowlist-add" onSubmit={addAllowlistHost}>
+                  <input
+                    value={allowlistHost}
+                    onChange={(event) => setAllowlistHost(event.target.value)}
+                    placeholder="registry.npmjs.org"
+                    aria-label="Host to allow"
+                  />
+                  <button
+                    className="button button-primary"
+                    disabled={busy || !allowlistHost.trim()}
+                  >
+                    {busy ? <Spinner /> : "Allow host"}
+                  </button>
+                </form>
+
+                {allowlist.overrides.length > 0 && (
+                  <div className="allowlist-section">
+                    <span className="eyebrow">Added by you (removable)</span>
+                    <ul className="allowlist-hosts">
+                      {allowlist.overrides.map((host) => (
+                        <li key={host}>
+                          <code>{host}</code>
+                          <button
+                            className="button button-ghost allowlist-remove"
+                            disabled={busy}
+                            onClick={() => void removeAllowlistHost(host)}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {allowlist.config.length > 0 && (
+                  <div className="allowlist-section">
+                    <span className="eyebrow">From POLICY_ALLOWED_HOSTS (read-only)</span>
+                    <ul className="allowlist-hosts">
+                      {allowlist.config.map((host) => (
+                        <li key={host}>
+                          <code>{host}</code>
+                          <span className="policy-note">config</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {allowlist.overrides.length === 0 && allowlist.config.length === 0 && (
+                  <p className="policy-note">
+                    The allowlist is empty: only Ark&apos;s own host and loopback
+                    are reachable, so most egress is flagged for approval.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {showCreate && (
         <div className="modal-backdrop" onMouseDown={() => setShowCreate(false)}>

@@ -4,19 +4,20 @@
  * Runs inside its own container, dual-homed: attached to the Agent's isolated
  * network (where it is the only reachable thing) and to a network with an
  * outbound route (where it is the only thing that may leave). It allowlists
- * exactly one endpoint, passed in as EGRESS_ALLOW_URL.
+ * the endpoints named in EGRESS_ALLOW_URL — the model API plus the effective
+ * command-policy allowlist, comma-separated — and refuses everything else.
  *
  * Deliberately dependency-free — only node builtins — so the sidecar image is a
  * bare node base plus one bundled file, and the thing standing between an
  * untrusted Agent and the internet has no supply chain of its own.
  */
-import { createEgressBroker, parseEgressEndpoint } from "./egress-broker.js";
+import { createEgressBroker, parseEgressEndpoints } from "./egress-broker.js";
 
-const allowUrl = (process.env.EGRESS_ALLOW_URL ?? "").trim();
+const allowUrls = (process.env.EGRESS_ALLOW_URL ?? "").trim();
 const port = Number(process.env.EGRESS_LISTEN_PORT ?? 8080);
 const host = (process.env.EGRESS_LISTEN_HOST ?? "0.0.0.0").trim();
 
-if (!allowUrl) {
+if (!allowUrls) {
   console.error("EGRESS_ALLOW_URL is required: the broker refuses to run without an allowlist.");
   process.exit(2);
 }
@@ -27,9 +28,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 let allow;
 try {
-  allow = parseEgressEndpoint(allowUrl);
+  allow = parseEgressEndpoints(allowUrls);
 } catch (error) {
   console.error("EGRESS_ALLOW_URL is not usable: " + (error as Error).message);
+  process.exit(2);
+}
+if (allow.length === 0) {
+  console.error("EGRESS_ALLOW_URL must name at least one endpoint.");
   process.exit(2);
 }
 
@@ -53,7 +58,7 @@ server.listen(port, host, () => {
     JSON.stringify({
       event: "egress-broker-ready",
       listening: host + ":" + port,
-      allow: allow.host + ":" + allow.port,
+      allow: allow.map((endpoint) => endpoint.host + ":" + endpoint.port).join(","),
     }),
   );
 });

@@ -4,6 +4,7 @@ import {
   createEgressBroker,
   isForbiddenAddress,
   parseEgressEndpoint,
+  parseEgressEndpoints,
 } from "./egress-broker.js";
 
 const servers: Server[] = [];
@@ -119,17 +120,68 @@ describe("parseEgressEndpoint", () => {
   it("refuses a non-http scheme", () => {
     expect(() => parseEgressEndpoint("ftp://ark.example.invalid")).toThrow(/http/i);
   });
+
+  it("parses a comma-separated allowlist, lowercasing and deduping", () => {
+    expect(
+      parseEgressEndpoints(
+        "https://Ark.Example.invalid, https://google.com:8443,https://ark.example.invalid",
+      ),
+    ).toEqual([
+      { host: "ark.example.invalid", port: 443 },
+      { host: "google.com", port: 8443 },
+    ]);
+    // Empty input is an empty allowlist; the CLI refuses to run with it.
+    expect(parseEgressEndpoints("  ,  ")).toEqual([]);
+    expect(() => parseEgressEndpoints("not-a-url")).toThrow();
+  });
 });
 
 describe("egress broker", () => {
   it("refuses a destination that is not the allowlisted one", async () => {
-    const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
+    const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     const response = await connect(port, "CONNECT evil.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
   });
 
+  it("tunnels to any allowlisted endpoint, not just the first", async () => {
+    // The whole point of a widened broker allowlist: a host the operator
+    // allowlisted (or approved) is actually reachable, while everything that is
+    // still not on the list is refused exactly as before.
+    const upstream = createServer((socket) => {
+      socket.on("data", (chunk) => socket.end("echo:" + chunk.toString("utf8")));
+    });
+    const upstreamPort = await listen(upstream);
+
+    const brokerPort = await listen(
+      createEgressBroker({
+        allow: [
+          { host: "ark.example.invalid", port: 443 },
+          { host: "google.com", port: 443 },
+        ],
+        resolve: async () => ["93.184.216.34"],
+        dial: (_target, onReady) =>
+          createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
+      }),
+    );
+
+    const response = await connect(
+      brokerPort,
+      "CONNECT google.com:443 HTTP/1.1\r\n\r\n",
+      "ping",
+    );
+    expect(response).toContain("200 Connection Established");
+    expect(response).toContain("echo:ping");
+
+    // A destination on neither endpoint is still refused before any DNS.
+    const refused = await connect(
+      brokerPort,
+      "CONNECT evil.example.invalid:443 HTTP/1.1\r\n\r\n",
+    );
+    expect(refused).toContain("403");
+  });
+
   it("refuses the right host on the wrong port", async () => {
-    const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
+    const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     const response = await connect(port, "CONNECT ark.example.invalid:22 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
   });
@@ -137,7 +189,7 @@ describe("egress broker", () => {
   it("never resolves a non-allowlisted name, so it cannot be a DNS oracle", async () => {
     const asked: string[] = [];
     const port = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async (h) => { asked.push(h); return ["8.8.8.8"]; } }),
+      createEgressBroker({ allow: [ALLOW], resolve: async (h) => { asked.push(h); return ["8.8.8.8"]; } }),
     );
     await connect(port, "CONNECT internal.corp.invalid:443 HTTP/1.1\r\n\r\n");
     expect(asked).toEqual([]);
@@ -146,7 +198,7 @@ describe("egress broker", () => {
   it("refuses an allowlisted name that resolves to a private address", async () => {
     // The rebinding case: the name is allowed, the address is not.
     const port = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => ["127.0.0.1"] }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => ["127.0.0.1"] }),
     );
     const response = await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
@@ -154,7 +206,7 @@ describe("egress broker", () => {
 
   it("refuses when any one of several answers is private", async () => {
     const port = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => ["93.184.216.34", "169.254.169.254"] }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => ["93.184.216.34", "169.254.169.254"] }),
     );
     const response = await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
@@ -162,16 +214,16 @@ describe("egress broker", () => {
 
   it("fails closed when DNS fails or returns nothing", async () => {
     const failing = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => { throw new Error("SERVFAIL"); } }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => { throw new Error("SERVFAIL"); } }),
     );
     expect(await connect(failing, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain("502");
 
-    const empty = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => [] }));
+    const empty = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => [] }));
     expect(await connect(empty, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain("502");
   });
 
   it("refuses anything that is not a CONNECT request", async () => {
-    const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
+    const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     expect(await connect(port, "GET http://ark.example.invalid/ HTTP/1.1\r\n\r\n")).toContain("400");
   });
 
@@ -187,7 +239,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) =>
           createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
@@ -210,7 +262,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) => {
           const socket = createConnection({ host: "127.0.0.1", port: upstreamPort }, () => {
@@ -244,7 +296,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) =>
           createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
@@ -280,7 +332,7 @@ describe("egress broker", () => {
     // Fail closed on a client that opens a socket and dribbles: the broker is
     // the Agent's only edge, so a stuck request must not hold it open forever.
     const brokerPort = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => ["93.184.216.34"], headTimeoutMs: 200 }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => ["93.184.216.34"], headTimeoutMs: 200 }),
     );
 
     const closed = await new Promise<boolean>((resolve, reject) => {
@@ -308,7 +360,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["2606:4700::1111", "93.184.216.34"],
         dial: (target, onReady) => {
           dialled.push(target.host);
@@ -334,7 +386,7 @@ describe("egress broker", () => {
     const denials: string[] = [];
     const port = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["10.0.0.1"],
         onDenied: (reason) => denials.push(reason),
       }),

@@ -142,10 +142,17 @@ export class ContainerCodexRunner implements AgentRunner {
    * until the broker answers. A run started against a broker that has not bound
    * yet fails as what looks like a model outage — the failure mode most likely
    * to be misread as flakiness rather than as containment being broken.
+   *
+   * `extraAllowedHosts` are this run's approval grants; they join the broker's
+   * own allowlist (beside the config baseline and store overrides) so a host a
+   * human approved is actually reachable through the container's only edge.
    */
-  private async startIsolation(agentId: string): Promise<IsolationHandle | null> {
+  private async startIsolation(
+    agentId: string,
+    extraAllowedHosts: string[] = [],
+  ): Promise<IsolationHandle | null> {
     if (!this.config.containerEgressIsolation) return null;
-    const handle = await this.isolation.setup(agentId);
+    const handle = await this.isolation.setup(agentId, extraAllowedHosts);
     this.isolated.set(agentId, handle);
     const ready = await this.isolation.waitUntilReady(
       handle,
@@ -226,7 +233,7 @@ export class ContainerCodexRunner implements AgentRunner {
       throw new Error("Agent already has an active Runtime container");
     }
 
-    await this.startIsolation(request.agentId);
+    await this.startIsolation(request.agentId, request.extraAllowedHosts ?? []);
     try {
       return await this.runContained(request);
     } catch (error) {

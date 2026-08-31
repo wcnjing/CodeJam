@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
+import { parseEgressEndpoint, type EgressEndpoint } from "./egress-broker.js";
 import { agentBrokerName, agentNetworkName } from "./container-codex-runner.js";
 
 const execFileAsync = promisify(execFile);
@@ -48,7 +49,7 @@ export function buildBrokerRunArgs(options: {
   broker: string;
   network: string;
   image: string;
-  allowUrl: string;
+  allowUrls: string[];
   port: number;
   user: string;
 }): string[] {
@@ -74,11 +75,42 @@ export function buildBrokerRunArgs(options: {
     "--user",
     options.user,
     "--env",
-    "EGRESS_ALLOW_URL=" + options.allowUrl,
+    "EGRESS_ALLOW_URL=" + options.allowUrls.join(","),
     "--env",
     "EGRESS_LISTEN_PORT=" + options.port,
     options.image,
   ];
+}
+
+/**
+ * The endpoints one run's broker will permit, as EGRESS_ALLOW_URL entries.
+ *
+ * Always the model API, plus every host on the effective command-policy
+ * allowlist: the config baseline (`POLICY_ALLOWED_HOSTS`), the store-backed
+ * overrides the operator edits in the UI, and the run-scoped grant an approval
+ * adds. Without this the broker — the container's ONLY route out — refused
+ * allowlisted hosts, so a command the policy allowed still could not reach its
+ * destination. Allowlisted hosts are CONNECTed on 443, the port a hostname
+ * flag carries no information about; the broker only speaks CONNECT anyway, so
+ * plain-http destinations are out of scope regardless.
+ */
+export function buildEgressAllowUrls(
+  config: AppConfig,
+  extraHosts: readonly string[] = [],
+): string[] {
+  const endpoints: EgressEndpoint[] = [parseEgressEndpoint(config.arkBaseUrl)];
+  for (const host of [...config.policyAllowedHosts, ...extraHosts]) {
+    endpoints.push({ host: host.toLowerCase(), port: 443 });
+  }
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const endpoint of endpoints) {
+    const key = endpoint.host + ":" + endpoint.port;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push("https://" + endpoint.host + (endpoint.port === 443 ? "" : ":" + endpoint.port));
+  }
+  return urls;
 }
 
 /** Gives the broker its second home: a network that actually has a route out. */
@@ -148,8 +180,12 @@ export class EgressIsolation {
    * whatever was already created and throws: a half-built topology would leave
    * the Agent on an internal network with no broker, which is a hang rather
    * than an error, and leak a network besides.
+   *
+   * `extraAllowedHosts` are the run-scoped hosts (approval grants) that join
+   * the broker's allowlist beside the config baseline and store overrides —
+   * the same effective list the command policy evaluates against.
    */
-  async setup(agentId: string): Promise<IsolationHandle> {
+  async setup(agentId: string, extraAllowedHosts: string[] = []): Promise<IsolationHandle> {
     const network = agentNetworkName(agentId, this.config);
     const broker = agentBrokerName(agentId, this.config);
     // A previous crash can leave both behind; the names are deterministic, so
@@ -166,7 +202,7 @@ export class EgressIsolation {
         broker,
         network,
         image: this.config.containerEgressBrokerImage,
-        allowUrl: this.config.arkBaseUrl,
+        allowUrls: buildEgressAllowUrls(this.config, extraAllowedHosts),
         port: this.config.containerEgressBrokerPort,
         user: this.config.containerUser,
       }),

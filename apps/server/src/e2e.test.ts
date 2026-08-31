@@ -281,6 +281,82 @@ describe("full governance loop over HTTP", () => {
       "pending",
     );
   });
+
+  it("exposes an editable standing allowlist, and an approval can widen it", async () => {
+    const runner = new ScopedEgressRunner("docs.example.com");
+    const { app } = await makeApp(runner);
+
+    // The baseline is read-only; the overrides list is what the UI edits.
+    const initial = (await get(app, "/api/allowlist")).json() as {
+      config: string[];
+      overrides: string[];
+    };
+    expect(initial).toEqual({ config: [], overrides: [] });
+
+    // Add and remove over HTTP, with validation.
+    const added = await post(app, "/api/allowlist", { host: " Docs.Example.com " });
+    expect(added.statusCode).toBe(201);
+    expect((added.json() as { overrides: string[] }).overrides).toEqual(["docs.example.com"]);
+
+    const duplicate = await post(app, "/api/allowlist", { host: "docs.example.com" });
+    expect(duplicate.statusCode).toBe(201);
+    expect((duplicate.json() as { overrides: string[] }).overrides).toEqual(["docs.example.com"]);
+
+    const invalid = await post(app, "/api/allowlist", { host: "https://docs.example.com/x" });
+    expect(invalid.statusCode).toBe(400);
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: "/api/allowlist/docs.example.com",
+      headers: AUTH,
+    });
+    expect(removed.statusCode).toBe(200);
+    expect((removed.json() as { overrides: string[] }).overrides).toEqual([]);
+
+    // Now the governance loop: hold -> approve WITH widening -> the next task
+    // to the same host runs without being held again.
+    const created = await post(app, "/api/agents", { name: "Widener" });
+    const agent = (created.json() as { agent: { id: string } }).agent;
+    const sent = await post(app, `/api/agents/${agent.id}/messages`, { content: "fetch docs" });
+    const heldRunId = (sent.json() as { run: { id: string } }).run.id;
+    await expect.poll(() => runStatus(app, heldRunId)).toBe("held");
+
+    const pending = (
+      (await get(app, `/api/agents/${agent.id}/approvals`)).json() as {
+        approvals: { id: string; hosts: string[] }[];
+      }
+    ).approvals[0]!;
+    const decision = await post(app, `/api/approvals/${pending.id}`, {
+      decision: "approve",
+      reason: "the docs host is a trusted mirror",
+      allowlist: true,
+    });
+    expect(decision.statusCode).toBe(200);
+    const continuation = (decision.json() as { continuationRun: { id: string } }).continuationRun;
+    await expect.poll(() => runStatus(app, continuation.id)).toBe("completed");
+
+    // The widening is visible over HTTP and recorded on the decision.
+    const afterWiden = (await get(app, "/api/allowlist")).json() as { overrides: string[] };
+    expect(afterWiden.overrides).toEqual(["docs.example.com"]);
+    const recorded = (await get(app, `/api/agents/${agent.id}/approvals`)).json() as {
+      approvals: { allowlistWidened: string[] | null }[];
+    };
+    expect(recorded.approvals[0]!.allowlistWidened).toEqual(["docs.example.com"]);
+
+    // A NEW task to the same host completes without a second approval — the
+    // override is standing now, reaching the runner on every run.
+    const second = await post(app, `/api/agents/${agent.id}/messages`, {
+      content: "fetch docs again",
+    });
+    const secondRunId = (second.json() as { run: { id: string } }).run.id;
+    await expect.poll(() => runStatus(app, secondRunId)).toBe("completed");
+    const pendingAfter = (
+      (await get(app, `/api/agents/${agent.id}/approvals`)).json() as {
+        approvals: { status: string }[];
+      }
+    ).approvals.filter((a) => a.status === "pending");
+    expect(pendingAfter).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

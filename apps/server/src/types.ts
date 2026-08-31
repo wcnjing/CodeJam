@@ -112,6 +112,14 @@ export interface ApprovalRequest {
   resolvedAt: string | null;
   /** The continuation run created when approved, if any. */
   continuationRunId: string | null;
+  /**
+   * Hosts this approval added to the STANDING allowlist (the store-backed
+   * override list), present only when the approver chose "approve and widen".
+   * Absent on pre-v4 records, which predate the widening option; null on every
+   * record written since. Recorded so the audit trail can say for itself that
+   * a decision was also a permanent config change.
+   */
+  allowlistWidened?: string[] | null;
 }
 
 /**
@@ -151,19 +159,36 @@ export interface DatabaseV2 {
   approvals: ApprovalRequest[];
 }
 
-export interface Database {
-  /**
-   * 3: policy events moved out of this blob into an append-only JSONL log
-   * beside it, so recording one decision stopped costing O(events already
-   * stored). `policyEvents` below is still the read shape -- callers and the
-   * API are unchanged -- it is simply no longer where the events are persisted.
-   */
+/**
+ * Frozen history: the shape v3 wrote. Kept for the same reason the other
+ * versions are — the v3->v4 migration step is typed against what a v3 record
+ * actually had, not against today's `Database`. Never widen this to fix a
+ * compile error in a newer migration; add the next step.
+ */
+export interface DatabaseV3 {
   version: 3;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
   policyEvents: PolicyDecision[];
   approvals: ApprovalRequest[];
+}
+
+export interface Database {
+  /**
+   * 4: the store now carries a standing, operator-editable allowlist override
+   * (`allowlist`) on top of the immutable POLICY_ALLOWED_HOSTS config baseline.
+   * Writes to it are themselves governance events: the only writers are the
+   * allowlist API and an approval that explicitly chooses to widen.
+   */
+  version: 4;
+  agents: Agent[];
+  messages: Message[];
+  runs: AgentRun[];
+  policyEvents: PolicyDecision[];
+  approvals: ApprovalRequest[];
+  /** Hosts allowed on top of the config baseline, editable in the UI. */
+  allowlist: string[];
 }
 
 export interface CreateAgentInput {
@@ -205,7 +230,9 @@ export interface RunnerRequest {
   /**
    * Hosts allowed for this run only, on top of the standing allowlist. Set when
    * a human has approved a held run; scoped to this single execution and never
-   * persisted to config.
+   * persisted to config. The service merges the store-backed allowlist override
+   * in here too, so a runner consuming this field sees the FULL effective
+   * allowlist (config baseline + overrides + run-scoped grant).
    */
   extraAllowedHosts?: string[];
 }

@@ -160,8 +160,32 @@ export function parseEgressEndpoint(baseUrl: string): EgressEndpoint {
   return { host: url.hostname.toLowerCase(), port };
 }
 
+/**
+ * Parses a comma-separated EGRESS_ALLOW_URL into the endpoints the Agent may
+ * reach. The broker's allowlist used to be a single endpoint (the model API);
+ * it is now the model API plus the effective command-policy allowlist, so a
+ * host an operator has allowlisted is actually reachable, not just
+ * policy-allowed. Duplicates collapse; empty input yields an empty list, which
+ * the CLI refuses.
+ */
+export function parseEgressEndpoints(raw: string): EgressEndpoint[] {
+  const seen = new Set<string>();
+  const endpoints: EgressEndpoint[] = [];
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const endpoint = parseEgressEndpoint(trimmed);
+    const key = endpoint.host + ":" + endpoint.port;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    endpoints.push(endpoint);
+  }
+  return endpoints;
+}
+
 export interface BrokerOptions {
-  allow: EgressEndpoint;
+  /** Every destination the Agent may reach; anything else is refused. */
+  allow: EgressEndpoint[];
   /** Injectable for tests; defaults to real DNS. */
   resolve?: (hostname: string) => Promise<string[]>;
   /**
@@ -297,7 +321,10 @@ export function createEgressBroker(options: BrokerOptions): Server {
 
       // Allowlist first: an unknown name is never even resolved, so the
       // broker cannot be used as a DNS oracle for arbitrary hostnames.
-      if (target.host !== options.allow.host || target.port !== options.allow.port) {
+      const allowed = options.allow.some(
+        (endpoint) => endpoint.host === target.host && endpoint.port === target.port,
+      );
+      if (!allowed) {
         return deny(client, "403 Forbidden", "destination not allowlisted", label);
       }
 

@@ -127,6 +127,35 @@ describe("container runner with egress isolation on", () => {
     expect(probe![1]).toBe("sentinel-test-a-broker");
   }, 30_000);
 
+  it("passes the run's approved hosts into the broker allowlist", async () => {
+    // A human-approved host must be reachable through the container's only
+    // edge, not just policy-allowed: the broker for the run carries the model
+    // API plus the run's granted hosts in its EGRESS_ALLOW_URL.
+    const logDir = await mkdtemp(path.join(tmpdir(), "engine-log-"));
+    dirs.push(logDir);
+    const logPath = path.join(logDir, "argv.log");
+    await writeFile(logPath, "", "utf8");
+    const engine = await fakeEngine(logPath);
+    const { runner, workspace } = await makeRunner(engine);
+
+    await runner.run({
+      agentId: "a",
+      workspacePath: workspace,
+      prompt: "x",
+      threadId: null,
+      extraAllowedHosts: ["google.com"],
+    });
+
+    const calls: string[][] = (await readFile(logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+    const broker = calls.find((c) => c[0] === "run" && c.includes("--detach"));
+    expect(broker, "the broker was never started").toBeDefined();
+    const allow = broker!.find((arg) => arg.startsWith("EGRESS_ALLOW_URL="));
+    expect(allow).toBe("EGRESS_ALLOW_URL=https://ark.example.invalid,https://google.com");
+  }, 30_000);
+
   it("refuses to start the Agent when the broker never answers", async () => {
     // Fail closed: an Agent started against a dead broker has no route out and
     // fails as what looks like a model outage.

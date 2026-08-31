@@ -4,6 +4,7 @@ import {
   EgressIsolation,
   buildBrokerConnectArgs,
   buildBrokerRunArgs,
+  buildEgressAllowUrls,
   buildNetworkCreateArgs,
   buildBrokerProbeArgs,
   type EngineResult,
@@ -52,13 +53,43 @@ describe("isolation argv", () => {
 
   it("starts the broker contained as tightly as the Agent", () => {
     const args = buildBrokerRunArgs({
-      broker: "b", network: "n", image: "img", allowUrl: "https://ark.example.invalid", port: 8080, user: "1000:1000",
+      broker: "b", network: "n", image: "img", allowUrls: ["https://ark.example.invalid"], port: 8080, user: "1000:1000",
     });
     expect(args).toContain("--read-only");
     expect(args).toContain("no-new-privileges");
     expect(args).toContain("ALL"); // --cap-drop ALL
     expect(args).toContain("EGRESS_ALLOW_URL=https://ark.example.invalid");
     expect(args[args.indexOf("--network") + 1]).toBe("n");
+  });
+
+  it("passes the full effective allowlist to the broker", () => {
+    const configWithHosts = loadConfig({
+      NODE_ENV: "test",
+      ARK_API_KEY: "k",
+      ARK_MODEL: "ep-test",
+      ARK_BASE_URL: "https://ark.example.invalid/api/v3",
+      RUNTIME_PROVIDER: "container",
+      CONTAINER_EGRESS_ISOLATION: "true",
+      POLICY_ALLOWED_HOSTS: "google.com, docs.example.com",
+    });
+    // Ark always, config baseline, store overrides, and a run-scoped approval
+    // grant — deduped into one comma-separated EGRESS_ALLOW_URL.
+    const urls = buildEgressAllowUrls(configWithHosts, [
+      "docs.example.com",
+      "registry.npmjs.org",
+    ]);
+    expect(urls).toEqual([
+      "https://ark.example.invalid",
+      "https://google.com",
+      "https://docs.example.com",
+      "https://registry.npmjs.org",
+    ]);
+    const args = buildBrokerRunArgs({
+      broker: "b", network: "n", image: "img", allowUrls: urls, port: 8080, user: "1000:1000",
+    });
+    expect(args).toContain(
+      "EGRESS_ALLOW_URL=https://ark.example.invalid,https://google.com,https://docs.example.com,https://registry.npmjs.org",
+    );
   });
 
   it("gives the broker a second, outbound network", () => {
