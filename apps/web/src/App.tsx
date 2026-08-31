@@ -15,7 +15,7 @@ import type {
 } from "./types";
 import { AuditTimeline } from "./components/AuditTimeline";
 import { DecisionExplanation } from "./components/DecisionExplanation";
-import type { PolicyMode } from "./lib/ruleExplanations";
+import type { PolicyMode, RuntimeMode } from "./lib/ruleExplanations";
 import { PendingApprovalCard, ResolvedApprovalCard } from "./components/ApprovalCard";
 import { RecoveryBanner } from "./components/RecoveryBanner";
 import { WelcomePage } from "./components/WelcomePage";
@@ -451,6 +451,15 @@ export default function App() {
   // described accurately instead of aspirationally.
   const policyMode: PolicyMode | null = system
     ? { enforcement: system.policyEnforcement, reviewRules: system.policyReviewRules }
+    : null;
+  // Same idea one layer down: what a denial actually PREVENTED depends on
+  // whether there is a broker under the policy layer. Without this the
+  // consequence copy asserts the no-broker answer on every deployment.
+  const runtimeMode: RuntimeMode | null = system
+    ? {
+        provider: system.runtimeProvider,
+        egressIsolation: system.containerEgressIsolation,
+      }
     : null;
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1217,6 +1226,7 @@ export default function App() {
                           command={budgetDecision.command}
                           detail={budgetDecision.detail}
                           mode={policyMode}
+                          runtime={runtimeMode}
                         />
                       )}
                     </article>
@@ -1235,6 +1245,7 @@ export default function App() {
                   <PendingApprovalCard
                     key={pendingApproval.id}
                     mode={policyMode}
+                    runtime={runtimeMode}
                     approval={pendingApproval}
                     principal={principal}
                     reason={approvalReason}
@@ -1261,6 +1272,7 @@ export default function App() {
                           command={blockedDecision.command}
                           detail={blockedDecision.detail}
                           mode={policyMode}
+                          runtime={runtimeMode}
                         />
                       )}
                     </article>
