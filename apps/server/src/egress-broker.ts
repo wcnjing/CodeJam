@@ -38,28 +38,80 @@ export function isForbiddenAddress(address: string): boolean {
   const version = isIP(address);
   if (version === 0) return true; // not an address at all: fail closed
 
-  if (version === 4) return isForbiddenIPv4(address);
+  if (version === 4) {
+    const bytes = ipv4Bytes(address);
+    return bytes === null ? true : isForbiddenIPv4(bytes);
+  }
 
-  const lower = address.toLowerCase();
-  // IPv4-mapped (::ffff:10.0.0.1) carries an IPv4 address inside an IPv6
-  // literal; classify it as the IPv4 address it actually is.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-  if (mapped) return isForbiddenIPv4(mapped[1]!);
-
-  if (lower === "::1" || lower === "::") return true;
-  if (lower.startsWith("fe8") || lower.startsWith("fe9")) return true; // fe80::/10
-  if (lower.startsWith("fea") || lower.startsWith("feb")) return true;
-  if (/^f[cd]/.test(lower)) return true; // fc00::/7 unique local
-  if (lower.startsWith("ff")) return true; // multicast
-  return false;
+  // Decided on the address's bytes, never on how it happens to be spelled.
+  // getaddrinfo returns the hex form (::ffff:7f00:1), so a textual check for
+  // the dotted-quad spelling ("::ffff:127.0.0.1") misses the very case this
+  // function exists to stop: a hostile AAAA record for the allowlisted name
+  // pointing at loopback or at the metadata service.
+  const bytes = ipv6Bytes(address);
+  return bytes === null ? true : isForbiddenIPv6(bytes);
 }
 
-function isForbiddenIPv4(address: string): boolean {
-  const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-    return true;
+function ipv4Bytes(address: string): Uint8Array | null {
+  const parts = address.split(".");
+  if (parts.length !== 4) return null;
+  const bytes = new Uint8Array(4);
+  for (let index = 0; index < 4; index += 1) {
+    const part = parts[index]!;
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const value = Number(part);
+    if (value > 255) return null;
+    bytes[index] = value;
   }
-  const [a, b] = parts as [number, number, number, number];
+  return bytes;
+}
+
+/** Expands an IPv6 literal — `::` compression and a trailing dotted quad included. */
+function ipv6Bytes(address: string): Uint8Array | null {
+  const text = address.toLowerCase().split("%")[0]!; // drop any zone id
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+
+  const expand = (part: string): number[] | null => {
+    if (part === "") return [];
+    const groups = part.split(":");
+    const out: number[] = [];
+    for (let index = 0; index < groups.length; index += 1) {
+      const group = groups[index]!;
+      if (group.includes(".")) {
+        // A dotted quad is only legal as the final group.
+        if (index !== groups.length - 1) return null;
+        const quad = ipv4Bytes(group);
+        if (!quad) return null;
+        out.push(quad[0]!, quad[1]!, quad[2]!, quad[3]!);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/.test(group)) return null;
+      const value = Number.parseInt(group, 16);
+      out.push(value >> 8, value & 0xff);
+    }
+    return out;
+  };
+
+  const head = expand(halves[0]!);
+  const tail = halves.length === 2 ? expand(halves[1]!) : [];
+  if (!head || !tail) return null;
+
+  const bytes = new Uint8Array(16);
+  if (halves.length === 1) {
+    if (head.length !== 16) return null;
+    bytes.set(head);
+    return bytes;
+  }
+  // `::` has to stand for at least one zero group, or the literal is malformed.
+  if (head.length + tail.length > 14) return null;
+  bytes.set(head, 0);
+  bytes.set(tail, 16 - tail.length);
+  return bytes;
+}
+
+function isForbiddenIPv4(bytes: Uint8Array): boolean {
+  const [a, b] = bytes as unknown as [number, number, number, number];
   if (a === 0) return true; // 0.0.0.0/8
   if (a === 10) return true; // RFC1918
   if (a === 127) return true; // loopback
@@ -68,6 +120,30 @@ function isForbiddenIPv4(address: string): boolean {
   if (a === 192 && b === 168) return true; // RFC1918
   if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
   if (a >= 224) return true; // multicast and reserved, incl. 255.255.255.255
+  return false;
+}
+
+function isForbiddenIPv6(b: Uint8Array): boolean {
+  const zeroesThrough = (count: number) => b.slice(0, count).every((byte) => byte === 0);
+
+  if (zeroesThrough(15) && (b[15] === 0 || b[15] === 1)) return true; // :: and ::1
+
+  // Both IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::/96) carry an IPv4
+  // address in the low four bytes. Classify each as the IPv4 address it is.
+  if (zeroesThrough(10) && b[10] === 0xff && b[11] === 0xff) return isForbiddenIPv4(b.slice(12));
+  if (zeroesThrough(12)) return isForbiddenIPv4(b.slice(12));
+
+  if (b[0] === 0xff) return true; // ff00::/8 multicast
+  if (b[0] === 0xfe && (b[1]! & 0xc0) === 0x80) return true; // fe80::/10 link-local
+  if (b[0] === 0xfe && (b[1]! & 0xc0) === 0xc0) return true; // fec0::/10 site-local (deprecated)
+  if ((b[0]! & 0xfe) === 0xfc) return true; // fc00::/7 unique local
+
+  // 6to4 and Teredo are both ways of naming an IPv4 destination in an IPv6
+  // literal. 6to4 embeds the address in the clear; Teredo obfuscates the client
+  // half, so the whole deprecated prefix goes rather than half of it.
+  if (b[0] === 0x20 && b[1] === 0x02) return isForbiddenIPv4(b.slice(2, 6));
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] === 0x00) return true;
+
   return false;
 }
 
@@ -95,7 +171,16 @@ export interface BrokerOptions {
    */
   dial?: (target: { host: string; port: number }, onReady: () => void) => Socket;
   onDenied?: (reason: string, target: string) => void;
+  /**
+   * How long a client has to finish its request head. The broker is the Agent's
+   * only edge, so a socket that opens and then dribbles must not hold it open
+   * indefinitely.
+   */
+  headTimeoutMs?: number;
 }
+
+/** A CONNECT head is one short line; anything larger is not one. */
+const MAX_HEAD_BYTES = 8_192;
 
 async function defaultResolve(hostname: string): Promise<string[]> {
   if (isIP(hostname) !== 0) return [hostname];
@@ -125,49 +210,137 @@ export function createEgressBroker(options: BrokerOptions): Server {
     socket.end("HTTP/1.1 " + code + "\r\nConnection: close\r\n\r\n");
   };
 
+  /**
+   * Connects to the first address that answers.
+   *
+   * Every address has already been through isForbiddenAddress, so trying more
+   * than one widens nothing. It fixes an availability hole instead: a dual
+   * stack name whose AAAA sorts first is unreachable from a container with no
+   * IPv6 route, even though the A record would have worked.
+   */
+  const connectToAny = async (addresses: string[], port: number): Promise<Socket | null> => {
+    for (const address of addresses) {
+      const socket = await new Promise<Socket | null>((resolve_) => {
+        let settled = false;
+        const attempt = dial({ host: address, port }, () => {
+          if (settled) return;
+          settled = true;
+          attempt.off("error", onError);
+          resolve_(attempt);
+        });
+        function onError() {
+          if (settled) return;
+          settled = true;
+          attempt.destroy();
+          resolve_(null);
+        }
+        attempt.once("error", onError);
+      });
+      if (socket) return socket;
+    }
+    return null;
+  };
+
   return createServer((client) => {
-    client.once("error", () => client.destroy());
-    client.once("data", (chunk) => {
-      void (async () => {
-        const target = parseConnectTarget(chunk.toString("latin1"));
-        if (!target) {
-          return deny(client, "400 Bad Request", "not a CONNECT request", "-");
-        }
-        const label = target.host + ":" + target.port;
+    let head = "";
+    let settled = false;
 
-        // Allowlist first: an unknown name is never even resolved, so the
-        // broker cannot be used as a DNS oracle for arbitrary hostnames.
-        if (target.host !== options.allow.host || target.port !== options.allow.port) {
-          return deny(client, "403 Forbidden", "destination not allowlisted", label);
-        }
+    // A client that never finishes its request head is dropped rather than
+    // left holding the Agent's only edge open.
+    const headTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      client.destroy();
+    }, options.headTimeoutMs ?? 10_000);
+    headTimer.unref();
 
-        let addresses: string[];
-        try {
-          addresses = await resolve(target.host);
-        } catch {
-          return deny(client, "502 Bad Gateway", "DNS resolution failed", label);
-        }
-        if (addresses.length === 0) {
-          return deny(client, "502 Bad Gateway", "DNS returned no addresses", label);
-        }
-        // EVERY address, not just the one we connect to: a name that resolves to
-        // both a public and a private address is a rebinding attempt.
-        const forbidden = addresses.find((address) => isForbiddenAddress(address));
-        if (forbidden) {
-          return deny(client, "403 Forbidden", "resolves to a private address", label);
-        }
-
-        const upstream = dial({ host: addresses[0]!, port: target.port }, () => {
-          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          client.pipe(upstream);
-          upstream.pipe(client);
-        });
-        upstream.once("error", () => {
-          upstream.destroy();
-          if (!client.destroyed) deny(client, "502 Bad Gateway", "upstream failed", label);
-        });
-        client.once("close", () => upstream.destroy());
-      })();
+    client.once("error", () => {
+      clearTimeout(headTimer);
+      client.destroy();
     });
+    client.once("close", () => clearTimeout(headTimer));
+
+    client.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      head += chunk.toString("latin1");
+      // A head can arrive split across segments; reading only the first chunk
+      // turns ordinary segmentation into a 400, which presents as an
+      // intermittent model outage rather than as anything to do with the proxy.
+      const end = head.indexOf("\r\n\r\n");
+      if (end === -1) {
+        if (head.length > MAX_HEAD_BYTES) {
+          settled = true;
+          clearTimeout(headTimer);
+          deny(client, "400 Bad Request", "request head too large", "-");
+        }
+        return;
+      }
+
+      settled = true;
+      clearTimeout(headTimer);
+      // Anything the client pipelined behind the head has already been handed
+      // to us, so it is not in the socket's buffer and pipe() will not see it.
+      const pipelined = Buffer.from(head.slice(end + 4), "latin1");
+      // Pause before detaching, so bytes that arrive while DNS is in flight
+      // stay buffered for pipe() instead of being dropped on the floor.
+      client.pause();
+      client.removeAllListeners("data");
+      void handle(head.slice(0, end), pipelined);
+    });
+
+    const handle = async (requestHead: string, pipelined: Buffer): Promise<void> => {
+      const target = parseConnectTarget(requestHead);
+      if (!target) {
+        return deny(client, "400 Bad Request", "not a CONNECT request", "-");
+      }
+      const label = target.host + ":" + target.port;
+
+      // Allowlist first: an unknown name is never even resolved, so the
+      // broker cannot be used as a DNS oracle for arbitrary hostnames.
+      if (target.host !== options.allow.host || target.port !== options.allow.port) {
+        return deny(client, "403 Forbidden", "destination not allowlisted", label);
+      }
+
+      let addresses: string[];
+      try {
+        addresses = await resolve(target.host);
+      } catch {
+        return deny(client, "502 Bad Gateway", "DNS resolution failed", label);
+      }
+      if (addresses.length === 0) {
+        return deny(client, "502 Bad Gateway", "DNS returned no addresses", label);
+      }
+      // EVERY address, not just the one we connect to: a name that resolves to
+      // both a public and a private address is a rebinding attempt.
+      const forbidden = addresses.find((address) => isForbiddenAddress(address));
+      if (forbidden) {
+        return deny(client, "403 Forbidden", "resolves to a private address", label);
+      }
+
+      const upstream = await connectToAny(addresses, target.port);
+      if (!upstream) {
+        return deny(client, "502 Bad Gateway", "upstream failed", label);
+      }
+      if (client.destroyed) {
+        upstream.destroy();
+        return;
+      }
+
+      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (pipelined.length > 0) upstream.write(pipelined);
+      client.pipe(upstream);
+      upstream.pipe(client);
+
+      // Past this point the socket carries opaque TLS bytes. Writing a status
+      // line into it injects garbage into the record the client is parsing, so
+      // a failure now is a teardown and nothing else.
+      const tearDown = () => {
+        upstream.destroy();
+        client.destroy();
+      };
+      upstream.once("error", tearDown);
+      upstream.once("close", tearDown);
+      client.once("close", tearDown);
+    };
   });
 }

@@ -97,6 +97,17 @@ runtime.
    rather than as containment being broken. If it never binds, the run is
    refused rather than started with no route out.
 
+   The probe runs *inside* the broker, through `<engine> exec`, because nothing
+   about this topology is reachable from the host: a container name resolves
+   only through the network's embedded DNS, which only containers on that
+   network may query, and the broker publishes no host port — publishing one
+   would give anything on the host a second way into the edge we are keeping
+   singular. A host-side `connect()` to the name or to the container IP fails on
+   every platform we support. `verify:egress` asserts both halves: that the
+   probe answers through the engine, and that the host *cannot* reach the
+   broker. The second is the one that catches a probe written the wrong way,
+   since a unit test pointed at `127.0.0.1` passes either way.
+
 Teardown runs in a `finally`, including on every throwing path, so a failed run
 does not leak a network the next setup would have to clear blind.
 

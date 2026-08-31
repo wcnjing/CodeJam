@@ -20,7 +20,11 @@
  * on every path, including Ctrl-C.
  */
 import { execFile } from "node:child_process";
+import { createConnection } from "node:net";
 import { promisify } from "node:util";
+// Imported, not restated: the check must exercise the argv the runner actually
+// builds, or it is testing a copy of the production code rather than the code.
+import { buildBrokerProbeArgs } from "../apps/server/src/network-isolation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,6 +36,7 @@ const ALLOW_URL = process.env.ALLOW_URL || "https://example.com";
 const ALLOW_HOST = new URL(ALLOW_URL).hostname;
 const DENY_HOST = process.env.DENY_HOST || "github.com";
 const CLIENT_IMAGE = "curlimages/curl:latest";
+const RUNTIME_IMAGE = process.env.CONTAINER_RUNTIME_IMAGE || "volc-agent-runtime:local";
 
 const suffix = Math.random().toString(36).slice(2, 8);
 const NET = `verify-egress-${suffix}`;
@@ -112,14 +117,45 @@ try {
   const connected = await engine(["network", "connect", "bridge", BROKER]);
   record(connected.code === 0, "Broker dual-homed to an outbound network", connected.code === 0 ? "bridge" : connected.stderr.trim());
 
-  // The broker binds in milliseconds, but give it a moment before the clients.
-  await new Promise((r) => setTimeout(r, 1500));
+  // The readiness gate the runner actually uses, run the way the runner runs
+  // it. Grepping the log proves the broker said it was listening; this proves
+  // something can still connect, which is the claim the gate makes. The probe
+  // has to come from the engine — see the host check below for why.
+  const probeArgs = buildBrokerProbeArgs(BROKER, 8080);
+  let ready = false;
+  for (const deadline = Date.now() + 15_000; Date.now() < deadline; ) {
+    if ((await engine(probeArgs)).code === 0) {
+      ready = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  record(ready, "Broker readiness probe answers", `via ${ENGINE} exec, allowlisting ${ALLOW_HOST}`);
+
   const logs = await engine(["logs", BROKER]);
   record(
     logs.stdout.includes("egress-broker-ready") || logs.stderr.includes("egress-broker-ready"),
     "Broker reports ready",
     `allowlisting ${ALLOW_HOST}`,
   );
+
+  // The regression guard for the readiness bug: the broker must NOT be
+  // reachable from the host by container name. A probe written that way cannot
+  // ever succeed, so it fails every isolated run at the gate — and it does so
+  // silently, because unit tests probing 127.0.0.1 pass either way. If this
+  // check ever finds the host can connect, the broker has been published and
+  // the single edge is no longer single.
+  const fromHost = await new Promise((resolve) => {
+    const socket = createConnection({ host: BROKER, port: 8080 });
+    const settle = (value) => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.once("connect", () => settle(true));
+    socket.once("error", () => settle(false));
+    socket.setTimeout(3_000, () => settle(false));
+  });
+  record(fromHost === false, "Broker not reachable from the host", "container name does not resolve");
 
   // --- the three claims -----------------------------------------------------
   const allowed = await curlFrom(ALLOW_URL, { viaProxy: true });
@@ -137,6 +173,36 @@ try {
   // every check above is measuring the proxy rather than the containment.
   const direct = await curlFrom(ALLOW_URL, { viaProxy: false });
   record(direct === "000", "No route without the broker", `curl exit code ${direct}`);
+
+  // CONTAINER_READ_ONLY_ROOT defaults on, and the PR claims the Agent is
+  // unaffected because bind mounts are not part of the container root. That is
+  // a claim about a real image, so check it against one when it is present.
+  const runtime = await engine(["image", "inspect", RUNTIME_IMAGE]);
+  if (runtime.code !== 0) {
+    console.log(`  SKIP  read-only root smoke: ${RUNTIME_IMAGE} not built here.`);
+  } else {
+    const readOnlyArgs = [
+      "run", "--rm", "--read-only",
+      "--tmpfs", "/tmp:rw,nodev,nosuid,noexec,size=64m",
+      "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
+      "--mount", `type=bind,src=${process.cwd()},dst=/workspace`,
+      "--workdir", "/workspace",
+      "--entrypoint", "sh", RUNTIME_IMAGE, "-c",
+    ];
+    // /tmp is the Agent's scratch and must stay writable; the image root must not.
+    const scratch = await engine([...readOnlyArgs, "touch /tmp/probe && echo WRITABLE"]);
+    record(
+      scratch.stdout.includes("WRITABLE"),
+      "Agent scratch still writable read-only",
+      scratch.stdout.trim() || scratch.stderr.trim().split("\n")[0],
+    );
+    const root = await engine([...readOnlyArgs, "touch /root-probe 2>/dev/null && echo WROTE || echo REFUSED"]);
+    record(
+      root.stdout.includes("REFUSED"),
+      "Image root not writable",
+      root.stdout.trim() || root.stderr.trim().split("\n")[0],
+    );
+  }
 
   const denials = (logs.stderr + (await engine(["logs", BROKER])).stderr)
     .split("\n").filter((line) => line.includes("egress-denied")).length;

@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { createConnection } from "node:net";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
 import { agentBrokerName, agentNetworkName } from "./container-codex-runner.js";
@@ -19,6 +18,11 @@ const execFileAsync = promisify(execFile);
  * the broker to answer, and only then the Agent. Starting the Agent against a
  * broker that has not bound yet gives a run that fails in a way that looks like
  * a model outage, which is the failure mode most likely to be misdiagnosed.
+ *
+ * Every step goes through the engine, the readiness probe included. Nothing
+ * here is reachable from the host: that is the point of an --internal network
+ * with no published ports, and a readiness check that assumed otherwise would
+ * fail every run while looking like the broker was at fault.
  */
 
 export interface EngineResult {
@@ -82,6 +86,30 @@ export function buildBrokerConnectArgs(broker: string, outboundNetwork: string):
   return ["network", "connect", outboundNetwork, broker];
 }
 
+/**
+ * Asks the broker, from inside itself, whether it is accepting connections yet.
+ *
+ * The probe cannot run on the host. A container name resolves only through the
+ * network's embedded DNS, which only containers on that network may query, and
+ * the broker publishes no host port on purpose — publishing one would give
+ * anything on the host a second way into the single edge we are trying to keep
+ * singular. A host-side `connect()` to either the name or the container IP
+ * therefore fails on every platform we support, so the engine is the only thing
+ * that can answer the question, and we ask it.
+ *
+ * `node -e` runs as CommonJS, and the broker image is a node base, so the probe
+ * needs nothing installed that is not already there.
+ */
+export function buildBrokerProbeArgs(broker: string, port: number): string[] {
+  const probe = [
+    "const s=require('net').createConnection({host:'127.0.0.1',port:" + port + "});",
+    "s.on('connect',()=>{s.destroy();process.exit(0)});",
+    "s.on('error',()=>process.exit(1));",
+    "s.setTimeout(2000,()=>process.exit(1));",
+  ].join("");
+  return ["exec", broker, "node", "-e", probe];
+}
+
 export function buildBrokerStopArgs(broker: string): string[] {
   return ["stop", "--timeout", "5", broker];
 }
@@ -98,35 +126,6 @@ async function defaultExec(engine: string, args: string[]): Promise<EngineResult
       stderr: failure.stderr ?? failure.message ?? "",
     };
   }
-}
-
-/**
- * Waits until something accepts a TCP connection on the broker's published
- * readiness port. Polls rather than sleeping a fixed interval: a fixed sleep is
- * either too short on a cold image pull or wasted on every warm run.
- */
-export async function waitForPort(
-  host: string,
-  port: number,
-  timeoutMs = 15_000,
-  intervalMs = 200,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const open = await new Promise<boolean>((resolve) => {
-      const socket = createConnection({ host, port });
-      const settle = (value: boolean) => {
-        socket.destroy();
-        resolve(value);
-      };
-      socket.once("connect", () => settle(true));
-      socket.once("error", () => settle(false));
-      socket.setTimeout(1_000, () => settle(false));
-    });
-    if (open) return true;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  return false;
 }
 
 export interface IsolationHandle {
@@ -188,6 +187,29 @@ export class EgressIsolation {
     }
 
     return { network, broker };
+  }
+
+  /**
+   * Polls the broker until it accepts a connection, through the engine.
+   *
+   * Polls rather than sleeping a fixed interval: a fixed sleep is either too
+   * short on a cold image pull or wasted on every warm run. Returns false on
+   * the deadline rather than throwing, so the caller decides what a broker that
+   * never bound means — here, refusing to start the Agent at all.
+   */
+  async waitUntilReady(
+    handle: IsolationHandle,
+    timeoutMs = 15_000,
+    intervalMs = 200,
+  ): Promise<boolean> {
+    const args = buildBrokerProbeArgs(handle.broker, this.config.containerEgressBrokerPort);
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const probe = await this.exec(args);
+      if (probe.code === 0) return true;
+      if (Date.now() + intervalMs >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
   }
 
   /** Best-effort and idempotent: teardown runs on paths that already failed. */

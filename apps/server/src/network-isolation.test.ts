@@ -1,4 +1,3 @@
-import { createServer } from "node:net";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 import {
@@ -6,7 +5,7 @@ import {
   buildBrokerConnectArgs,
   buildBrokerRunArgs,
   buildNetworkCreateArgs,
-  waitForPort,
+  buildBrokerProbeArgs,
   type EngineResult,
 } from "./network-isolation.js";
 
@@ -124,19 +123,50 @@ describe("EgressIsolation lifecycle", () => {
   });
 });
 
-describe("waitForPort", () => {
-  it("returns true once something is listening", async () => {
-    const server = createServer();
-    const port = await new Promise<number>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
-    });
-    expect(await waitForPort("127.0.0.1", port, 3_000, 50)).toBe(true);
-    await new Promise<void>((done) => server.close(() => done()));
+describe("broker readiness", () => {
+  it("probes through the engine, from inside the broker", async () => {
+    // The previous check connected from the host to the broker's container
+    // name. Nothing on the host can resolve that name, and the broker publishes
+    // no host port, so the probe could never succeed and every isolated run
+    // failed at the gate. Readiness is only observable through the engine.
+    const args = buildBrokerProbeArgs("b", 8080);
+    expect(args.slice(0, 3)).toEqual(["exec", "b", "node"]);
+    expect(args.at(-1)).toContain("port:8080");
+    expect(args.at(-1)).toContain("127.0.0.1");
   });
 
-  it("returns false rather than hanging when nothing ever binds", async () => {
+  it("returns true as soon as the probe succeeds", async () => {
+    const { calls, exec } = recorder();
+    const ready = await new EgressIsolation(config, exec).waitUntilReady(
+      { network: "n", broker: "b" },
+      3_000,
+      50,
+    );
+    expect(ready).toBe(true);
+    expect(calls.filter((c) => c[0] === "exec")).toHaveLength(1);
+  });
+
+  it("keeps polling while the broker is still binding", async () => {
+    let attempts = 0;
+    const { exec } = recorder(() => (++attempts < 3 ? fail("not running") : ok));
+    const ready = await new EgressIsolation(config, exec).waitUntilReady(
+      { network: "n", broker: "b" },
+      3_000,
+      20,
+    );
+    expect(ready).toBe(true);
+    expect(attempts).toBe(3);
+  });
+
+  it("returns false rather than hanging when the broker never answers", async () => {
     // The readiness check is what stops a broken sidecar from presenting as a
     // model outage, so its timeout has to be real.
-    expect(await waitForPort("127.0.0.1", 1, 600, 50)).toBe(false);
+    const { exec } = recorder(() => fail("no such container"));
+    const ready = await new EgressIsolation(config, exec).waitUntilReady(
+      { network: "n", broker: "b" },
+      300,
+      50,
+    );
+    expect(ready).toBe(false);
   });
 });

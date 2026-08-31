@@ -1,8 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { REVIEWABLE_RULES } from "./command-policy.js";
 import { PrincipalRegistry } from "./principals.js";
+import { safeWriteFile } from "./safe-write.js";
 
 const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
@@ -213,11 +214,18 @@ export function codexConfigToml(config: AppConfig): string {
   ].join("\n");
 }
 
+/**
+ * CODEX_HOME is Agent-controlled ground, exactly like the workspace: the
+ * container runner bind-mounts it writable into the Agent container, and the
+ * host rewrites config.toml on every server start. A plain `writeFile` here is
+ * the same hole safe-write.ts closes for the workspace — the Agent replaces
+ * config.toml with a link to the audit store and the next start writes through
+ * it — so this write goes through the same door. See TM-AGENT-008.
+ */
 export async function writeCodexConfig(config: AppConfig): Promise<void> {
   await mkdir(config.codexHome, { recursive: true });
   const toml = codexConfigToml(config);
-  await writeFile(path.join(config.codexHome, "config.toml"), toml, {
-    encoding: "utf8",
+  await safeWriteFile(config.codexHome, path.join(config.codexHome, "config.toml"), toml, {
     mode: 0o600,
   });
 }

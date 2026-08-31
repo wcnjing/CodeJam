@@ -1,7 +1,7 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
-import { EgressIsolation, waitForPort, type IsolationHandle } from "./network-isolation.js";
+import { EgressIsolation, type IsolationHandle } from "./network-isolation.js";
 import {
   buildCodexArgs,
   emptyParsedEvents,
@@ -147,9 +147,8 @@ export class ContainerCodexRunner implements AgentRunner {
     if (!this.config.containerEgressIsolation) return null;
     const handle = await this.isolation.setup(agentId);
     this.isolated.set(agentId, handle);
-    const ready = await waitForPort(
-      handle.broker,
-      this.config.containerEgressBrokerPort,
+    const ready = await this.isolation.waitUntilReady(
+      handle,
       this.config.containerEgressReadyTimeoutMs,
     );
     if (!ready) {
@@ -228,7 +227,19 @@ export class ContainerCodexRunner implements AgentRunner {
     }
 
     await this.startIsolation(request.agentId);
+    try {
+      return await this.runContained(request);
+    } catch (error) {
+      // The spawn and the setup after it used to sit outside any teardown path,
+      // so anything throwing there left the network and the broker behind until
+      // the next run for this agent cleared them. stopIsolation is idempotent,
+      // so the inner finally having already run is harmless.
+      await this.stopIsolation(request.agentId);
+      throw error;
+    }
+  }
 
+  private async runContained(request: RunnerRequest): Promise<RunnerResult> {
     const child = spawn(
       this.config.containerEngine,
       buildContainerRunArgs(request, this.config),

@@ -63,11 +63,17 @@ export async function safeWriteFile(
     );
   }
 
+  // The temp file is created fresh and renamed over the destination, so it
+  // carries its own mode rather than inheriting the one it replaces. Without
+  // this, omitting `mode` silently widens an existing 0600 file to 0644 — a
+  // rewrite must never be the thing that opens a file up.
+  const mode = options.mode ?? (existing ? existing.mode & 0o777 : 0o644);
+
   const temporaryPath = path.join(
     resolvedDir,
     ".safe-write-" + randomBytes(8).toString("hex") + ".tmp",
   );
-  const handle = await open(temporaryPath, "wx", options.mode ?? 0o644);
+  const handle = await open(temporaryPath, "wx", mode);
   try {
     await handle.writeFile(content, "utf8");
   } finally {

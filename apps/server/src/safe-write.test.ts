@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { safeWriteFile } from "./safe-write.js";
 import { WorkspaceManager } from "./workspace.js";
+import { loadConfig, writeCodexConfig } from "./config.js";
 import type { Agent } from "./types.js";
 
 const roots: string[] = [];
@@ -90,6 +91,18 @@ describe("safeWriteFile", () => {
     await safeWriteFile(workspace, target, "s\n", { mode: 0o600 });
     expect((await lstat(target)).mode & 0o777).toBe(0o600);
   });
+
+  it("keeps an existing file's mode when no mode is given", async () => {
+    // The temp file is created with the default mode and renamed over the
+    // destination, so an omitted mode silently widened 0600 to 0644. Every
+    // current caller passes a mode for the files that need one, but a rewrite
+    // must never be the thing that opens a file up.
+    const { workspace } = await sandbox();
+    const target = path.join(workspace, "secret.txt");
+    await safeWriteFile(workspace, target, "s\n", { mode: 0o600 });
+    await safeWriteFile(workspace, target, "rewritten\n");
+    expect((await lstat(target)).mode & 0o777).toBe(0o600);
+  });
 });
 
 // @covers TM-AGENT-008
@@ -119,5 +132,47 @@ describe("workspace writes cannot be redirected by the Agent", () => {
     await expect(manager.writeInstructions(attacker)).rejects.toThrow(/non-regular file/i);
     expect(await readFile(outside, "utf8")).toBe("REAL AUDIT EVIDENCE\n");
     expect(root).toBeTruthy();
+  });
+
+  it("refuses to rewrite the Codex config through an Agent-planted symlink", async () => {
+    // CODEX_HOME is the workspace's twin: bind-mounted writable into the Agent
+    // container, and written by the host on every server start. The workspace
+    // writes were fixed and this one was not, which left the same
+    // host-privileged write through a planted link open one directory over.
+    const { root, outside } = await sandbox();
+    const codexHome = path.join(root, "codex-home");
+    await mkdir(codexHome, { recursive: true });
+
+    const configFile = path.join(codexHome, "config.toml");
+    await symlink(outside, configFile);
+
+    const config = loadConfig({
+      NODE_ENV: "test",
+      ARK_API_KEY: "test-key",
+      ARK_MODEL: "ep-test",
+      CODEX_HOME: codexHome,
+    });
+
+    await expect(writeCodexConfig(config)).rejects.toThrow(/non-regular file/i);
+    expect(await readFile(outside, "utf8")).toBe("REAL AUDIT EVIDENCE\n");
+    // The link is still a link: refused, not silently replaced.
+    expect((await lstat(configFile)).isSymbolicLink()).toBe(true);
+  });
+
+  it("still writes the Codex config, at 0600, when nothing is planted", async () => {
+    const { root } = await sandbox();
+    const codexHome = path.join(root, "codex-home");
+    const config = loadConfig({
+      NODE_ENV: "test",
+      ARK_API_KEY: "test-key",
+      ARK_MODEL: "ep-test",
+      CODEX_HOME: codexHome,
+    });
+
+    await writeCodexConfig(config);
+    const written = path.join(codexHome, "config.toml");
+    expect(await readFile(written, "utf8")).toContain("[shell_environment_policy]");
+    // The file carries the Ark exclusion rule; it must not be world-readable.
+    expect((await lstat(written)).mode & 0o777).toBe(0o600);
   });
 });

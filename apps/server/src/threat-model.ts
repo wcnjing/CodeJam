@@ -285,15 +285,24 @@ export const THREAT_REGISTER: Threat[] = [
           "Host writes into a workspace resolve the parent with realpath, refuse a " +
           "non-regular destination via lstat, and land through an O_EXCL temp file " +
           "renamed over the target so a swapped symlink cannot redirect them",
-        where: "safe-write.ts safeWriteFile, called by workspace.ts",
+        where:
+          "safe-write.ts safeWriteFile, called by workspace.ts and by config.ts " +
+          "writeCodexConfig",
       },
     ],
     residual: { likelihood: 1, impact: 5 },
     residualNote:
       "Impact stays at 5 because the natural target is the audit store this product exists " +
-      "to protect. Every host write into a workspace goes through safeWriteFile; the residual " +
-      "is code added later that calls writeFile directly, which nothing but review currently " +
-      "prevents. Archival moves the whole directory with rename and never follows a link.",
+      "to protect. Agent-controlled ground is not only the workspace: CODEX_HOME is " +
+      "bind-mounted writable into the container too, and writeCodexConfig wrote config.toml " +
+      "there with a plain writeFile until it was routed through safeWriteFile. Both now go " +
+      "through the same door; the residual is code added later that calls writeFile directly, " +
+      "which nothing but review currently prevents. A second residual is the parent directory " +
+      "itself: the rename replaces the destination's own directory entry, so a link swapped in " +
+      "at the final component cannot redirect it, but a parent swapped to a symlink between " +
+      "realpath and open would still be followed. Node exposes no openat/renameat, so that " +
+      "window can be narrowed and not closed. Archival moves the whole directory with rename " +
+      "and never follows a link.",
     owner: "runtime-security",
     status: "mitigated",
     reviewTriggers: [
