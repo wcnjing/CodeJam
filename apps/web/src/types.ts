@@ -92,6 +92,12 @@ export interface ApprovalRequest {
   command: string;
   detail: string;
   hosts: string[];
+  /**
+   * The run-scoped budget ceiling an approval of a step-budget-exceeded hold
+   * grants (limit + observed). Present only on that rule; grants are scoped to
+   * the one continuation run, never persisted as a standing config change.
+   */
+  grantedBudget?: number | null;
   status: "pending" | "approved" | "denied";
   requestedAt: string;
   /** Whoever resolved it. Trustworthy only when the attribution says so. */

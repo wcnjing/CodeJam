@@ -69,12 +69,14 @@ const envSchema = z.object({
   POLICY_ALLOWED_HOSTS: z.string().default(""),
   POLICY_ENFORCEMENT: z.enum(["enforce", "monitor"]).default("enforce"),
   // Rules whose denials pause for human approval instead of hard-blocking.
-  // Deliberately defaults to egress only: secret-access rules are never
-  // reviewable, so no human can approve exfiltrating a protected secret.
+  // Deliberately defaults to egress, an unresolved write target, and the step
+  // budget: secret-access rules are never reviewable, so no human can approve
+  // exfiltrating a protected secret. Removing `step-budget-exceeded` here
+  // restores the old hard terminate for runaway runs.
   POLICY_REVIEW_RULES: z
     .string()
     .default(
-      "network-egress-denied,network-egress-denied-implicit,file-write-unresolved-target",
+      "network-egress-denied,network-egress-denied-implicit,file-write-unresolved-target,step-budget-exceeded",
     ),
   // Step budget: max shell commands one run may execute before it is killed as
   // runaway. Enforced by the platform, not the agent, and always on.

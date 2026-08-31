@@ -42,7 +42,12 @@ export class PolicyViolationError extends Error {
  * turn, the signature of a runaway loop or denial-of-wallet. Distinct from the
  * wall-clock timeout and output cap the Starter Kit already had: this is a
  * count the platform enforces, and unlike the command policy it is never
- * disabled by monitor mode. A resource limit is not a toggle.
+ * disabled by monitor mode. A resource limit is not a policy toggle.
+ *
+ * Whether the platform responds by holding the run for a human (the default:
+ * `step-budget-exceeded` is in POLICY_REVIEW_RULES) or by terminating it
+ * outright is AgentService's decision, made from this error's `limit` and
+ * `observed`.
  */
 export class BudgetExceededError extends Error {
   constructor(
@@ -50,9 +55,9 @@ export class BudgetExceededError extends Error {
     public readonly observed: number,
   ) {
     super(
-      "Run terminated: step budget of " +
+      "Run exceeded the step budget of " +
         limit +
-        " commands exceeded (" +
+        " commands (" +
         observed +
         " observed)",
     );

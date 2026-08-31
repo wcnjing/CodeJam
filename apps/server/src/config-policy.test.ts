@@ -31,14 +31,17 @@ describe("POLICY_REVIEW_RULES invariant", () => {
   });
 
   it("defaults to the rules where a human genuinely adds information", () => {
-    // Egress to a plausibly-legitimate host, and a write whose destination the
-    // text cannot settle. Both are cases where the operator knows something the
-    // engine does not. Secret access and demonstrated sandbox escapes are
-    // absent and cannot be added — parseReviewRules rejects them.
+    // Egress to a plausibly-legitimate host, a write whose destination the
+    // text cannot settle, and an exceeded step budget. All three are cases
+    // where the operator knows something the engine does not (or the agent is
+    // merely compounding a mistake rather than attacking). Secret access and
+    // demonstrated sandbox escapes are absent and cannot be added —
+    // parseReviewRules rejects them.
     expect(loadConfig(base).policyReviewRules).toEqual([
       "network-egress-denied",
       "network-egress-denied-implicit",
       "file-write-unresolved-target",
+      "step-budget-exceeded",
     ]);
   });
 });
@@ -123,7 +126,14 @@ describe("safety invariants hold independently of one another", () => {
   });
 
   it("keeps the rules that must stay reviewable in the set", () => {
-    for (const rule of ["network-egress-denied", "network-egress-denied-implicit"]) {
+    for (const rule of [
+      "network-egress-denied",
+      "network-egress-denied-implicit",
+      "file-write-unresolved-target",
+      // The step budget: a runaway loop is more often an accident than an
+      // attack, so a human may grant one continuation with a raised ceiling.
+      "step-budget-exceeded",
+    ]) {
       expect(REVIEWABLE_RULES, rule).toContain(rule);
     }
   });

@@ -661,7 +661,7 @@ describe("command policy", () => {
     expect(reviewable).toEqual([...reviewable].sort((a, b) => Number(a) - Number(b)));
   });
 
-  it("exposes exactly three rules an operator may ever approve", () => {
+  it("exposes exactly four rules an operator may ever approve", () => {
     // REVIEWABLE_RULES is derived from the policy tables' own `reviewable`
     // flags, which is what keeps it from drifting — but it also means a stray
     // `reviewable: true` on a new rule silently widens what an operator can
@@ -674,10 +674,17 @@ describe("command policy", () => {
     // against a rule nobody may approve, while allowing it outright would be a
     // hole. Asking a human is the only honest handling of "I cannot tell" —
     // and a human CAN tell, because they know what $OUT_DIR is.
+    //
+    // The argument for the fourth entry: the step budget is platform-enforced
+    // (it cannot be derived from POLICY_RULES' own flags), and a runaway loop
+    // is more often a compounding accident than an attack. A human may grant
+    // ONE continuation with a run-scoped raise of the ceiling; the raise is
+    // not a standing config change and a second miss hard-terminates.
     expect(REVIEWABLE_RULES).toEqual([
       "file-write-unresolved-target",
       "network-egress-denied",
       "network-egress-denied-implicit",
+      "step-budget-exceeded",
     ]);
   });
 

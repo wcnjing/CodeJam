@@ -160,7 +160,7 @@ export const THREAT_REGISTER: Threat[] = [
     controls: [
       {
         id: "CTRL-STEP-BUDGET",
-        description: "Platform-enforced step budget kills a run exceeding N commands; always on, not subject to monitor mode",
+        description: "Platform-enforced step budget stops a run exceeding N commands; always on, not subject to monitor mode. Under the default review set an exceedance is held for a named human, who may grant one continuation with a run-scoped ceiling raise; removing step-budget-exceeded from POLICY_REVIEW_RULES restores the hard terminate",
         where: "both runners, config POLICY_MAX_COMMANDS",
       },
     ],

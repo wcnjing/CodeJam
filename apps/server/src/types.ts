@@ -90,6 +90,13 @@ export interface ApprovalRequest {
   detail: string;
   /** Hosts an approval would grant a run-scoped grant for. */
   hosts: string[];
+  /**
+   * Raised step-budget ceiling the continuation run gets, present only on a
+   * step-budget-exceeded approval. A budget hold is granted a run-scoped
+   * budget raise (limit + observed), the same way an egress hold is granted a
+   * run-scoped host grant — one run, never a standing config change.
+   */
+  grantedBudget?: number | null;
   status: ApprovalStatus;
   requestedAt: string;
   /**
@@ -208,6 +215,12 @@ export interface RunnerRequest {
    * persisted to config.
    */
   extraAllowedHosts?: string[];
+  /**
+   * Step-budget ceiling for this run only, replacing the standing
+   * POLICY_MAX_COMMANDS. Set when a human has approved a step-budget-exceeded
+   * hold; scoped to this single execution and never persisted to config.
+   */
+  extraMaxCommands?: number;
 }
 
 export interface AgentRunner {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentService } from "./agent-service.js";
 import { loadConfig } from "./config.js";
-import { PolicyViolationError } from "./errors.js";
+import { BudgetExceededError, PolicyViolationError } from "./errors.js";
 import { JsonStore } from "./store.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 import type { Principal } from "./principals.js";
@@ -47,6 +47,28 @@ class SecretExfilRunner implements AgentRunner {
       "Command combines network egress with access to protected .secrets/ directory.",
       ["attacker.example"],
     );
+  }
+  async cancel(): Promise<boolean> {
+    return false;
+  }
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
+/**
+ * Denies the step budget until the run carries a raised ceiling, then
+ * succeeds — exactly what the real runner does once a human approval adds
+ * `extraMaxCommands` to that run's request.
+ */
+class BudgetGatedRunner implements AgentRunner {
+  public calls: RunnerRequest[] = [];
+  async run(request: RunnerRequest): Promise<RunnerResult> {
+    this.calls.push(request);
+    if (!(request.extraMaxCommands && request.extraMaxCommands > 50)) {
+      throw new BudgetExceededError(50, 51);
+    }
+    return { output: "finished the loop", threadId: "thread-1", usage: null };
   }
   async cancel(): Promise<boolean> {
     return false;
@@ -254,6 +276,79 @@ describe("human approval gate", () => {
     await expect(
       service.resolveApproval(approval.id, "approve", OPS, "changed my mind"),
     ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("holds a budget-exceeded run and resumes it with a raised ceiling when approved", async () => {
+    const runner = new BudgetGatedRunner();
+    const service = await makeService(runner);
+    const agent = await service.createAgent({ name: "Loopy" });
+
+    const { run } = await service.sendMessage(agent.id, "loop until done");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
+
+    const pending = service.listApprovals(agent.id);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      rule: "step-budget-exceeded",
+      status: "pending",
+      // limit 50 + observed 51 = the run-scoped raise an approval grants.
+      grantedBudget: 101,
+    });
+
+    const { continuationRun } = await service.resolveApproval(
+      pending[0]!.id,
+      "approve",
+      OPS,
+      "the loop is doing real work",
+    );
+    expect(continuationRun).not.toBeNull();
+    await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
+
+    // The continuation carried the raised ceiling, scoped to that one run.
+    expect(runner.calls[1]?.extraMaxCommands).toBe(101);
+  });
+
+  it("grants the budget raise only to the approved run, not standing config", async () => {
+    const runner = new BudgetGatedRunner();
+    const service = await makeService(runner);
+    const agent = await service.createAgent({ name: "Loopy" });
+
+    const first = await service.sendMessage(agent.id, "loop once");
+    await expect.poll(() => service.getRun(first.run.id).status).toBe("held");
+    const approval = service.listApprovals(agent.id)[0]!;
+    const { continuationRun } = await service.resolveApproval(
+      approval.id,
+      "approve",
+      OPS,
+      "looks legitimate",
+    );
+    await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
+
+    // A fresh task hits the standing budget again and is held again — the
+    // raise did not touch POLICY_MAX_COMMANDS.
+    const second = await service.sendMessage(agent.id, "loop again");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("held");
+  });
+
+  it("keeps a denied budget hold dead and starts no continuation", async () => {
+    const service = await makeService(new BudgetGatedRunner());
+    const agent = await service.createAgent({ name: "Loopy" });
+
+    const { run } = await service.sendMessage(agent.id, "loop forever");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
+    const approval = service.listApprovals(agent.id)[0]!;
+
+    const { continuationRun } = await service.resolveApproval(
+      approval.id,
+      "deny",
+      BOB,
+      "runaway loop",
+    );
+    expect(continuationRun).toBeNull();
+    expect(service.getApproval(approval.id).status).toBe("denied");
+    // Held run stays held; no new run was created.
+    expect(service.getRun(run.id).status).toBe("held");
+    expect(service.getRuns(agent.id)).toHaveLength(1);
   });
 });
 

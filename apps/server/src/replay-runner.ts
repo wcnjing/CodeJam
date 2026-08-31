@@ -164,6 +164,9 @@ export class ReplayRunner implements AgentRunner {
     let violation: DetectedViolation | null = null;
     let budgetExceeded = false;
     let scannedCommands = 0;
+    // A human-approved budget hold raises the ceiling for this run only; the
+    // standing POLICY_MAX_COMMANDS still bounds every other run.
+    const maxCommands = request.extraMaxCommands ?? this.config.policyMaxCommands;
 
     // The re-implemented orchestration loop. Mirrors applyPolicy() in
     // codex-runner.ts line for line, including the ordering that matters: the
@@ -172,7 +175,7 @@ export class ReplayRunner implements AgentRunner {
     const applyPolicy = (): void => {
       const found = scanCommands(actor, parsed.commands, scannedCommands, policyContext);
       scannedCommands = parsed.commands.length;
-      if (!budgetExceeded && parsed.commands.length > this.config.policyMaxCommands) {
+      if (!budgetExceeded && parsed.commands.length > maxCommands) {
         budgetExceeded = true;
       }
       for (const detected of found) observations.push(detected);
@@ -203,7 +206,7 @@ export class ReplayRunner implements AgentRunner {
         );
       }
       if (budgetExceeded) {
-        throw new BudgetExceededError(this.config.policyMaxCommands, parsed.commands.length);
+        throw new BudgetExceededError(maxCommands, parsed.commands.length);
       }
       const output = parsed.messages.at(-1)?.trim();
       if (!output) throw new Error("Replay fixture produced no agent message");

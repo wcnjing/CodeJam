@@ -274,11 +274,25 @@ export class AgentService {
       approval.decisionReason = trimmedReason;
       approval.resolvedAt = now();
       approval.continuationRunId = run.id;
-      return { approval: structuredClone(approval), agentSnapshot, hosts: approval.hosts };
+      return {
+        approval: structuredClone(approval),
+        agentSnapshot,
+        hosts: approval.hosts,
+        // A budget hold carries its run-scoped raise alongside the hosts.
+        grantedBudget: approval.grantedBudget ?? null,
+      };
     });
 
-    // Grant is scoped to this one run (isGrantRun=true), so a re-denial hard-blocks.
-    const execution = this.executeRun(committed.agentSnapshot, run, committed.hosts, true);
+    // Grants are scoped to this one run (isGrantRun=true), so a re-denial
+    // hard-blocks and a re-exceeded budget hard-terminates — an approval is
+    // never a standing config change.
+    const execution = this.executeRun(
+      committed.agentSnapshot,
+      run,
+      committed.hosts,
+      true,
+      committed.grantedBudget ?? undefined,
+    );
     this.activeExecutions.set(committed.agentSnapshot.id, execution);
     void execution
       .finally(() => {
@@ -434,6 +448,7 @@ export class AgentService {
     run: AgentRun,
     extraAllowedHosts: string[] = [],
     isGrantRun = false,
+    extraMaxCommands?: number,
   ): Promise<void> {
     // The OPENING write needs the same guarantee as the terminal one. If it
     // fails the run never leaves `queued` while the agent is already `busy`,
@@ -455,6 +470,7 @@ export class AgentService {
         prompt: run.prompt,
         threadId: agentAtStart.codexThreadId,
         extraAllowedHosts,
+        ...(extraMaxCommands !== undefined ? { extraMaxCommands } : {}),
       });
       const completedAt = now();
       await this.settleRun(run.id, agentAtStart.id, (database) => {
@@ -498,17 +514,26 @@ export class AgentService {
       const cancelled = error instanceof RunCancelledError;
       const overBudget = error instanceof BudgetExceededError;
       const policyDenied = error instanceof PolicyViolationError;
-      // A reviewable denial (by default only network egress) is held for a
-      // human, never a secret-access rule — no human may approve exfiltration.
+      // A reviewable denial (by default network egress, an unresolved write
+      // target, and an exceeded step budget) is held for a human — never a
+      // secret-access rule, no human may approve exfiltration.
       const held =
-        policyDenied &&
-        // Structural invariant: only REVIEWABLE_RULES can ever be held, no
-        // matter what config says. Secret-access rules are never approvable.
-        isReviewableRule((error as PolicyViolationError).rule) &&
-        this.config.policyReviewRules.includes((error as PolicyViolationError).rule) &&
-        // A grant-run that is denied again is hard-blocked, not held a second
-        // time. Keyed off the explicit origin flag, not the host-list length.
-        !isGrantRun;
+        !isGrantRun &&
+        (overBudget
+          ? // The step budget is a reviewable violation under the default
+            // configuration: a runaway loop is more often a plausible accident
+            // (an agent compounding an early mistake) than an attack, so it is
+            // held with a run-scoped budget raise rather than killed with no
+            // appeal. Removing step-budget-exceeded from POLICY_REVIEW_RULES
+            // restores the old hard terminate.
+            this.config.policyReviewRules.includes("step-budget-exceeded")
+          : policyDenied &&
+            // Structural invariant: only REVIEWABLE_RULES can ever be held, no
+            // matter what config says. Secret-access rules are never approvable.
+            isReviewableRule((error as PolicyViolationError).rule) &&
+            this.config.policyReviewRules.includes((error as PolicyViolationError).rule));
+      // A grant-run that is denied again is hard-blocked, not held a second
+      // time. Keyed off the explicit origin flag, not the host-list length.
       const blocked = policyDenied && !held;
       const message = error instanceof Error ? error.message : String(error);
       await this.settleRun(run.id, agentAtStart.id, (database) => {
@@ -528,16 +553,42 @@ export class AgentService {
           storedRun.completedAt = completedAt;
         }
         if (error instanceof BudgetExceededError) {
-          database.policyEvents.push({
-            id: randomUUID(),
-            agentId: agentAtStart.id,
-            runId: run.id,
-            rule: "step-budget-exceeded",
-            command: "(" + error.observed + " commands; limit " + error.limit + ")",
-            detail: error.message,
-            enforced: true,
-            decidedAt: completedAt,
-          });
+          if (held) {
+            // Held: the approval carries the same evidence the old enforced
+            // event did, plus the run-scoped budget raise an approval grants
+            // (limit + observed — room to finish what it started).
+            database.approvals.push({
+              id: randomUUID(),
+              agentId: agentAtStart.id,
+              runId: run.id,
+              prompt: run.prompt,
+              rule: "step-budget-exceeded",
+              command: "(" + error.observed + " commands; limit " + error.limit + ")",
+              detail: error.message,
+              hosts: [],
+              grantedBudget: error.limit + error.observed,
+              status: "pending",
+              requestedAt: completedAt,
+              resolvedBy: null,
+              resolvedByAttribution: null,
+              decisionReason: null,
+              resolvedAt: null,
+              continuationRunId: null,
+            });
+          } else {
+            // Not reviewable in this deployment: the budget kill is an
+            // enforced resource-limit event, exactly as before.
+            database.policyEvents.push({
+              id: randomUUID(),
+              agentId: agentAtStart.id,
+              runId: run.id,
+              rule: "step-budget-exceeded",
+              command: "(" + error.observed + " commands; limit " + error.limit + ")",
+              detail: error.message,
+              enforced: true,
+              decidedAt: completedAt,
+            });
+          }
         }
         if (error instanceof PolicyViolationError) {
           if (blocked) {

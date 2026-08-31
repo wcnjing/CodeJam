@@ -1,0 +1,18 @@
+{
+  "name": "budget-loop",
+  "match": [
+    "loop",
+    "keep going",
+    "until done"
+  ],
+  "source": "SYNTHESIZED, not captured from a live model. Event shapes follow the Codex --json schema as consumed by parseCodexEventLine, and match the streams used in runner-policy.test.ts. This scenario exists so a demo can show a step-budget hold being approved: the agent is doing ordinary work, just more steps than POLICY_MAX_COMMANDS allows, so a human raising the ceiling lets it finish.",
+  "lines": [
+    "{\"type\":\"thread.started\",\"thread_id\":\"replay-budget-001\"}",
+    "{\"type\":\"item.started\",\"item\":{\"id\":\"call_1\",\"type\":\"command_execution\",\"command\":\"npm test\"}}",
+    "{\"type\":\"item.completed\",\"item\":{\"id\":\"call_1\",\"type\":\"command_execution\",\"command\":\"npm test\",\"exit_code\":0}}",
+    "{\"type\":\"item.started\",\"item\":{\"id\":\"call_2\",\"type\":\"command_execution\",\"command\":\"npm run build\"}}",
+    "{\"type\":\"item.completed\",\"item\":{\"id\":\"call_2\",\"type\":\"command_execution\",\"command\":\"npm run build\",\"exit_code\":0}}",
+    "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"tests pass and the build is green - done.\"}}",
+    "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":120,\"output_tokens\":30}}"
+  ]
+}

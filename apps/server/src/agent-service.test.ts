@@ -244,8 +244,10 @@ describe("policy denial is recorded and recoverable", () => {
 
 /**
  * @covers TM-AGENT-004
- * A budget kill surfaces as a `terminated` run with recorded evidence, and the
- * Agent stays usable afterwards.
+ * A budget kill surfaces as a `held` run with an approval the human can
+ * resolve, and the Agent stays usable afterwards. The same error with the
+ * budget removed from POLICY_REVIEW_RULES is `terminated` with an enforced
+ * event, exactly as before.
  */
 class RunawayRunner implements AgentRunner {
   async run(): Promise<RunnerResult> {
@@ -261,8 +263,46 @@ class RunawayRunner implements AgentRunner {
 }
 
 describe("runaway execution budget", () => {
-  it("terminates the run, records it, and keeps the Agent usable", async () => {
+  it("holds the run for approval with a budget raise, and keeps the Agent usable", async () => {
     const service = await makeService(new RunawayRunner());
+    const agent = await service.createAgent({ name: "Loopy" });
+    const { run } = await service.sendMessage(agent.id, "loop forever");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
+
+    // Held, not terminated: the step budget is a reviewable violation under
+    // the default configuration, so no enforced event is written — the
+    // approval is the record, carrying the run-scoped budget raise.
+    expect(service.getPolicyEvents(agent.id)).toHaveLength(0);
+    const pending = service.listApprovals(agent.id);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      rule: "step-budget-exceeded",
+      status: "pending",
+      // limit 50 + observed 51 = the ceiling an approval grants.
+      grantedBudget: 101,
+    });
+    expect(service.getAgent(agent.id).status).toBe("ready");
+  });
+
+  it("terminates outright when the budget is not reviewable in this deployment", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "sentinel-test-"));
+    temporaryDirectories.push(root);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      APP_DATA_DIR: path.join(root, "data"),
+      AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
+      CODEX_HOME: path.join(root, "codex"),
+      ARK_API_KEY: "test-key",
+      ARK_MODEL: "ep-test",
+      POLICY_REVIEW_RULES: "network-egress-denied",
+    });
+    const service = new AgentService(
+      config,
+      new JsonStore(path.join(root, "data", "db.json")),
+      new WorkspaceManager(path.join(root, "workspaces")),
+      new RunawayRunner(),
+    );
+    await service.initialize();
     const agent = await service.createAgent({ name: "Loopy" });
     const { run } = await service.sendMessage(agent.id, "loop forever");
     await expect.poll(() => service.getRun(run.id).status).toBe("terminated");
@@ -270,6 +310,7 @@ describe("runaway execution budget", () => {
     const events = service.getPolicyEvents(agent.id);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ rule: "step-budget-exceeded", enforced: true });
+    expect(service.listApprovals(agent.id)).toHaveLength(0);
     expect(service.getAgent(agent.id).status).toBe("ready");
   });
 });
@@ -321,11 +362,16 @@ describe("monitor evidence on failure", () => {
     await service.initialize();
     const agent = await service.createAgent({ name: "Shadow" });
     const { run } = await service.sendMessage(agent.id, "loop");
-    await expect.poll(() => service.getRun(run.id).status).toBe("terminated");
+    // The step budget is held even in monitor mode: the budget is a resource
+    // limit, not a policy decision, so it was never subject to shadow mode —
+    // and the response to it is now a hold, not a silent kill.
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
 
     const events = service.getPolicyEvents(agent.id);
-    // Both the budget kill AND the monitored near-miss are recorded.
+    // Both the monitored near-miss AND the held budget violation are recorded.
     expect(events.some((e) => e.rule === "network-egress-denied" && !e.enforced)).toBe(true);
-    expect(events.some((e) => e.rule === "step-budget-exceeded")).toBe(true);
+    const pending = service.listApprovals(agent.id);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ rule: "step-budget-exceeded", status: "pending" });
   });
 });

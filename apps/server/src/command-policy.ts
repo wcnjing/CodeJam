@@ -267,6 +267,13 @@ export function isReviewableRule(rule: string): boolean {
 export const REVIEWABLE_RULES: readonly string[] = [
   ...POLICY_RULES.filter((policy) => policy.reviewable).map((policy) => policy.id),
   ...COMBINATION_POLICIES.filter((policy) => policy.reviewable).map((policy) => policy.id),
+  // The step budget is platform-enforced, not a capability rule: the runners
+  // count commands themselves, so it cannot derive its flag from POLICY_RULES.
+  // It belongs in the reviewable set all the same — a runaway loop is more
+  // often a plausible accident (an agent compounding an early mistake) than an
+  // attack, so a human may grant ONE continuation with a raised ceiling. The
+  // approval is still run-scoped and still recorded.
+  "step-budget-exceeded",
 ];
 
 /**

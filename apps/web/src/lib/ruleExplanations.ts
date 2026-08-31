@@ -89,12 +89,12 @@ const RULE_EXPLANATIONS: Record<string, RuleExplanation> = {
   },
   "step-budget-exceeded": {
     label: "Runaway execution stopped",
-    severity: "info",
+    severity: "review",
     glyph: "■",
     summary:
-      "This Run issued more shell commands than the configured budget allows in a single task. This guard fires regardless of intent — it catches loops and runaway automation just as readily as an attack that tries to hide in volume.",
+      "This Run issued more shell commands than the configured budget allows in a single task. The guard fires regardless of intent — it catches loops and runaway automation just as readily as an attack that tries to hide in volume. Under the default configuration the Run is held, not killed: a runaway loop is more often a compounding mistake than an attack, so a human may approve ONE continuation with a raised ceiling.",
     consequence:
-      "Left unchecked, the Agent could keep issuing commands indefinitely, consuming resources or compounding an early mistake.",
+      "Left unchecked, the Agent could keep issuing commands indefinitely, consuming resources or compounding an early mistake. The platform stops the Run either way — the question is only whether a human gets the chance to say the loop was legitimate before it is permanently cut off.",
   },
   "policy-error": {
     label: "Policy evaluation failed closed",

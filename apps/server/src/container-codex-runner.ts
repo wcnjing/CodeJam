@@ -268,6 +268,9 @@ export class ContainerCodexRunner implements AgentRunner {
 
     const parsed = emptyParsedEvents(request.threadId);
     const actor: Actor = { agentId: request.agentId, threadId: request.threadId };
+    // A human-approved budget hold raises the ceiling for this run only; the
+    // standing POLICY_MAX_COMMANDS still bounds every other run.
+    const maxCommands = request.extraMaxCommands ?? this.config.policyMaxCommands;
     const policyContext = policyContextFrom(
       this.config.arkBaseUrl,
       [...this.config.policyAllowedHosts, ...(request.extraAllowedHosts ?? [])],
@@ -313,10 +316,11 @@ export class ContainerCodexRunner implements AgentRunner {
     const applyPolicy = () => {
       const violations = scanCommands(actor, parsed.commands, scannedCommands, policyContext);
       scannedCommands = parsed.commands.length;
-      // Step budget is a hard resource limit: enforced regardless of monitor
-      // mode, because a runaway loop must be stopped whether or not command
-      // policy is in shadow mode.
-      if (!active.budgetExceeded && parsed.commands.length > this.config.policyMaxCommands) {
+      // Step budget is a platform resource limit: enforced regardless of
+      // monitor mode, because a runaway loop must be stopped whether or not
+      // command policy is in shadow mode. Whether the stop is a hard
+      // termination or a hold for human approval is AgentService's call.
+      if (!active.budgetExceeded && parsed.commands.length > maxCommands) {
         active.budgetExceeded = true;
         void this.removeContainer(active);
       }
@@ -356,7 +360,7 @@ export class ContainerCodexRunner implements AgentRunner {
       }
       if (active.budgetExceeded) {
         throw new BudgetExceededError(
-          this.config.policyMaxCommands,
+          maxCommands,
           parsed.commands.length,
         );
       }

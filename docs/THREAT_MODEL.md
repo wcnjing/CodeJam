@@ -66,7 +66,7 @@ notes in the register):
 | TM-AGENT-001 | Indirect prompt injection → unauthorized command | 20 CRIT | Deterministic command policy + redacted audit | 10 MED | ✅ |
 | TM-AGENT-002 | Secret exfiltration to a recognisable non-allowlisted host | 20 CRIT | Recognisable-egress denial + hard secret rule + redaction | 10 MED | ✅ |
 | TM-AGENT-003 | Obfuscated command evades the policy | 15 HIGH | Destination-based egress (any binary/scheme) | 10 MED | ✅ |
-| TM-AGENT-004 | Runaway execution / denial of wallet | 12 MED | Platform step budget (always on) | 6 LOW | ✅ |
+| TM-AGENT-004 | Runaway execution / denial of wallet | 12 MED | Platform step budget (always enforced; a hold for a human when reviewable) | 6 LOW | ✅ |
 | TM-AGENT-005 | Consequential egress without oversight | 12 MED | Human approval, run-scoped host grant | 6 LOW | ✅ |
 | TM-AGENT-006 | Cross-agent evidence leakage | 6 LOW | Per-agent scoping in the service | 3 LOW | ✅ |
 | TM-AGENT-007 | Agent writes outside the sandboxed workspace | 9 MED | Write-root-scoped FILE_WRITE denial (tool-name based — see scope note) | 9 MED | ✅ |
@@ -106,14 +106,23 @@ radius, not the worst-case consequence.
 
 **Two design choices that make the controls defensible:**
 
-- **Secret rules are never reviewable.** Only the egress rules
-  (`network-egress-denied`, `network-egress-denied-implicit`) can be held for
-  human approval; `secret-exfiltration`, `protected-secret-access` and
+- **Only a short, deliberate list of rules can be held for human approval.**
+  The egress rules (`network-egress-denied`, `network-egress-denied-implicit`),
+  a write whose destination the command text cannot settle
+  (`file-write-unresolved-target`), and an exceeded step budget
+  (`step-budget-exceeded`) are reviewable under the default configuration —
+  each is a case where a human plausibly knows something the engine does not,
+  or the agent is compounding a mistake rather than attacking.
+  `secret-exfiltration`, `protected-secret-access` and
   `file-write-outside-workspace` are always hard-denied, so no operator can be
   fatigued into approving exfiltration or a write past the sandbox boundary.
 - **The step budget is not a toggle.** Command policy can run in monitor mode;
   the resource budget always enforces, because a runaway loop must stop
-  regardless.
+  regardless. What changed is *what "stops" means*: under the default
+  configuration an exceeded budget **holds** the run for a human, who may
+  grant ONE continuation with a run-scoped raise of the ceiling
+  (limit + observed). Removing `step-budget-exceeded` from
+  `POLICY_REVIEW_RULES` restores the old hard terminate.
 
 ## 4. Did we do a good enough job?
 

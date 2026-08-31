@@ -41,19 +41,20 @@ function config(overrides: Record<string, string> = {}) {
   });
 }
 
-const request = (prompt: string, extraAllowedHosts?: string[]) => ({
+const request = (prompt: string, extraAllowedHosts?: string[], extraMaxCommands?: number) => ({
   agentId: "replay-agent",
   workspacePath: "/tmp/does-not-matter",
   prompt,
   threadId: null,
   ...(extraAllowedHosts ? { extraAllowedHosts } : {}),
+  ...(extraMaxCommands !== undefined ? { extraMaxCommands } : {}),
 });
 
 describe("replay fixtures", () => {
-  it("ships the two the demo shows, plus the exfiltration headline", async () => {
+  it("ships the three the demo shows, plus the exfiltration headline", async () => {
     const fixtures = await loadFixtures();
     const names = fixtures.map((fixture) => fixture.name).sort();
-    expect(names).toEqual(["benign", "egress-denied", "secret-exfiltration"]);
+    expect(names).toEqual(["benign", "budget-loop", "egress-denied", "secret-exfiltration"]);
   });
 
   it("declares provenance on every fixture", async () => {
@@ -73,6 +74,7 @@ describe("replay fixtures", () => {
     expect(selectFixture(fixtures, "read the customer-db credential")?.name).toBe(
       "secret-exfiltration",
     );
+    expect(selectFixture(fixtures, "keep going until done")?.name).toBe("budget-loop");
     expect(selectFixture(fixtures, "say hello")?.name).toBe("benign");
   });
 });
@@ -140,9 +142,18 @@ describe("replay enforcement decisions", () => {
 
   it("enforces the step budget regardless of monitor mode", async () => {
     const runner = new ReplayRunner(config({ POLICY_ENFORCEMENT: "monitor", POLICY_MAX_COMMANDS: "1" }));
-    await expect(runner.run(request("exfiltrate the customer-db credential"))).rejects.toBeInstanceOf(
+    await expect(runner.run(request("keep going until done"))).rejects.toBeInstanceOf(
       BudgetExceededError,
     );
+  });
+
+  it("honours the run-scoped budget raise a human approval creates", async () => {
+    // The continuation run: same prompt, same fixture, one raised ceiling. If
+    // this did not work the demo could never show a budget hold recovering.
+    const result = await new ReplayRunner(config({ POLICY_MAX_COMMANDS: "1" })).run(
+      request("keep going until done", undefined, 99),
+    );
+    expect(result.output).toContain("build is green");
   });
 
   it("carries monitor observations out on the failure path too", async () => {

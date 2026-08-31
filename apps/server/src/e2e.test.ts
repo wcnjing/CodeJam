@@ -488,10 +488,12 @@ const FAILURE_MODES: FailureMode[] = [
   {
     name: "step budget exceeded (runaway loop)",
     runner: () => new ThrowingRunner(() => new BudgetExceededError(50, 51)),
-    runStatus: "terminated",
+    // Reviewable under the default configuration: the run is held for a human
+    // with a run-scoped budget raise, exactly like a reviewable egress denial.
+    runStatus: "held",
     agentStatus: "ready",
     agentLastError: false,
-    policyEventRule: "step-budget-exceeded",
+    raisesApproval: true,
   },
   {
     name: "non-reviewable denial (secret exfiltration)",

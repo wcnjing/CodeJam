@@ -169,11 +169,21 @@ describe("disposition is read from configuration, never assumed", () => {
       "network-egress-denied",
       "network-egress-denied-implicit",
       "file-write-unresolved-target",
+      "step-budget-exceeded",
     ],
   };
 
   it("says held for a reviewable rule under the default configuration", () => {
     expect(describeDisposition("network-egress-denied", enforceDefault)).toContain("held");
+  });
+
+  it("says held for the step budget under the default configuration", () => {
+    // The budget became reviewable: a runaway run is held for a human, not
+    // killed with no appeal — unless the operator removed it from the set.
+    expect(describeDisposition("step-budget-exceeded", enforceDefault)).toContain("held");
+    expect(describeDisposition("step-budget-exceeded", { enforcement: "enforce", reviewRules: [] })).toContain(
+      "blocked outright",
+    );
   });
 
   it("says blocked for the same rule when the operator narrowed the review set", () => {

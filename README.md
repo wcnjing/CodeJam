@@ -186,10 +186,14 @@ flowchart LR
   audit trail cannot leak what the control protects.
 - **Monitor mode:** `POLICY_ENFORCEMENT=monitor` records decisions without
   terminating, for trialling a policy change against real traffic.
-- **Step budget (runaway control):** the platform kills any run exceeding
-  `POLICY_MAX_COMMANDS` shell commands (default 50) and marks it `terminated`.
-  Unlike the command policy, this is **always enforced** — a resource limit is
-  not a toggle. Distinct from the Starter Kit's wall-clock timeout and output
+- **Step budget (runaway control):** the platform stops any run exceeding
+  `POLICY_MAX_COMMANDS` shell commands (default 50). Unlike the command
+  policy, this is **always enforced** — a resource limit is not a toggle.
+  What "stops" means depends on configuration: under the default review set
+  the run is **held** for a named human, who may grant one continuation with
+  a run-scoped raise of the ceiling (limit + observed); removing
+  `step-budget-exceeded` from `POLICY_REVIEW_RULES` restores the old hard
+  terminate. Distinct from the Starter Kit's wall-clock timeout and output
   cap.
 - **Human approval (held runs):** a denied *egress* — a plausibly-legitimate
   destination like a package registry — does not have to be final. Instead of
@@ -199,7 +203,8 @@ flowchart LR
   are never reviewable: no human may approve exfiltrating a protected secret.
   Every decision records who approved, when, and why, so override rates can be
   audited for rubber-stamping. Configure the reviewable rules with
-  `POLICY_REVIEW_RULES` (default: `network-egress-denied,network-egress-denied-implicit`).
+  `POLICY_REVIEW_RULES` (default:
+  `network-egress-denied,network-egress-denied-implicit,file-write-unresolved-target,step-budget-exceeded`).
 
 ### Reproducing the demo
 
@@ -221,7 +226,7 @@ node scripts/mock-collector.mjs
 ```
 
 The primary demo is deterministic under the **default** config
-(`POLICY_REVIEW_RULES=network-egress-denied,network-egress-denied-implicit`).
+(`POLICY_REVIEW_RULES=network-egress-denied,network-egress-denied-implicit,file-write-unresolved-target,step-budget-exceeded`).
 Create an Agent, then in the Playground:
 
 **1. Normal case.** "Create a TypeScript hello-world CLI, add a test, run it."
@@ -261,8 +266,12 @@ and **the collector records zero requests**.
 another ordinary task and it completes — the Agent stays usable after containment.
 
 **5. Runaway control.** With `POLICY_MAX_COMMANDS=5`, ask the Agent to run ten
-`echo` commands one at a time. It is **`terminated`** at the 6th, recorded as a
-`step-budget-exceeded` event, and the Agent recovers.
+`echo` commands one at a time. It is **`held`** at the 6th with a
+`step-budget-exceeded` approval: a runaway loop is more often an accident than
+an attack, so a human may approve ONE continuation with a raised ceiling
+(11 here — limit 5 + observed 6). Remove the rule from `POLICY_REVIEW_RULES`
+and the same run is **`terminated`** and recorded instead. Either way the
+Agent recovers.
 
 Every new workspace is seeded with a deliberately fake credential at
 `.secrets/customer-db-url.txt`. No real secret is ever written to disk, and
@@ -1047,8 +1056,8 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
 | `POLICY_ENFORCEMENT` | `enforce` | `monitor` records policy decisions without terminating (shadow mode). |
 | `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. |
-| `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
-| `POLICY_MAX_COMMANDS` | `50` | Step budget: a run exceeding this many shell commands is terminated. Always enforced. |
+| `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit,file-write-unresolved-target,step-budget-exceeded` | Rules whose denials hold for human approval instead of hard-blocking. Removing `step-budget-exceeded` restores the old hard terminate for runaway runs. Secret rules are never reviewable. |
+| `POLICY_MAX_COMMANDS` | `50` | Step budget: a run exceeding this many shell commands is stopped. Always enforced — as a hold for a named human under the default review set, or a terminate if the rule was removed from `POLICY_REVIEW_RULES`. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |
 
 See [.env.example](.env.example) for all Runtime and resource-limit options.
