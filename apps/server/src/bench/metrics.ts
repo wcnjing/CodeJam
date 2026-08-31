@@ -259,10 +259,16 @@ export function wilson(successes: number, trials: number, z = 1.96): ConfidenceI
   const spread =
     (z / denominator) *
     Math.sqrt((point * (1 - point)) / trials + zSquared / (4 * trials * trials));
+  // An interval must contain its own point estimate. At p=1 the arithmetic
+  // above returns 0.9999999999999998 for the upper bound -- floating-point
+  // noise, but it makes the published interval exclude the value it is an
+  // interval for, and it only ever shows up at exactly 0% or 100%, which is
+  // where these figures are most often quoted. Clamping to the point rather
+  // than widening keeps every other case byte-identical.
   return {
     point,
-    low: Math.max(0, center - spread),
-    high: Math.min(1, center + spread),
+    low: Math.min(point, Math.max(0, center - spread)),
+    high: Math.max(point, Math.min(1, center + spread)),
   };
 }
 

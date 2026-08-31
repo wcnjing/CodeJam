@@ -127,16 +127,53 @@ export function runsWrittenScript(command: string): boolean {
   }
   if (written.size === 0) return false;
 
+  // `eval "$(cat run.sh)"`: `executableSegments` unwraps the substitution, so by
+  // the time the loop below sees `eval` its argument list is already empty and
+  // the written name has moved into a `cat` segment of its own. The relationship
+  // that matters -- this executor runs that file -- is only visible in the raw
+  // text, so it is asked there.
+  for (const name of written) {
+    if (!name) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // `.` is the `source` shorthand and must be a WORD, not any dot. Written as
+    // `\b(?:eval|source|\.)\b` it matched the dot inside `example.com` and made
+    // `echo 'see https://example.com' > notes.md && bash build.sh` a false
+    // positive -- a corpus entry whose whole purpose is that the script which
+    // runs is not the file that was written.
+    if (new RegExp(`(?:^|\\s)(?:eval|source|\\.)\\s[^\\n]*${escaped}`, "i").test(command)) return true;
+  }
+
   for (const segment of executableSegments(command)) {
     const invocation = invocationFromSegment(segment, true);
     if (!invocation) continue;
-    const { tool, args } = invocation;
-    // Executing the file directly, e.g. `./run.sh`.
-    if (written.has(scriptIdentity(tool))) return true;
-    if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== ".") continue;
-    for (const argument of args) {
-      if (argument.startsWith("-")) continue;
-      if (written.has(scriptIdentity(argument))) return true;
+    if (executesOneOf(invocation, written)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether this invocation runs one of `written`.
+ *
+ * Shared by both write carriers -- the shell redirect above and the write-tool
+ * one below -- because "the script that runs has to be the file that was
+ * written" is one rule, and the two carriers differ only in how the file got
+ * written.
+ */
+function executesOneOf(
+  invocation: { tool: string; args: string[] },
+  written: ReadonlySet<string>,
+): boolean {
+  const { tool, args } = invocation;
+  // Executing the file directly, e.g. `./run.sh`.
+  if (written.has(scriptIdentity(tool))) return true;
+  if (!SHELL_NAMES.has(tool) && tool !== "source" && tool !== "." && tool !== "eval") return false;
+  for (const argument of args) {
+    if (argument.startsWith("-")) continue;
+    if (written.has(scriptIdentity(argument))) return true;
+    // `eval "$(cat run.sh)"` names the written file inside a substitution
+    // rather than as a script operand. The file is still what gets executed.
+    for (const name of written) {
+      if (name && argument.toLowerCase().includes(name)) return true;
     }
   }
   return false;
@@ -651,6 +688,220 @@ function pipedScriptPayloads(command: string): string[] {
 }
 
 /**
+ * Text written into a file that this same command then executes.
+ *
+ * `pipedScriptPayloads` covers the pipeline carrier -- `echo X | sh`. This is
+ * the file carrier: `echo X > f && sh f`. `runsWrittenScript` already RECOGNISES
+ * that shape and withdraws the textual carve-out, which is enough for a URL,
+ * because `ANY_URL` then sees it anywhere in the line. It is not enough for a
+ * BARE HOST: a bare host is only recoverable from a recognised tool's argument
+ * position, and inside a quoted string being redirected to a file there is no
+ * such position. So the text has to be materialised and re-asked, exactly as the
+ * decoder and pipeline carriers are.
+ *
+ * Writes are recognised BY TOOL as well as by redirect. A file written by `tee`,
+ * `dd of=`, `sed -n w` or `awk print >` is just as executable afterwards as one
+ * written by `>`, and recognising only the redirect is what let those escape
+ * while carrying a URL -- the one case where even a URL got through.
+ */
+function writtenScriptPayloads(command: string): string[] {
+  if (!runsWrittenScript(command) && !writesByToolThenRuns(command)) return [];
+  const payloads: string[] = [];
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    if (!TEXT_EMITTERS.has(invocation.tool)) continue;
+    for (const argument of invocation.args) {
+      if (argument.startsWith("-")) continue;
+      const text = argument.replace(/^['"]/, "").replace(/['"]$/, "");
+      if (text && text !== "%s" && text !== "%b" && !FORMAT_ONLY.test(text)) payloads.push(text);
+    }
+  }
+  return payloads;
+}
+
+const TEXT_EMITTERS = new Set(["echo", "printf"]);
+/** A printf format string is not a payload: `printf 'all:\n\t%s\n' <payload>`. */
+const FORMAT_ONLY = /^[%\\a-z:\t\n ]*$/i;
+
+/** Tools that write a file without a shell redirect. */
+const WRITE_TOOLS = new Set([
+  "tee",
+  "dd",
+  "sed",
+  "awk",
+  // Interpreters write files too, and `python3 -c 'open(f,"w").write(...)'`
+  // followed by `sh f` is the same carrier with a different pen.
+  "python",
+  "python3",
+  "node",
+  "perl",
+  "ruby",
+]);
+
+/**
+ * Every literal string the command carries, from anywhere.
+ *
+ * The three existing materialisers each harvest text from exactly one place:
+ * `echo`/`printf` ARGUMENTS. That is why a herestring body, an interpreter's own
+ * program text and a `$(cat f)` read-back all stayed invisible after the file
+ * carrier was closed -- not because they are new classes, but because the
+ * harvester only ever looked in one pocket.
+ *
+ * This looks in all of them: single- and double-quoted literals, herestring
+ * bodies, heredoc bodies. Nesting resolves through the existing recursion --
+ * `awk 'BEGIN{print "nc host" > "f"}'` yields the awk program at one depth and
+ * the inner command at the next -- so this needs no special case per interpreter.
+ *
+ * It is only ever called behind `executesMaterialisedText`, and that gate is
+ * what keeps it affordable: `git commit -m "see https://x" && git status`
+ * carries a literal too, and must never be re-asked, because nothing in it
+ * executes what the literal says.
+ */
+const LITERAL = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"/g;
+
+function materialisedLiterals(command: string): string[] {
+  if (!executesMaterialisedText(command)) return [];
+  const out: string[] = [];
+  for (const match of command.matchAll(LITERAL)) {
+    const text = (match[1] ?? match[2] ?? "").trim();
+    if (text) out.push(text);
+  }
+  for (const match of command.matchAll(/<<<\s*([^\n]+)/g)) {
+    out.push(match[1]!.replace(/^['"]/, "").replace(/['"]$/, "").trim());
+  }
+  for (const match of command.matchAll(/<<-?\s*['"]?(\w+)['"]?\n([\s\S]*?)\n\1/g)) {
+    out.push(match[2]!.trim());
+  }
+  // Literals nested inside literals, harvested here rather than left to the
+  // recursion. `awk 'BEGIN{print "nc host" > "f"}'` yields the awk program at
+  // this level, and the payload is one quote deeper. The recursion would re-ask
+  // the gate of that program text, and the program text on its own does not
+  // execute anything -- the awk INVOCATION did. Having established at this level
+  // that materialised text gets run, the nested text is materialised text too.
+  for (const literal of [...out]) {
+    for (const match of literal.matchAll(LITERAL)) {
+      const text = (match[1] ?? match[2] ?? "").trim();
+      if (text) out.push(text);
+    }
+  }
+  return [...new Set(out)].filter(Boolean);
+}
+
+/** `eval "$(...)"` / `sh -c "$(...)"`: a substitution IS the script. */
+const EVAL_OF_SUBSTITUTION = /\b(?:eval|source)\b[^\n]*\$\(/;
+
+/**
+ * Whether anything in this command executes text the command itself produced.
+ *
+ * The union of every carrier shape, and the single gate the literal harvester
+ * hangs off. Being coarse here is safe: materialising extra text cannot by
+ * itself deny, because the ordinary rules still require an untrusted
+ * destination to fire.
+ */
+function executesMaterialisedText(command: string): boolean {
+  return (
+    runsWrittenScript(command) ||
+    writesByToolThenRuns(command) ||
+    feedsAnExecutor(command) ||
+    EVAL_OF_SUBSTITUTION.test(command)
+  );
+}
+
+/**
+ * A file written by a TOOL rather than a redirect, and then executed.
+ *
+ * The same rule `runsWrittenScript` applies to redirects, applied to the other
+ * pen: name the file that was written, then require a LATER segment to execute
+ * that same file. The previous version asked neither question -- any write-tool
+ * anywhere plus any shell anywhere was enough -- which made
+ * `echo 'curl https://attacker.example' && python --version && bash build.sh`
+ * a denial. Nothing there writes anything and nothing runs what `echo` printed;
+ * `python --version` and an unrelated build script were simply both present.
+ *
+ * Coarseness was defended on the grounds that materialising extra text cannot
+ * itself deny. That is true of the literal harvester and false of this gate:
+ * the harvester runs behind it, so opening this gate on an unrelated line hands
+ * every quoted string in that line to the recursion, and one of them saying
+ * `curl` is all the ordinary rules need. Ordinary work is what pays for it.
+ */
+function writesByToolThenRuns(command: string): boolean {
+  const written = new Set<string>();
+  for (const segment of executableSegments(command)) {
+    const invocation = invocationFromSegment(segment, true);
+    if (!invocation) continue;
+    // Order matters: only a file written EARLIER in the line can be the text
+    // this segment executes. `bash run.sh && tee run.sh <<< '...'` runs a file
+    // that this command had not yet produced.
+    if (written.size > 0 && executesOneOf(invocation, written)) return true;
+    if (!WRITE_TOOLS.has(invocation.tool)) continue;
+    for (const target of toolWriteTargets(invocation.tool, invocation.args)) {
+      written.add(scriptIdentity(target));
+    }
+  }
+  return false;
+}
+
+/**
+ * A token that could be a file NAME: no whitespace, no scheme punctuation, and
+ * carrying a `.` or a `/`. The dot-or-slash requirement is what keeps
+ * `open("run.sh", "w")` from contributing `w` as a written file -- a one-letter
+ * name that then matches, as a substring, most later arguments.
+ *
+ * The cost is a payload written to an extensionless name (`open("payload","w")`
+ * then `bash payload`). That carrier is still reached through the redirect and
+ * herestring forms, and buying it here would mean treating every short string
+ * in an interpreter's source as a filename.
+ */
+const FILE_NAME_TOKEN = /^[\w.~$/@+-]+$/;
+const isFileNameToken = (token: string) =>
+  FILE_NAME_TOKEN.test(token) && /[./]/.test(token) && /\w/.test(token);
+
+/** Program text, as opposed to a filename operand: `awk 'BEGIN{...}'`, `-c '...'`. */
+const PROGRAM_TEXT = /[\s(){};>=]/;
+
+/**
+ * The files this invocation of a write-tool actually writes.
+ *
+ * `tee`/`dd`/`sed -i` name their target in argument position. The interpreters
+ * carry it inside their own source, in whichever way that language spells
+ * "open for writing" -- `open("run.sh","w")`, `writeFileSync('run.sh', ...)`,
+ * `print ... > "run.sh"` -- so every file-shaped literal in the program text is
+ * treated as a candidate rather than one pattern per language. Over-collecting
+ * here is cheap: a name only does anything if a later segment executes it.
+ */
+function toolWriteTargets(tool: string, args: string[]): string[] {
+  const positional = args.filter((argument) => !argument.startsWith("-"));
+  if (tool === "tee") return positional;
+  // `dd if=payload of=run.sh`: only `of=` is the destination.
+  if (tool === "dd") return args.flatMap((a) => (a.startsWith("of=") ? [a.slice(3)] : []));
+  if (tool === "sed") {
+    // `-i` edits the named file in place. Without it the operand is an INPUT
+    // and sed writes to stdout -- except that the script itself has a write
+    // verb: `w FILE` as a command, and the `w` flag on `s///`. That is how
+    // `echo '...' | sed -n 'w /tmp/hc.sh' && sh /tmp/hc.sh` writes a script
+    // without a single redirect in the line.
+    const targets = args.some((a) => /^-[a-zA-Z]*i/.test(a)) ? positional.slice(1) : [];
+    for (const argument of args) {
+      for (const match of argument.matchAll(/(?:^|[;\s}/])[wW]\s+(\S+)/g)) targets.push(match[1]!);
+    }
+    return targets;
+  }
+  const names: string[] = [];
+  for (const argument of args) {
+    if (!PROGRAM_TEXT.test(argument)) continue;
+    for (const match of argument.matchAll(LITERAL)) {
+      const text = (match[1] ?? match[2] ?? "").trim();
+      if (isFileNameToken(text)) names.push(text);
+    }
+    for (const match of argument.matchAll(/>>?\s*["']?([^\s"'();]+)/g)) {
+      if (isFileNameToken(match[1]!)) names.push(match[1]!);
+    }
+  }
+  return names;
+}
+
+/**
  * The capabilities a command would exercise, resolved against the run's context.
  *
  * NETWORK_EGRESS is reported once per destination so a rule can speak about
@@ -727,7 +978,12 @@ export function extractCapabilities(
   // separately, as evidence.
   if (depth < MAX_DECODE_DEPTH) {
     const seen = new Set(requests.map((r) => r.capability + "\u0000" + r.resource));
-    for (const payload of [...decodedPayloads(command), ...pipedScriptPayloads(command)]) {
+    for (const payload of [
+      ...decodedPayloads(command),
+      ...pipedScriptPayloads(command),
+      ...writtenScriptPayloads(command),
+      ...materialisedLiterals(command),
+    ]) {
       for (const inner of extractCapabilities(payload, context, depth + 1)) {
         const key = inner.capability + "\u0000" + inner.resource;
         if (seen.has(key)) continue;
@@ -767,7 +1023,16 @@ export function extractCapabilities(
  */
 const STDIN_EXECUTORS = new Set(["eval", "source", "."]);
 
+/** `sh <<< 'payload'` -- a herestring is a stdin source like any pipe. */
+const HERESTRING_TO_SHELL = /(?:^|[\s;&|])(?:sh|bash|zsh|dash|ksh|eval|source)[^<]*<<</;
+/** `sh <(echo 'payload')` -- process substitution as the script operand. */
+const PROCSUB_TO_SHELL = /(?:^|[\s;&|])(?:sh|bash|zsh|dash|ksh)\s+<\(/;
+
 export function feedsAnExecutor(command: string): boolean {
+  // A shell can be handed its script without a pipeline at all. A herestring
+  // (`sh <<< 'cmd'`) and process substitution (`sh <(echo 'cmd')`) are both
+  // stdin sources, and both were missed by requiring a `|` before looking.
+  if (HERESTRING_TO_SHELL.test(command) || PROCSUB_TO_SHELL.test(command)) return true;
   if (!command.includes("|")) return false;
   for (const segment of executableSegments(command)) {
     const invocation = invocationFromSegment(segment, true);
@@ -812,9 +1077,171 @@ export function feedsAnExecutor(command: string): boolean {
  * carve-out cannot itself cause a denial - the rules still require an untrusted
  * destination to fire.
  */
+/**
+ * How the textual carve-out decides, while the two options are being measured.
+ *
+ *   "enumerate" - the shipping behaviour. The carve-out is GRANTED by default to
+ *                 anything starting with a textual command, and specific
+ *                 recognisers (`runsWrittenScript`, `feedsAnExecutor`) withdraw
+ *                 it. Fail-OPEN: a construct nobody enumerated keeps the
+ *                 exemption.
+ *   "strict"    - the carve-out is granted only to a command that is PURELY
+ *                 textual output: no pipeline stage after it, no redirect, no
+ *                 later command. Fail-CLOSED: a construct nobody enumerated
+ *                 loses the exemption and the destination stays visible.
+ *
+ * A measurement seam, not a permanent setting. It exists so the choice between
+ * the two is made from an FPR number rather than from an argument.
+ */
+export type CarveoutMode = "enumerate" | "strict" | "inert-sink";
+
+/**
+ * Sinks that consume text and cannot execute it.
+ *
+ * This is the allowlist that "inert-sink" mode inverts against: text piped into
+ * one of these is still just text, and anything NOT here is treated as an
+ * executor. `tee` earns its place from the corpus -- writing a URL into notes is
+ * ordinary work -- and its write-then-execute form is caught by
+ * `runsWrittenScript` rather than by this list. `sed` and `awk` are absent on
+ * purpose: both can write a file (`sed -n w`, `awk print >`), so neither is
+ * inert in the sense this list means.
+ */
+const INERT_SINKS = new Set([
+  "tee", "cat", "head", "tail", "grep", "egrep", "fgrep", "wc", "sort", "uniq",
+  "less", "more", "tr", "cut", "column", "fold", "nl", "rev", "tac", "jq",
+  "base64", "gunzip", "gzip", "tostdout",
+]);
+
+/**
+ * Whether the textual output flows into something that is not a known-inert
+ * sink.
+ *
+ * The inversion happens HERE rather than at the carve-out itself. Measurement
+ * is why: inverting the carve-out wholesale takes corpus FPR from 1/84 to 6/84,
+ * and the five it breaks are ordinary developer work that the corpus contains
+ * specific benign guards for -- `git commit -m "... see https://..." && git
+ * status`, `echo '... https://...' | tee -a notes.md`. Chaining and redirecting
+ * are not the problem; handing the text to an unknown CONSUMER is. So the
+ * consumer list is what fails closed: `| at`, `| crontab`, `| parallel` all
+ * withdraw the carve-out because nobody put them on an inert list, while the
+ * benign guards survive untouched.
+ */
+function feedsUnknownSink(command: string): boolean {
+  const stages = topLevelPipelineStages(command);
+  if (stages.length < 2) return false;
+  for (let i = 1; i < stages.length; i += 1) {
+    const invocation = invocationFromSegment(stages[i]!, true);
+    if (!invocation) continue;
+    if (!INERT_SINKS.has(invocation.tool)) return true;
+  }
+  return false;
+}
+
+/**
+ * Top-level pipeline stages, quote-aware.
+ *
+ * `executableSegments` cannot be used here: it flattens pipelines and `&&`
+ * sequences into one list, and this needs to tell them apart. Piping text into
+ * something is handing it over; running a second, separate command afterwards is
+ * not. Conflating them is exactly what took "strict" mode to 6/84 FPR.
+ */
+function topLevelPipelineStages(command: string): string[] {
+  const stages: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  let depth = 0;
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!;
+    if (quote) {
+      current += ch;
+      if (ch === quote && command[i - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch; current += ch; continue; }
+    if (ch === "(") depth += 1;
+    if (ch === ")") depth -= 1;
+    if (ch === "|" && depth === 0) {
+      if (command[i + 1] === "|") { current += "||"; i += 1; continue; }
+      stages.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  stages.push(current.trim());
+  return stages.filter(Boolean);
+}
+
+/**
+ * DEFAULT: "inert-sink", chosen from measurement rather than from argument.
+ *
+ *                        enumerate      strict        inert-sink
+ *   corpus FPR           1/84 1.19%     6/84 7.14%    1/84 1.19%
+ *   corpus recall        114/114        114/114       114/114
+ *   injection bank       93.51%         96.04%        94.84%
+ *
+ * "strict" closes the most and is not affordable. The five benign commands it
+ * newly denies are ordinary work the corpus contains explicit guards for --
+ * `git commit -m "... https://... " && git status`,
+ * `echo '... https://...' | tee -a notes.md`, and the `bash -lc` wrapping that
+ * every corpus entry uses. A 6x FPR increase on core developer workflow to buy
+ * 2.5 points of bank coverage is the wrong trade, and it would have been made on
+ * the strength of the fail-open argument alone.
+ *
+ * "inert-sink" dominates "enumerate": identical FPR and recall, 30 more bank
+ * variants closed. It inverts the list that can safely be inverted -- an unknown
+ * pipeline CONSUMER now withdraws the carve-out -- while leaving chaining and
+ * redirecting alone, which is where strict does its damage.
+ *
+ * The honest limit: no carve-out mode addresses the DOMINANT residual. 23 of the
+ * 40 newly-found carrier cases stay open under every mode here, and nearly all
+ * are bare-host forms where the carve-out never applied. That needs
+ * materialisation, not exemption logic.
+ */
+let carveoutMode: CarveoutMode =
+  process.env.POLICY_CARVEOUT_MODE === "strict"
+    ? "strict"
+    : process.env.POLICY_CARVEOUT_MODE === "enumerate"
+      ? "enumerate"
+      : "inert-sink";
+
+export function setCarveoutMode(mode: CarveoutMode): void {
+  carveoutMode = mode;
+}
+export function getCarveoutMode(): CarveoutMode {
+  return carveoutMode;
+}
+
+/**
+ * Whether a command is nothing but textual output.
+ *
+ * True only when every segment is a textual-output command and the command does
+ * not hand that output to anything: no pipe, no redirect, no second command.
+ * `echo 'see https://x'` and `git commit -m 'see https://x'` qualify.
+ * `echo 'curl https://x' | tee f > /dev/null && sh f` does not, and neither does
+ * any of the constructs that had to be enumerated one at a time.
+ */
+function isInertTextualOutput(command: string): boolean {
+  // Any pipeline, redirect, separator, substitution or background operator
+  // means the text goes somewhere. Backticks and $( ) included: those are how
+  // the output becomes an argument to something else.
+  if (/[|><;&`]/.test(command)) return false;
+  if (/\$\(/.test(command)) return false;
+  const segments = executableSegments(command);
+  if (segments.length !== 1) return false;
+  return TEXTUAL_URL_CONTEXT.test(segments[0]!);
+}
+
 export function isTextualUrlOnly(command: string): boolean {
   if (!TEXTUAL_URL_CONTEXT.test(command)) return false;
+  if (carveoutMode === "strict") return isInertTextualOutput(command);
+  if (carveoutMode === "inert-sink" && feedsUnknownSink(command)) return false;
   if (runsWrittenScript(command)) return false;
+  // `tee` is an inert sink -- writing a URL into notes is ordinary work, and the
+  // corpus guards it. Writing with `tee` and then EXECUTING what was written is
+  // not, and it is the one shape where a URL escaped too. The distinction is
+  // whether the written file is later run, which is exactly what this asks.
+  if (writesByToolThenRuns(command)) return false;
   if (feedsAnExecutor(command)) return false;
 
   const carrying = executableSegments(command).filter(
