@@ -16,7 +16,7 @@ afterEach(async () => {
 
 describe("JsonStore", () => {
   it("does not publish a mutation in memory when persistence fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
     temporaryDirectories.push(root);
     const originalPath = path.join(root, "db.json");
     const store = new JsonStore(originalPath);
@@ -55,8 +55,8 @@ describe("JsonStore", () => {
   });
 
   // @covers TM-OPS-001
-  it("prunes policyEvents older than retentionDays on the next mutation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
+  it("drops policyEvents older than retentionDays when the log is next loaded", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
     temporaryDirectories.push(root);
     const store = new JsonStore(path.join(root, "db.json"), 1);
     await store.initialize();
@@ -75,11 +75,19 @@ describe("JsonStore", () => {
       });
     });
 
-    expect(store.snapshot().policyEvents).toEqual([]);
+    // Retention used to be enforced on every write, which is what made
+    // recording one decision cost O(events already stored). It is now applied
+    // when the log is loaded: retention is a policy about AGE, and age does not
+    // change because somebody wrote a record. The effect is identical -- the
+    // expired event does not survive -- and the write path no longer pays for
+    // it, so this asserts the outcome across a reload rather than in-process.
+    const reopened = new JsonStore(path.join(root, "db.json"), 1);
+    await reopened.initialize();
+    expect(reopened.snapshot().policyEvents).toEqual([]);
   });
 
   it("never prunes a pending approval, however old its requestedAt is", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
     temporaryDirectories.push(root);
     const store = new JsonStore(path.join(root, "db.json"), 1);
     await store.initialize();
@@ -110,7 +118,7 @@ describe("JsonStore", () => {
   });
 
   it("prunes a resolved approval once resolvedAt is older than retentionDays", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-test-"));
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-test-"));
     temporaryDirectories.push(root);
     const store = new JsonStore(path.join(root, "db.json"), 1);
     await store.initialize();
@@ -170,7 +178,7 @@ const v1File = (approvals: unknown[]) =>
   });
 
 async function storeOn(contents?: string) {
-  const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-migrate-"));
+  const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
   temporaryDirectories.push(root);
   const filePath = path.join(root, "db.json");
   if (contents !== undefined) await writeFile(filePath, contents, "utf8");
@@ -191,7 +199,7 @@ describe("JsonStore schema migration", () => {
       ]),
     );
     const { approvals, version } = store.snapshot();
-    expect(version).toBe(2);
+    expect(version).toBe(3);
     expect(approvals[0]!.resolvedByAttribution).toBe("self-asserted");
     expect(approvals[0]!.resolvedBy).toBe("operator");
     // Still pending, so there is no approver to attribute either way.
@@ -201,7 +209,7 @@ describe("JsonStore schema migration", () => {
   it("writes the upgrade back so it is not redone on every start", async () => {
     const { filePath } = await storeOn(v1File([v1Approval()]));
     const onDisk = JSON.parse(await readFile(filePath, "utf8"));
-    expect(onDisk.version).toBe(2);
+    expect(onDisk.version).toBe(3);
     expect(onDisk.approvals[0].resolvedByAttribution).toBe("self-asserted");
 
     // Reopening must read it as v2 and change nothing.
@@ -226,14 +234,19 @@ describe("JsonStore schema migration", () => {
 
   it("starts a fresh store at the current version", async () => {
     const { store } = await storeOn();
-    expect(store.snapshot().version).toBe(2);
+    expect(store.snapshot().version).toBe(3);
   });
 
   it("still refuses a version it cannot migrate", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "sentinel-store-migrate-"));
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
     temporaryDirectories.push(root);
     const filePath = path.join(root, "db.json");
-    await writeFile(filePath, JSON.stringify({ version: 3, agents: [], approvals: [] }), "utf8");
+    // Must be a version AHEAD of the current one. This read `version: 3` until
+    // 3 became the current version, at which point the test was asserting that
+    // the store refuses its own format -- and it passed for exactly as long as
+    // 3 was hypothetical. A test pinned to "some number we do not support" has
+    // to move when that number is adopted.
+    await writeFile(filePath, JSON.stringify({ version: 99, agents: [], approvals: [] }), "utf8");
     await expect(new JsonStore(filePath).initialize()).rejects.toThrow(/Unsupported/i);
   });
 });
