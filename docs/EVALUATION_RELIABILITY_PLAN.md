@@ -367,6 +367,29 @@ format the day 3 was adopted. And `injection.test.ts` asserted
 residuals were closed. Neither was wrong when written. Both were pinned to a
 world that changed.
 
+**And it is not confined to tests — a document does it too.**
+`docs/ARCHITECTURE.md` described the store as *"`JsonStore` serializes writes and
+atomically replaces one JSON file"*. That was an accurate sentence. It became,
+without anyone editing it, a description of a defect that had been removed:
+recording one policy decision used to re-serialise every prior decision
+(14.16–17.59 ms at 5,000 events), and policy events now go to an append-only
+JSONL log where that sentence no longer describes the write path at all.
+
+This is the same shape one layer up, and the layer matters. A stale test is at
+least *executed* — it has a chance, however poor, of noticing when its subject
+moves, which is how the r² gate was eventually caught. A stale sentence is
+executed by nobody. It is read, believed, and re-cited, and the only thing that
+disturbs it is a person happening to check that specific claim against the
+current code. `verify:figures` would not have caught it either: there is no
+figure in it, only a description, and the check reads numbers.
+
+The general form is worth stating at this level rather than the test level: **any
+artefact that describes a defect will outlive the defect and keep describing
+it.** Gates, comments, architecture docs, threat-register entries, and
+onboarding material all qualify. When a defect closes, the fix is not done until
+everything that described it has been re-read — and nothing in any toolchain here
+tells you what that set is.
+
 ### Two more that do not fit the five
 
 **Expired provenance — a label is a claim that goes stale.** "Measured locally,

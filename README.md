@@ -1086,7 +1086,9 @@ docker compose config
 - [Policy evaluation](docs/POLICY_EVALUATION.md) — measurement harness, defects found, red-team results
 - [Operational governance](docs/OPERATIONAL_GOVERNANCE.md) — operational-controls mapping and gaps
 - [Kill Switch plan](docs/KILL_SWITCH_PLAN.md) — design and status
-- [Architecture](docs/ARCHITECTURE.md)
+- [Architecture](docs/ARCHITECTURE.md) — enforcement point, instrumentation taps, recovery path, both state machines
+- [Extensible contracts](docs/CONTRACTS.md) — `AgentRunner`, `scanCommandsWith`, the figure contract, the ratchet contract
+- [The figure contract](docs/FIGURE_CONTRACT.md) — a portable rule for documents that publish measurements, and how to adopt it elsewhere
 - [Local POC](docs/LOCAL_POC.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Hackathon extension guide](docs/HACKATHON_EXTENSION_GUIDE.md)
