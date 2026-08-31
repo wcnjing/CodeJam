@@ -1,8 +1,14 @@
-import type { AgentRun, ApprovalRequest, CapabilityRequest, PolicyDecision } from "../types";
+import type {
+  AgentRun,
+  ApprovalRequest,
+  CapabilityRequest,
+  NetworkDenial,
+  PolicyDecision,
+} from "../types";
 import { explainRule, type Severity } from "./ruleExplanations";
 
 export type TimelineSeverity = Severity | "success" | "neutral";
-export type TimelineKind = "run" | "policy" | "approval";
+export type TimelineKind = "run" | "policy" | "approval" | "network";
 
 export interface TimelineEvent {
   id: string;
@@ -46,6 +52,7 @@ export function buildAuditTimeline(
   runs: AgentRun[],
   policyEvents: PolicyDecision[],
   approvals: ApprovalRequest[],
+  networkEvents: NetworkDenial[] = [],
 ): TimelineEvent[] {
   const events: TimelineEvent[] = [];
 
@@ -92,6 +99,46 @@ export function buildAuditTimeline(
       command: event.command,
       meta: event.enforced ? "enforced" : "observed only (monitor mode)",
       capabilities: event.capabilities,
+    });
+  }
+
+  // Network-layer denials. Deliberately their own `kind`, styled apart from a
+  // policy decision, because they mean something different: the command ALREADY
+  // RAN and the broker refused where it went, which is the classifier admitting
+  // it did not see this one coming. Merging them into the policy stream would
+  // read as "the policy caught it", which is the opposite of what happened.
+  for (const event of networkEvents) {
+    events.push({
+      id: "network-" + event.id,
+      at: event.observedAt,
+      kind: "network",
+      severity: "critical",
+      title: "Network layer refused a destination",
+      detail:
+        event.reason +
+        " — the command was not recognised by the policy layer, and the container had no route to " +
+        event.host +
+        ".",
+      command: event.host + ":" + event.port,
+      meta: "contained by the egress broker",
+    });
+  }
+
+  // One marker per run whose evidence could NOT be read, so "no denials shown"
+  // is never silently the same as "no denials happened".
+  for (const run of runs) {
+    if (run.networkEvidence !== "unavailable") continue;
+    events.push({
+      id: "network-unknown-" + run.id,
+      at: run.completedAt ?? run.createdAt,
+      kind: "network",
+      severity: "review",
+      title: "Network-layer evidence unavailable",
+      detail:
+        "The egress broker's log could not be read for this run. Containment still held — " +
+        "the run had no route out except the broker — but whether it refused anything is UNKNOWN, " +
+        "not none.",
+      meta: "evidence collection failed; the run was unaffected",
     });
   }
 

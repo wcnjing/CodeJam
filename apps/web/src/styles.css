@@ -1778,6 +1778,27 @@ textarea:focus {
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
+/*
+ * A network denial is not a policy decision and must not look like one.
+ *
+ * The policy layer decided BEFORE the command ran and can explain itself; the
+ * broker refused AFTER it ran, which means the classifier missed it. An
+ * operator scanning the timeline needs to tell those apart at a glance, so this
+ * kind gets its own marker rather than sharing the severity colour with a
+ * policy event that happens to be equally severe.
+ */
+.audit-kind-network .audit-kind {
+  background: #1f2933;
+  color: #ffffff;
+}
+.audit-kind-network .audit-dot {
+  background: #1f2933;
+  box-shadow: 0 0 0 3px rgba(31, 41, 51, 0.18);
+}
+.audit-kind-network .audit-body code {
+  border-left: 3px solid #1f2933;
+}
+
 .audit-detail {
   margin: 0;
   color: var(--muted);

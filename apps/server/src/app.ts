@@ -167,6 +167,14 @@ export async function createApp(
     return { policyEvents: service.getPolicyEvents(id) };
   });
 
+  // Separate route, not a field on policy-events: the two are different kinds
+  // of evidence and a client that wants one should not have to filter the other
+  // out of a merged list.
+  app.get("/api/agents/:id/network-events", async (request) => {
+    const { id } = agentIdParams.parse(request.params);
+    return { networkEvents: service.getNetworkEvents(id) };
+  });
+
   app.get("/api/agents/:id/approvals", async (request) => {
     const { id } = agentIdParams.parse(request.params);
     return { approvals: service.listApprovals(id) };

@@ -46,6 +46,14 @@ export interface AgentRun {
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  /**
+   * Whether this run's network-layer denials could be read back.
+   * `collected` -- an empty denial list truly means nothing was refused.
+   * `unavailable` -- the broker's log could not be read; an empty list means
+   * nothing is known, and the UI must say so rather than imply a clean run.
+   * absent -- the run had no broker at all.
+   */
+  networkEvidence?: "collected" | "unavailable";
 }
 
 /** What an action would do, in the vocabulary the policy decides on. */
@@ -63,6 +71,25 @@ export interface CapabilityRequest {
     | "file-write-unresolved";
   /** Recovered from a payload the command would decode or pipe into a shell. */
   decoded?: true;
+}
+
+/**
+ * A destination the egress broker refused, after the command already ran.
+ *
+ * Rendered apart from PolicyDecision because it means something different: the
+ * policy layer did not recognise this command, and the network contained it
+ * anyway. See the run's `networkEvidence` for whether an empty list means
+ * "nothing was refused" or "we could not tell".
+ */
+export interface NetworkDenial {
+  id: string;
+  agentId: string;
+  runId: string;
+  host: string;
+  port: number;
+  reason: string;
+  source: "egress-broker";
+  observedAt: string;
 }
 
 export interface PolicyDecision {

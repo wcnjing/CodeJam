@@ -53,6 +53,14 @@ export function buildBrokerRunArgs(options: {
   port: number;
   user: string;
   dns?: string[];
+  /**
+   * The run this broker serves. Stamped into the container's env so every
+   * denial it logs can be correlated back to a run without the control plane
+   * having to guess from timing. Omitted for a broker started outside a run
+   * (`verify:egress`), where the denial is still logged, just uncorrelated.
+   */
+  runId?: string;
+  agentId?: string;
 }): string[] {
   return [
     "run",
@@ -90,8 +98,71 @@ export function buildBrokerRunArgs(options: {
     "EGRESS_ALLOW_URL=" + options.allowUrls.join(","),
     "--env",
     "EGRESS_LISTEN_PORT=" + options.port,
+    ...(options.runId ? ["--env", "EGRESS_RUN_ID=" + options.runId] : []),
+    ...(options.agentId ? ["--env", "EGRESS_AGENT_ID=" + options.agentId] : []),
     options.image,
   ];
+}
+
+/**
+ * Reads the broker's own log.
+ *
+ * The broker is a detached container on an `--internal` network with no
+ * published port, so the engine is the only thing that can hand its stderr
+ * back. `--tail` bounds the read: a run that denied thousands of destinations
+ * should cost a bounded amount of evidence collection, and the ratchet on that
+ * is a truncated list rather than an unbounded one.
+ */
+export function buildBrokerLogsArgs(broker: string, tail = 2_000): string[] {
+  return ["logs", "--tail", String(tail), broker];
+}
+
+/** One `egress-denied` line as the broker's CLI writes it. */
+export interface BrokerDenialRecord {
+  host: string;
+  port: number;
+  reason: string;
+  target: string;
+  runId: string;
+  agentId: string;
+  at: string;
+}
+
+/**
+ * Pulls the `egress-denied` records out of a broker log.
+ *
+ * Tolerant by design: the log carries readiness lines and whatever the node
+ * runtime decided to print, so anything that is not a well-formed denial is
+ * skipped rather than failing the parse. Losing one malformed line is a smaller
+ * harm than discarding a whole run's evidence over it.
+ */
+export function parseBrokerDenials(log: string): BrokerDenialRecord[] {
+  const records: BrokerDenialRecord[] = [];
+  for (const line of log.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.includes("egress-denied")) continue;
+    // Engine log lines can carry a stream prefix; start at the JSON.
+    const start = trimmed.indexOf("{");
+    if (start === -1) continue;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(trimmed.slice(start)) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (parsed.event !== "egress-denied") continue;
+    const target = typeof parsed.target === "string" ? parsed.target : "-";
+    records.push({
+      host: typeof parsed.host === "string" ? parsed.host : target,
+      port: typeof parsed.port === "number" ? parsed.port : 0,
+      reason: typeof parsed.reason === "string" ? parsed.reason : "denied",
+      target,
+      runId: typeof parsed.runId === "string" ? parsed.runId : "",
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : "",
+      at: typeof parsed.at === "string" ? parsed.at : "",
+    });
+  }
+  return records;
 }
 
 /**
@@ -229,7 +300,11 @@ export class EgressIsolation {
    * the broker's allowlist beside the config baseline and store overrides —
    * the same effective list the command policy evaluates against.
    */
-  async setup(agentId: string, extraAllowedHosts: string[] = []): Promise<IsolationHandle> {
+  async setup(
+    agentId: string,
+    extraAllowedHosts: string[] = [],
+    runId?: string,
+  ): Promise<IsolationHandle> {
     const network = agentNetworkName(agentId, this.config);
     const broker = agentBrokerName(agentId, this.config);
     // A previous crash can leave both behind; the names are deterministic, so
@@ -250,6 +325,8 @@ export class EgressIsolation {
         port: this.config.containerEgressBrokerPort,
         user: this.config.containerUser,
         dns: this.config.containerDns,
+        ...(runId ? { runId } : {}),
+        agentId,
       }),
     );
     if (started.code !== 0) {
@@ -305,6 +382,34 @@ export class EgressIsolation {
       if (probe.code === 0) return true;
       if (Date.now() + intervalMs >= deadline) return false;
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  /**
+   * Reads the denials this run's broker recorded.
+   *
+   * Returns `null` -- not an empty array -- when the log could not be read.
+   * The difference is the whole point: an empty array means the broker was
+   * asked and refused nothing, and `null` means nobody knows. Rendering the
+   * second as the first would turn missing evidence into a clean bill of
+   * health, which is the one failure mode this evidence exists to prevent.
+   *
+   * Never throws. Evidence collection must not be a reason a run fails:
+   * containment already held by the time there is anything to collect, and a
+   * run that succeeds with unreadable logs is strictly better than a run that
+   * fails because a `docker logs` call did.
+   */
+  async collectDenials(
+    handle: Pick<IsolationHandle, "broker">,
+  ): Promise<BrokerDenialRecord[] | null> {
+    try {
+      const logs = await this.exec(buildBrokerLogsArgs(handle.broker));
+      if (logs.code !== 0) return null;
+      // The engine splits the container's streams; denials go to stderr, but
+      // engines differ on which stream they replay them through, so read both.
+      return parseBrokerDenials(logs.stdout + "\n" + logs.stderr);
+    } catch {
+      return null;
     }
   }
 

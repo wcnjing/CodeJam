@@ -50,13 +50,56 @@ if (allow.length === 0) {
   process.exit(2);
 }
 
+/**
+ * Which run this broker belongs to.
+ *
+ * A denial is only evidence if it can be correlated, and the broker is a
+ * detached container that otherwise knows nothing about the run it serves. The
+ * orchestrator stamps these in at `buildBrokerRunArgs` time. Absent (a broker
+ * started by hand, or by `verify:egress`) they are empty strings and the record
+ * is still well-formed and still readable -- an uncorrelated denial is worth
+ * more than no denial.
+ */
+const runId = (process.env.EGRESS_RUN_ID ?? "").trim();
+const agentId = (process.env.EGRESS_AGENT_ID ?? "").trim();
+
+/**
+ * Splits `host:port` back apart on the LAST colon, the way the CONNECT parser
+ * assembled it, so an IPv6 literal in brackets survives the round trip.
+ * `target` is `-` for a request too malformed to name a destination.
+ */
+function splitTarget(target: string): { host: string; port: number } {
+  const separator = target.lastIndexOf(":");
+  if (separator < 1) return { host: target, port: 0 };
+  const port = Number(target.slice(separator + 1));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { host: target, port: 0 };
+  }
+  return { host: target.slice(0, separator), port };
+}
+
 const server = createEgressBroker({
   allow,
   // Denials are the interesting signal: each one is an Agent trying to reach
   // somewhere it may not. Logged to stderr so the run's container logs carry
-  // them without being confused for broker output.
+  // them without being confused for broker output, and stamped with enough
+  // context that the control plane can persist them as run evidence rather than
+  // leaving containment invisible.
   onDenied: (reason, target) => {
-    console.error(JSON.stringify({ event: "egress-denied", target, reason }));
+    const { host, port } = splitTarget(target);
+    console.error(
+      JSON.stringify({
+        event: "egress-denied",
+        source: "egress-broker",
+        runId,
+        agentId,
+        target,
+        host,
+        port,
+        reason,
+        at: new Date().toISOString(),
+      }),
+    );
   },
 });
 

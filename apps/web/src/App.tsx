@@ -8,6 +8,7 @@ import type {
   EvaluationSummary,
   Message,
   EvaluationRunSummary,
+  NetworkDenial,
   PolicyDecision,
   Principal,
   SystemInfo,
@@ -458,6 +459,7 @@ export default function App() {
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [policyEvents, setPolicyEvents] = useState<PolicyDecision[]>([]);
+  const [networkEvents, setNetworkEvents] = useState<NetworkDenial[]>([]);
   const [showPolicy, setShowPolicy] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [principal, setPrincipal] = useState<Principal | null>(null);
@@ -509,8 +511,8 @@ export default function App() {
   );
 
   const timelineEvents = useMemo(
-    () => buildAuditTimeline(runs, policyEvents, approvals),
-    [runs, policyEvents, approvals],
+    () => buildAuditTimeline(runs, policyEvents, approvals, networkEvents),
+    [runs, policyEvents, approvals, networkEvents],
   );
 
   const selected = useMemo(
@@ -537,6 +539,10 @@ export default function App() {
   }, []);
 
   const refreshPolicyEvents = useCallback(async (agentId: string) => {
+    // A failure here must not blank the list into something that reads as
+    // "no denials happened": leave the previous value in place instead.
+    const network = await api.networkEvents(agentId).catch(() => null);
+    if (network) setNetworkEvents(network.networkEvents);
     const result = await api.policyEvents(agentId);
     if (mountedRef.current && selectedIdRef.current === agentId) {
       setPolicyEvents(result.policyEvents);
@@ -660,6 +666,7 @@ export default function App() {
     setShowSettings(false);
     setShowPolicy(false);
     setPolicyEvents([]);
+    setNetworkEvents([]);
     setApprovals([]);
     setApprovalReason("");
     if (!selectedId) {

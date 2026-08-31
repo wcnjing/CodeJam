@@ -51,6 +51,51 @@ export interface AgentRun {
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+  /**
+   * Whether the run's network-layer denials could be read back at all.
+   *
+   * Three states, and the third is the reason this field exists. `collected`
+   * means the broker's log was read and whatever it held is in `networkEvents`
+   * -- including nothing, which then honestly means no destination was refused.
+   * `unavailable` means the log could not be read, so an empty list means
+   * NOTHING AT ALL and must never be rendered as a clean run. `undefined` is a
+   * run that had no broker: isolation off, or the local-process runtime.
+   *
+   * Collection failing is never a reason a run fails. Containment already held;
+   * only the evidence of it is missing, and saying so is the whole point.
+   */
+  networkEvidence?: "collected" | "unavailable";
+}
+
+/**
+ * A destination the egress broker refused.
+ *
+ * Different in kind from a `PolicyDecision`, and deliberately stored apart from
+ * one. A policy decision is PRE-execution: the command was read, classified,
+ * explained, and stopped before it ran. A broker denial is POST-execution: the
+ * command already ran and the network refused where it tried to go, which means
+ * the classifier did not see it coming. Folding the two into one list would
+ * lose exactly the distinction an operator needs -- "we understood this" versus
+ * "we contained this without understanding it".
+ *
+ * These are the visible half of the documented classifier residual: a payload
+ * written into a Makefile, a git hook or a crontab and executed later is not
+ * recognised by the policy layer, and the broker refuses its destination
+ * anyway. Before this record existed that containment was invisible, and a run
+ * where it happened looked identical to a clean one.
+ */
+export interface NetworkDenial {
+  id: string;
+  agentId: string;
+  runId: string;
+  /** The destination host the Agent asked the broker to CONNECT to. */
+  host: string;
+  port: number;
+  /** The broker's own reason: not allowlisted, resolves to a private address, DNS failure. */
+  reason: string;
+  /** Always the broker today; a field, not a constant, so a second network enforcer is additive. */
+  source: "egress-broker";
+  observedAt: string;
 }
 
 export interface PolicyDecision {
@@ -174,18 +219,37 @@ export interface DatabaseV3 {
   approvals: ApprovalRequest[];
 }
 
-export interface Database {
-  /**
-   * 4: the store now carries a standing, operator-editable allowlist override
-   * (`allowlist`) on top of the immutable POLICY_ALLOWED_HOSTS config baseline.
-   * Writes to it are themselves governance events: the only writers are the
-   * allowlist API and an approval that explicitly chooses to widen.
-   */
+/**
+ * Frozen history: the shape v4 wrote. Kept for the same reason the other
+ * versions are -- the v4->v5 migration step is typed against what a v4 record
+ * actually had. Never widen this to fix a compile error in a newer migration;
+ * add the next step.
+ */
+export interface DatabaseV4 {
   version: 4;
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
   policyEvents: PolicyDecision[];
+  approvals: ApprovalRequest[];
+  allowlist: string[];
+}
+
+export interface Database {
+  /**
+   * 5: network-layer denials become evidence. `networkEvents` sits BESIDE
+   * `policyEvents` rather than inside it, because the two answer different
+   * questions -- see NetworkDenial. Runs written before this version have no
+   * `networkEvidence`, which reads correctly as "this run had no broker
+   * evidence either way" rather than as a clean run.
+   */
+  version: 5;
+  agents: Agent[];
+  messages: Message[];
+  runs: AgentRun[];
+  policyEvents: PolicyDecision[];
+  /** Destinations the egress broker refused. Never merged into policyEvents. */
+  networkEvents: NetworkDenial[];
   approvals: ApprovalRequest[];
   /** Hosts allowed on top of the config baseline, editable in the UI. */
   allowlist: string[];
@@ -212,6 +276,24 @@ export interface RunnerResult {
    * happens in monitor mode. In enforce mode a denial ends the Run instead.
    */
   violations?: PolicyObservation[];
+  /**
+   * Destinations the network layer refused during this run.
+   *
+   * `undefined` means no broker existed (isolation off, or the local-process
+   * runtime). `null` means there was one and its log could not be read, so
+   * nothing may be concluded. An empty array means it was read and refused
+   * nothing. Three states, because collapsing the middle one into the last
+   * would render missing evidence as a clean run.
+   */
+  networkDenials?: NetworkDenialObservation[] | null;
+}
+
+/** One denial as the runner read it back, before the service gives it an id. */
+export interface NetworkDenialObservation {
+  host: string;
+  port: number;
+  reason: string;
+  observedAt: string;
 }
 
 export interface PolicyObservation {
@@ -235,6 +317,12 @@ export interface RunnerRequest {
    * allowlist (config baseline + overrides + run-scoped grant).
    */
   extraAllowedHosts?: string[];
+  /**
+   * The run this execution belongs to. Stamped into the egress broker's env so
+   * the denials it logs can be correlated back here as evidence, rather than
+   * having to be matched up by timing after the fact.
+   */
+  runId?: string;
 }
 
 export interface AgentRunner {

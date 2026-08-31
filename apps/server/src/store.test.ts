@@ -276,7 +276,7 @@ describe("JsonStore schema migration", () => {
       ]),
     );
     const { approvals, version } = store.snapshot();
-    expect(version).toBe(4);
+    expect(version).toBe(5);
     expect(approvals[0]!.resolvedByAttribution).toBe("self-asserted");
     expect(approvals[0]!.resolvedBy).toBe("operator");
     // Still pending, so there is no approver to attribute either way.
@@ -286,7 +286,7 @@ describe("JsonStore schema migration", () => {
   it("writes the upgrade back so it is not redone on every start", async () => {
     const { filePath } = await storeOn(v1File([v1Approval()]));
     const onDisk = JSON.parse(await readFile(filePath, "utf8"));
-    expect(onDisk.version).toBe(4);
+    expect(onDisk.version).toBe(5);
     expect(onDisk.approvals[0].resolvedByAttribution).toBe("self-asserted");
 
     // Reopening must read it as v2 and change nothing.
@@ -311,8 +311,9 @@ describe("JsonStore schema migration", () => {
 
   it("starts a fresh store at the current version", async () => {
     const { store } = await storeOn();
-    expect(store.snapshot().version).toBe(4);
+    expect(store.snapshot().version).toBe(5);
     expect(store.snapshot().allowlist).toEqual([]);
+    expect(store.snapshot().networkEvents).toEqual([]);
   });
 
   it("migrates a v3 database to v4 with an empty allowlist and stamped approvals", async () => {
@@ -327,13 +328,51 @@ describe("JsonStore schema migration", () => {
       }),
     );
     const snapshot = store.snapshot();
-    expect(snapshot.version).toBe(4);
+    // v3 walks all the way forward, one step per version.
+    expect(snapshot.version).toBe(5);
     // The override allowlist did not exist before v4, so it starts empty.
     expect(snapshot.allowlist).toEqual([]);
     // Pre-v4 approvals predate the "approve and widen" option; the migration
     // stamps them rather than leaving the field to imply a widening that never
     // happened.
     expect(snapshot.approvals[0]!.allowlistWidened).toBeNull();
+  });
+
+  it("migrates a v4 database to v5 without inventing network evidence", async () => {
+    // Nothing read a broker log for a run written before v5, so its
+    // `networkEvidence` must stay ABSENT. Stamping it "collected" would claim
+    // an empty denial list is meaningful for that run, which is exactly the
+    // false assurance the field exists to prevent.
+    const { store } = await storeOn(
+      JSON.stringify({
+        version: 4,
+        agents: [],
+        messages: [],
+        runs: [
+          {
+            id: "run-old",
+            agentId: "a",
+            status: "completed",
+            prompt: "x",
+            output: "y",
+            error: null,
+            usage: null,
+            startedAt: null,
+            completedAt: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        policyEvents: [],
+        approvals: [],
+        allowlist: ["deb.debian.org"],
+      }),
+    );
+    const snapshot = store.snapshot();
+    expect(snapshot.version).toBe(5);
+    expect(snapshot.networkEvents).toEqual([]);
+    // The standing allowlist survives the upgrade untouched.
+    expect(snapshot.allowlist).toEqual(["deb.debian.org"]);
+    expect(snapshot.runs[0]!.networkEvidence).toBeUndefined();
   });
 
   // @covers TM-OPS-001
@@ -385,7 +424,8 @@ describe("JsonStore schema migration", () => {
     // 4 became the current version, at which point the test was asserting that
     // the store refuses its own format -- and it passed for exactly as long as
     // 4 was hypothetical. A test pinned to "some number we do not support" has
-    // to move when that number is adopted.
+    // to move when that number is adopted. 99 is deliberately far ahead so the
+    // next bump does not repeat the lesson.
     await writeFile(filePath, JSON.stringify({ version: 99, agents: [], approvals: [] }), "utf8");
     await expect(new JsonStore(filePath).initialize()).rejects.toThrow(/Unsupported/i);
   });
