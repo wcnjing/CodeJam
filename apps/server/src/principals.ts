@@ -59,22 +59,29 @@ export class PrincipalRegistry {
         // naming it, which would echo the token.
         throw new Error(position + ' must look like "id:token"; the token half is empty.');
       }
+      // Everything below reports positionally rather than naming the id. The
+      // pair is symmetric, so a swapped "token:id" paste parses as id=<secret>
+      // and reaches exactly these branches; naming the id would print the
+      // secret into a startup crash log and into cloud-init output. The entry
+      // number is just as actionable for an operator reading APP_PRINCIPALS.
       if (!TOKEN_PATTERN.test(token)) {
         throw new Error(
-          "The token for " + id + " must use 1-128 URL-safe characters ([A-Za-z0-9._~-]).",
+          position + " has an invalid token; use 1-128 URL-safe characters ([A-Za-z0-9._~-]).",
         );
       }
       if (token.length < minTokenLength) {
         throw new Error(
-          "The token for " + id + " must contain at least " + minTokenLength + " characters.",
+          position + " has a token shorter than the minimum; use at least " +
+            minTokenLength +
+            " characters.",
         );
       }
       if (token.startsWith("replace-")) {
-        throw new Error("The token for " + id + " is still the placeholder value.");
+        throw new Error(position + " still has the placeholder token value.");
       }
       if (seenIds.has(id)) {
         throw new Error(
-          "APP_PRINCIPALS contains duplicate id " + id + "; each principal needs its own name.",
+          position + " has a duplicate id; each principal needs its own name.",
         );
       }
       const tokenDigest = digestOf(token);

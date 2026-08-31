@@ -78,4 +78,21 @@ describe("PrincipalRegistry", () => {
       expect.objectContaining({ message: expect.not.stringContaining(ALICE) }),
     );
   });
+
+  it("never echoes a token pasted in the wrong order", () => {
+    // The pair is symmetric, so writing "token:id" parses as id=<the secret>
+    // with a token half that then fails a later check. Each entry below trips a
+    // different one of those checks; none may name the id back.
+    const swapped = [
+      ALICE + ":ops", // shorter than the minimum length
+      ALICE + ":ops bob", // not URL-safe
+      ALICE + ":replace-me", // placeholder prefix
+      ALICE + ":ops_one_token," + ALICE + ":ops_two_token", // duplicate id
+    ];
+    for (const raw of swapped) {
+      expect(() => PrincipalRegistry.parse(raw)).toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining(ALICE) }),
+      );
+    }
+  });
 });
