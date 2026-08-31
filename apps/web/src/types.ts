@@ -105,6 +105,23 @@ export interface ApprovalRequest {
   decisionReason: string | null;
   resolvedAt: string | null;
   continuationRunId: string | null;
+  /**
+   * Hosts this approval added to the STANDING allowlist (the store-backed
+   * override list), present only when the approver chose "approve and widen".
+   * Null/absent means the grant stayed run-scoped.
+   */
+  allowlistWidened?: string[] | null;
+}
+
+/**
+ * The standing allowlist, split by origin: `config` is the immutable
+ * POLICY_ALLOWED_HOSTS baseline (plus Ark's own host and loopback) and
+ * `overrides` is the store-backed list the operator edits in the UI — and that
+ * an "approve and widen" decision grows.
+ */
+export interface Allowlist {
+  config: string[];
+  overrides: string[];
 }
 
 export interface EvaluationSummary {

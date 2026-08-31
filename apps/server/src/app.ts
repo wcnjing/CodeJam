@@ -29,6 +29,10 @@ const approvalDecisionBody = z
     decision: z.enum(["approve", "deny"]),
     // Required: the audit trail claims every decision records why, so enforce it.
     reason: z.string().trim().min(1).max(2000),
+    // Optional, approve only: also add the flagged hosts to the STANDING
+    // allowlist. Absent/false keeps the grant run-scoped; only an explicit
+    // operator choice widens anything permanently.
+    allowlist: z.boolean().optional(),
   })
   .strict();
 const budgetContinuationBody = z
@@ -181,7 +185,13 @@ export async function createApp(
     }
     const { id } = approvalIdParams.parse(request.params);
     const body = approvalDecisionBody.parse(request.body);
-    const result = await service.resolveApproval(id, body.decision, principal, body.reason);
+    const result = await service.resolveApproval(
+      id,
+      body.decision,
+      principal,
+      body.reason,
+      body.allowlist === true,
+    );
     return reply.code(200).send(result);
   });
 
@@ -190,6 +200,28 @@ export async function createApp(
     const body = budgetContinuationBody.parse(request.body);
     const result = await service.resolveBudgetContinuation(id, body.decision, request.principal);
     return reply.code(200).send(result);
+  });
+
+  // The standing allowlist: the config baseline is immutable here, and the
+  // store-backed overrides are what the UI edits (and what an approval widens).
+  app.get("/api/allowlist", async () => service.getAllowlist());
+
+  const allowlistHostBody = z
+    .object({ host: z.string().trim().min(1).max(253) })
+    .strict();
+
+  app.post("/api/allowlist", async (request, reply) => {
+    const body = allowlistHostBody.parse(request.body);
+    return reply
+      .code(201)
+      .send({ overrides: await service.addAllowlistHost(body.host) });
+  });
+
+  const allowlistHostParams = z.object({ host: z.string().min(1).max(253) });
+
+  app.delete("/api/allowlist/:host", async (request) => {
+    const { host } = allowlistHostParams.parse(request.params);
+    return { overrides: await service.removeAllowlistHost(host) };
   });
 
   app.get("/api/evaluation", async () => buildEvaluationSummary());

@@ -78,7 +78,7 @@ to a control here and to an entry in
 | Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
 | Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/40 secret-channel attacks allowed |
 | Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–3 ms, tail not well characterised |
-| Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
+| Cross-user access / data exfiltration | Approval grants are run-scoped by default; an operator may explicitly approve *and widen* the standing allowlist (recorded on the decision); a live collector proves zero bytes left |
 | Runaway execution | Step budget enforced by the platform, independent of policy mode |
 | Sensitive trace capture | Redaction before the audit store; unbounded-growth risk tracked as TM-OPS-001 |
 
@@ -109,12 +109,19 @@ and destroys the Runtime container on the first denial.
 > denies commands with a *recognisable* disallowed destination — an explicit
 > URL or host, a known egress tool with a resolvable target, an interpreter
 > making a network call, a reverse shell, or a read of protected material. It is
-> **not** a network allowlist: the container still has bridge networking, and a
-> command whose destination is *implicit* (a bare `npm install` hitting the
-> default registry, a `git push` to a preconfigured remote) is **not** blocked
-> by this layer. True default-deny egress requires network-layer enforcement,
-> which is deliberately deferred (see Limitations). The claims below are scoped
-> to what a command-text guard can actually enforce.
+> **not** a network allowlist *by itself*: a command whose destination is
+> *implicit* (a bare `npm install` hitting the default registry, a `git push` to
+> a preconfigured remote) is **not** blocked by this layer. In the hardened
+> container runtime the network side is enforced separately — the per-run egress
+> broker permits exactly the effective allowlist (model API + `POLICY_ALLOWED_HOSTS`
+> + the hosts added in the Allowlist panel or by an “approve and widen”
+> decision), so an allowlisted host is reachable and everything else has no
+> route out. The broker also answers the Agent network's DNS (the embedded
+> resolver refuses external queries on `--internal` networks), so allowlisted
+> hosts resolve by name from inside the Agent; the runtime image ships `curl`
+> by default (`CONTAINER_RUNTIME_APT_PACKAGES`). With the `local-process`
+> runtime, where there is no broker, the command-text guard is the only control
+> and the claims below are scoped to what it can actually enforce.
 
 The engine is layered so that a rule is a statement about capabilities, not a
 pattern over shell syntax:
@@ -237,26 +244,31 @@ the default config this is **`held`**, not blocked: `registry.npmjs.org` is a
 plausibly-legitimate destination, so the Run pauses and raises an approval
 request showing the exact command and rule.
    - **Deny** (with a reason) → the held Run stays denied; nothing continues.
-   - **Approve** (with a reason) → a run-scoped host grant lets the command past
-     the *policy* and resumes the task as a continuation Run. A *second* task to
-     the same host is held again — the grant never widened the standing allowlist.
+   - **Approve** (with a reason) → a run-scoped host grant resumes the task
+     as a continuation Run that reaches the registry. A *second* task to the same
+     host is held again — the grant alone never widens the standing allowlist.
+   - **Approve with “add to the allowlist”** (the checkbox on the approval
+     card, pre-checked for egress holds) → the same continuation runs, and the
+     flagged host also joins the *standing* allowlist, so a second task to it
+     completes without another approval. The widening is recorded on the
+     decision (`allowlistWidened`) and editable any time from the **Allowlist**
+     panel in the sidebar.
 
    This is the deterministic spine of the demo: the policy **always** holds this
    command, and approve/deny is a real, recorded human decision. (In a live run
    the model reached for `node -e "fetch(...)"` rather than `curl`; the
    interpreter-egress rule caught it anyway.)
 
-   > **An approval is a policy decision, not a network one.** With the default
-   > `CONTAINER_EGRESS_ISOLATION=true`, the broker allowlists exactly the model
-   > endpoint, and a human approval does **not** widen it. So the resumed Run
-   > runs the command and the destination is still unreachable — in the recorded
-   > run the Agent reported `EAI_AGAIN` on a direct fetch and `403` through the
-   > proxy, then finished and said so. That is the two layers behaving as
-   > designed: a human can release a *policy* hold, and no human decision in the
-   > app can talk the network layer into a route. If you want the continuation to
-   > actually reach the host, run with `CONTAINER_EGRESS_ISOLATION=false`, where
-   > the container has bridge networking and the command policy is the only
-   > control. See [docs/evidence/](docs/evidence/) for the transcript.
+   > **An approval is a policy decision — and optionally a network one.** With
+   > the default `CONTAINER_EGRESS_ISOLATION=true`, the per-run broker permits
+   > exactly the effective allowlist (model API + `POLICY_ALLOWED_HOSTS` + the
+   > hosts added in the Allowlist panel or by an “approve and widen” decision),
+   > and it answers the Agent network's DNS (the embedded resolver refuses
+   > external queries on `--internal` networks), so an allowlisted host resolves
+   > and connects from inside the Agent. A plain **Approve** releases only the
+   > *policy* hold with a run-scoped grant; **Approve with “add to the
+   > allowlist”** also widens the standing allowlist, which is what makes the
+   > destination reachable on future runs.
 
 **3. Hard block (secret rule, never reviewable).** A command that reads a
 protected secret *and* egresses is `secret-exfiltration` — hard-blocked, never
@@ -817,14 +829,18 @@ Recorded honestly, because each one is a real gap:
   claim is that the Run is terminated mid-flight and all continuation blocked,
   not that egress is impossible. Only network-layer control would make it
   impossible.
-- **Not a network allowlist.** This guard only denies *recognisable* egress — an
-  explicit URL/host, a known tool with a resolvable target, an interpreter
-  network call, or a reverse shell. Commands with an **implicit** destination are
-  NOT blocked: a bare `npm install` (default registry), `git push` to a
-  preconfigured remote, or `X=nc; $X host port` (variable indirection) all pass,
-  because the destination is not present in the command text. The container still
-  has bridge networking. True default-deny egress needs network-layer
-  enforcement, deliberately deferred — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
+- **Not a network allowlist (command-text layer).** This guard only denies
+  *recognisable* egress — an explicit URL/host, a known tool with a resolvable
+  target, an interpreter network call, or a reverse shell. Commands with an
+  **implicit** destination are NOT blocked: a bare `npm install` (default
+  registry), `git push` to a preconfigured remote, or `X=nc; $X host port`
+  (variable indirection) all pass, because the destination is not present in
+  the command text. In the hardened container runtime the network side is not
+  deferred: the per-run egress broker lets the Agent reach exactly the
+  effective allowlist and nothing else, so implicit destinations have no route
+  out either — see [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md). With
+  the `local-process` runtime there is no broker and the command-text guard is
+  the only control.
 - **Single process.** Policy decisions live in the same single-writer JSON store
   as everything else, now pruned past `AUDIT_RETENTION_DAYS` (TM-OPS-001,
   mitigated) — access control on the store itself remains out of scope.
@@ -1088,7 +1104,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
 | `POLICY_ENFORCEMENT` | `enforce` | `monitor` records policy decisions without terminating (shadow mode). |
-| `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. |
+| `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. This config baseline is read-only in the UI — add/remove further hosts from the **Allowlist** panel (or by approving a held command with “add to the allowlist”); those store-backed overrides survive restarts. |
 | `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
 | `POLICY_MAX_COMMANDS` | `50` | Commands per allowance. At the boundary the task is held for Continue/Stop; Continue grants a fresh allowance. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |

@@ -276,7 +276,7 @@ describe("JsonStore schema migration", () => {
       ]),
     );
     const { approvals, version } = store.snapshot();
-    expect(version).toBe(3);
+    expect(version).toBe(4);
     expect(approvals[0]!.resolvedByAttribution).toBe("self-asserted");
     expect(approvals[0]!.resolvedBy).toBe("operator");
     // Still pending, so there is no approver to attribute either way.
@@ -286,7 +286,7 @@ describe("JsonStore schema migration", () => {
   it("writes the upgrade back so it is not redone on every start", async () => {
     const { filePath } = await storeOn(v1File([v1Approval()]));
     const onDisk = JSON.parse(await readFile(filePath, "utf8"));
-    expect(onDisk.version).toBe(3);
+    expect(onDisk.version).toBe(4);
     expect(onDisk.approvals[0].resolvedByAttribution).toBe("self-asserted");
 
     // Reopening must read it as v2 and change nothing.
@@ -311,7 +311,29 @@ describe("JsonStore schema migration", () => {
 
   it("starts a fresh store at the current version", async () => {
     const { store } = await storeOn();
-    expect(store.snapshot().version).toBe(3);
+    expect(store.snapshot().version).toBe(4);
+    expect(store.snapshot().allowlist).toEqual([]);
+  });
+
+  it("migrates a v3 database to v4 with an empty allowlist and stamped approvals", async () => {
+    const { store } = await storeOn(
+      JSON.stringify({
+        version: 3,
+        agents: [],
+        messages: [],
+        runs: [],
+        policyEvents: [],
+        approvals: [v1Approval({ resolvedBy: "alice", resolvedByAttribution: "credential" })],
+      }),
+    );
+    const snapshot = store.snapshot();
+    expect(snapshot.version).toBe(4);
+    // The override allowlist did not exist before v4, so it starts empty.
+    expect(snapshot.allowlist).toEqual([]);
+    // Pre-v4 approvals predate the "approve and widen" option; the migration
+    // stamps them rather than leaving the field to imply a widening that never
+    // happened.
+    expect(snapshot.approvals[0]!.allowlistWidened).toBeNull();
   });
 
   // @covers TM-OPS-001
@@ -359,10 +381,10 @@ describe("JsonStore schema migration", () => {
     const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-migrate-"));
     temporaryDirectories.push(root);
     const filePath = path.join(root, "db.json");
-    // Must be a version AHEAD of the current one. This read `version: 3` until
-    // 3 became the current version, at which point the test was asserting that
+    // Must be a version AHEAD of the current one. This read `version: 4` until
+    // 4 became the current version, at which point the test was asserting that
     // the store refuses its own format -- and it passed for exactly as long as
-    // 3 was hypothetical. A test pinned to "some number we do not support" has
+    // 4 was hypothetical. A test pinned to "some number we do not support" has
     // to move when that number is adopted.
     await writeFile(filePath, JSON.stringify({ version: 99, agents: [], approvals: [] }), "utf8");
     await expect(new JsonStore(filePath).initialize()).rejects.toThrow(/Unsupported/i);

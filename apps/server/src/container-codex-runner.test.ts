@@ -133,6 +133,36 @@ describe("container hardening controls", () => {
     expect(args).toContain("NO_PROXY=");
   });
 
+  it("points the isolated Agent's DNS at the broker's address", () => {
+    // The --internal network has no outbound DNS at all; the broker's DNS
+    // forwarder is the only resolver the Agent can reach, so --dns must name
+    // the broker's address on the isolated network.
+    const config = loadConfig({ ...baseEnv, CONTAINER_EGRESS_ISOLATION: "true" });
+    const args = buildContainerRunArgs(request, config, "172.30.0.9");
+    expect(args).toContain("--dns");
+    expect(valueAfter(args, "--dns")).toBe("172.30.0.9");
+    // External resolvers are unreachable on the isolated network, so
+    // CONTAINER_DNS must NOT be passed to the Agent there.
+    expect(args).not.toContain("8.8.8.8");
+  });
+
+  it("emits no --dns flags for an isolated run without a broker address", () => {
+    const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
+    expect(args).not.toContain("--dns");
+  });
+
+  it("passes explicit resolvers to the Agent in bridge mode when CONTAINER_DNS is set", () => {
+    const config = loadConfig({
+      ...baseEnv,
+      CONTAINER_EGRESS_ISOLATION: "false",
+      CONTAINER_DNS: "1.1.1.1, 8.8.8.8",
+    });
+    const args = buildContainerRunArgs(request, config);
+    expect(args).toContain("--dns");
+    expect(valueAfter(args, "--dns")).toBe("1.1.1.1");
+    expect(args).toContain("8.8.8.8");
+  });
+
   it("never puts the API key value in argv", () => {
     const args = buildContainerRunArgs(request, loadConfig({ ...baseEnv }));
     expect(args.join(" ")).not.toContain("secret-that-must-not-appear-in-argv");

@@ -1251,6 +1251,85 @@ textarea:focus {
   gap: 8px;
 }
 
+/* The "approve and widen" checkbox sits beside the reason input, and unlike
+   the reason field it is a single row, not a stacked label+input. */
+.approval-allowlist {
+  flex: 1 1 100%;
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 8px !important;
+  cursor: pointer;
+  color: var(--ink) !important;
+  font-size: 12px !important;
+  line-height: 1.45;
+}
+
+.approval-allowlist input {
+  margin-top: 2px;
+  accent-color: var(--purple);
+}
+
+/* ── Standing allowlist panel ───────────────────────────────────────────────── */
+.allowlist-modal {
+  width: min(620px, calc(100vw - 48px));
+}
+
+.allowlist-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.allowlist-add input {
+  flex: 1;
+  border: 1px solid #cfc6f2;
+  border-radius: 5px;
+  background: var(--paper);
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.allowlist-section {
+  margin-top: 12px;
+}
+
+.allowlist-section .eyebrow {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.allowlist-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.allowlist-hosts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #e3dcf7;
+  border-radius: 6px;
+  background: #faf9fe;
+  padding: 8px 10px;
+}
+
+.allowlist-hosts code {
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.allowlist-remove {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
 .mini-held,
 .status-held .status-dot,
 .mini-dot.mini-held {

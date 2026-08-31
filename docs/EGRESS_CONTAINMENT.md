@@ -73,6 +73,28 @@ bypass list would let the Agent reach anything it could name as local without
 passing the broker. The broker is per-run rather than shared, so one compromised
 Agent cannot reach or exhaust the broker another run depends on.
 
+**DNS is part of the containment.** The per-run network is created with
+`--internal`, and Docker's embedded resolver does not forward external queries
+on an internal network — verified: `getent` fails with `EAI_AGAIN` inside the
+isolated container even though the embedded resolver is listed. The broker
+closes that gap without widening the edge: it runs a tiny dependency-free DNS
+forwarder (UDP and TCP, on `EGRESS_DNS_PORT`, default 53) that relays the
+Agent's queries to its own resolvers, and the Agent's `--dns` points at the
+broker's address on the isolated network — the only resolver the Agent can
+reach. Resolution through the broker opens no hole: DNS answers alone cannot
+carry data out, and every connection is still gated by the CONNECT allowlist or
+has no route. Binding port 53 is why the broker container keeps exactly one
+capability (`NET_BIND_SERVICE`) alongside `--cap-drop ALL`.
+
+`CONTAINER_DNS` (comma-separated, **default empty**) passes `--dns` to the
+broker container — the resolvers the forwarder relays to — and to the Agent
+container in bridge mode (isolation off). It is for environments where the
+inherited resolver is unreachable from containers (WSL NAT gateway, VPN-only
+DNS): it is what keeps the *broker's* lookups working on the isolated network,
+and it lets bridge-mode runs pick a resolver explicitly. On the isolated
+network the Agent's own `--dns` is always the broker, never `CONTAINER_DNS`:
+external resolvers are unreachable there by design.
+
 It defaults on because the container runtime is itself opt-in — anyone on this
 path wants the hardened one. It needs the broker image (`npm run build:broker`),
 and `isAvailable()` checks for it, so a missing image is reported up front
@@ -93,7 +115,10 @@ runtime.
    escaped Agent attacks next, so it gets the same treatment as the Agent.
 4. Connect the broker to an outbound network as well. It is now dual-homed: the
    single object with a foot on both sides.
-5. **Wait for the broker to accept connections**, then start the Agent. An Agent
+5. Read the broker's address on the isolated network (`<engine> inspect`), so
+   the Agent can be pointed at its only resolver with `--dns`. Without it the
+   Agent could not resolve anything; a failure here refuses the run.
+6. **Wait for the broker to accept connections**, then start the Agent. An Agent
    started against a broker that has not bound yet fails in a way that looks
    like a model outage — the failure most likely to be misread as flakiness
    rather than as containment being broken. If it never binds, the run is
@@ -167,6 +192,7 @@ command policy and the evidence trail are what address those.
 | `CONTAINER_EGRESS_BROKER_PORT` | `8080` | Port the broker listens on inside the network. |
 | `CONTAINER_EGRESS_OUTBOUND_NETWORK` | `bridge` | The broker's second home. The Agent is never attached to it. |
 | `CONTAINER_EGRESS_READY_TIMEOUT_MS` | `15000` | How long to wait for the broker before refusing the run. |
+| `CONTAINER_DNS` | *(empty)* | Comma-separated `--dns` resolvers for the broker (the resolvers its DNS forwarder relays to) and for the Agent in bridge mode. On the isolated network the Agent's `--dns` is always the broker. |
 
 The broker allowlists exactly one endpoint, derived from `ARK_BASE_URL` via
 `parseEgressEndpoint()`. One endpoint is the whole design: an allowlist with a

@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentRun,
+  Allowlist,
   ApprovalRequest,
   EvaluationSummary,
   Message,
@@ -100,10 +101,15 @@ export const api = {
     approvalId: string,
     decision: "approve" | "deny",
     reason: string,
+    /** Also add the flagged hosts to the standing allowlist. */
+    addToAllowlist = false,
   ) =>
     request<{ approval: ApprovalRequest; continuationRun: AgentRun | null }>(
       "/api/approvals/" + approvalId,
-      { method: "POST", body: JSON.stringify({ decision, reason }) },
+      {
+        method: "POST",
+        body: JSON.stringify({ decision, reason, allowlist: addToAllowlist }),
+      },
     ),
   resolveBudgetContinuation: (
     requestId: string,
@@ -113,4 +119,14 @@ export const api = {
       "/api/budget-continuations/" + requestId,
       { method: "POST", body: JSON.stringify({ decision }) },
     ),
+  allowlist: () => request<Allowlist>("/api/allowlist"),
+  addAllowlistHost: (host: string) =>
+    request<{ overrides: string[] }>("/api/allowlist", {
+      method: "POST",
+      body: JSON.stringify({ host }),
+    }),
+  removeAllowlistHost: (host: string) =>
+    request<{ overrides: string[] }>("/api/allowlist/" + encodeURIComponent(host), {
+      method: "DELETE",
+    }),
 };

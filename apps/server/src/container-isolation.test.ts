@@ -50,6 +50,9 @@ async function fakeEngine(logPath: string): Promise<string> {
       "const argv = process.argv.slice(2);",
       "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify(argv) + '\\n');",
       "const verb = argv[0];",
+      // The broker's address on the isolated network, exactly as `docker
+      // inspect --format ...` would print it; the runner needs it for --dns.
+      "if (verb === 'inspect') { process.stdout.write('172.30.0.9\\n'); process.exit(0); }",
       // The broker runs detached; the Agent does not. Only the Agent streams.
       "if (verb === 'run' && !argv.includes('--detach')) {",
       "  " + emit,
@@ -102,6 +105,16 @@ describe("container runner with egress isolation on", () => {
       threadId: null,
     });
     expect(result.threadId).toBe("t1");
+
+    // The Agent's DNS points at the broker's address on the isolated network:
+    // the only resolver the --internal network can reach.
+    const calls: string[][] = (await readFile(logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+    const agent = calls.find((c) => c[0] === "run" && !c.includes("--detach"));
+    expect(agent, "the Agent was never started").toBeDefined();
+    expect(agent![agent!.indexOf("--dns") + 1]).toBe("172.30.0.9");
   }, 30_000);
 
   it("asks the engine about the broker instead of probing from the host", async () => {
@@ -127,6 +140,35 @@ describe("container runner with egress isolation on", () => {
     expect(probe![1]).toBe("sentinel-test-a-broker");
   }, 30_000);
 
+  it("passes the run's approved hosts into the broker allowlist", async () => {
+    // A human-approved host must be reachable through the container's only
+    // edge, not just policy-allowed: the broker for the run carries the model
+    // API plus the run's granted hosts in its EGRESS_ALLOW_URL.
+    const logDir = await mkdtemp(path.join(tmpdir(), "engine-log-"));
+    dirs.push(logDir);
+    const logPath = path.join(logDir, "argv.log");
+    await writeFile(logPath, "", "utf8");
+    const engine = await fakeEngine(logPath);
+    const { runner, workspace } = await makeRunner(engine);
+
+    await runner.run({
+      agentId: "a",
+      workspacePath: workspace,
+      prompt: "x",
+      threadId: null,
+      extraAllowedHosts: ["google.com"],
+    });
+
+    const calls: string[][] = (await readFile(logPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+    const broker = calls.find((c) => c[0] === "run" && c.includes("--detach"));
+    expect(broker, "the broker was never started").toBeDefined();
+    const allow = broker!.find((arg) => arg.startsWith("EGRESS_ALLOW_URL="));
+    expect(allow).toBe("EGRESS_ALLOW_URL=https://ark.example.invalid,https://google.com");
+  }, 30_000);
+
   it("refuses to start the Agent when the broker never answers", async () => {
     // Fail closed: an Agent started against a dead broker has no route out and
     // fails as what looks like a model outage.
@@ -145,6 +187,7 @@ describe("container runner with egress isolation on", () => {
         "const argv = process.argv.slice(2);",
         "appendFileSync(" + JSON.stringify(logPath) + ", JSON.stringify(argv) + '\\n');",
         // Everything works except the broker, which never accepts a connection.
+        "if (argv[0] === 'inspect') { process.stdout.write('172.30.0.9\\n'); process.exit(0); }",
         "process.exit(argv[0] === 'exec' ? 1 : 0);",
         "",
       ].join("\n"),

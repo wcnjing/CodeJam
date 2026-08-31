@@ -3,7 +3,9 @@ import { loadConfig } from "./config.js";
 import {
   EgressIsolation,
   buildBrokerConnectArgs,
+  buildBrokerInspectArgs,
   buildBrokerRunArgs,
+  buildEgressAllowUrls,
   buildNetworkCreateArgs,
   buildBrokerProbeArgs,
   type EngineResult,
@@ -52,28 +54,89 @@ describe("isolation argv", () => {
 
   it("starts the broker contained as tightly as the Agent", () => {
     const args = buildBrokerRunArgs({
-      broker: "b", network: "n", image: "img", allowUrl: "https://ark.example.invalid", port: 8080, user: "1000:1000",
+      broker: "b", network: "n", image: "img", allowUrls: ["https://ark.example.invalid"], port: 8080, user: "1000:1000",
     });
     expect(args).toContain("--read-only");
     expect(args).toContain("no-new-privileges");
     expect(args).toContain("ALL"); // --cap-drop ALL
+    // The one capability the broker keeps: it answers the Agent network's DNS
+    // on port 53, and binding a privileged port is the whole of what this
+    // grants — no other capability survives.
+    expect(args[args.indexOf("--cap-add") + 1]).toBe("NET_BIND_SERVICE");
     expect(args).toContain("EGRESS_ALLOW_URL=https://ark.example.invalid");
     expect(args[args.indexOf("--network") + 1]).toBe("n");
+  });
+
+  it("passes the full effective allowlist to the broker", () => {
+    const configWithHosts = loadConfig({
+      NODE_ENV: "test",
+      ARK_API_KEY: "k",
+      ARK_MODEL: "ep-test",
+      ARK_BASE_URL: "https://ark.example.invalid/api/v3",
+      RUNTIME_PROVIDER: "container",
+      CONTAINER_EGRESS_ISOLATION: "true",
+      POLICY_ALLOWED_HOSTS: "google.com, docs.example.com",
+    });
+    // Ark always, config baseline, store overrides, and a run-scoped approval
+    // grant — deduped into one comma-separated EGRESS_ALLOW_URL.
+    const urls = buildEgressAllowUrls(configWithHosts, [
+      "docs.example.com",
+      "registry.npmjs.org",
+    ]);
+    expect(urls).toEqual([
+      "https://ark.example.invalid",
+      "https://google.com",
+      "https://docs.example.com",
+      "https://registry.npmjs.org",
+    ]);
+    const args = buildBrokerRunArgs({
+      broker: "b", network: "n", image: "img", allowUrls: urls, port: 8080, user: "1000:1000",
+    });
+    expect(args).toContain(
+      "EGRESS_ALLOW_URL=https://ark.example.invalid,https://google.com,https://docs.example.com,https://registry.npmjs.org",
+    );
   });
 
   it("gives the broker a second, outbound network", () => {
     expect(buildBrokerConnectArgs("b", "bridge")).toEqual(["network", "connect", "bridge", "b"]);
   });
+
+  it("pins the broker's own resolvers when CONTAINER_DNS is set", () => {
+    const args = buildBrokerRunArgs({
+      broker: "b", network: "n", image: "img", allowUrls: ["https://ark.example.invalid"], port: 8080, user: "1000:1000", dns: ["1.1.1.1", "10.255.255.254"],
+    });
+    // The broker resolves allowlisted hostnames itself, so its --dns flags are
+    // what keep the isolated Agent's only edge working when the inherited
+    // resolver is unreachable from containers.
+    expect(args).toContain("--dns");
+    expect(args[args.indexOf("--dns") + 1]).toBe("1.1.1.1");
+    expect(args).toContain("10.255.255.254");
+  });
+
+  it("asks the engine for the broker's address on the isolated network only", () => {
+    // The broker is dual-homed; the Agent can only reach the internal-network
+    // address, so the query must be pinned to that network by name.
+    const args = buildBrokerInspectArgs("b", "net-1");
+    expect(args[0]).toBe("inspect");
+    expect(args[1]).toBe("--format");
+    expect(args[2]).toContain('Networks "net-1"');
+    expect(args.at(-1)).toBe("b");
+  });
 });
 
 describe("EgressIsolation lifecycle", () => {
-  it("clears a stale topology, then creates, starts and dual-homes in order", async () => {
-    const { calls, exec } = recorder();
+  it("clears a stale topology, then creates, starts, dual-homes and reads the broker address", async () => {
+    // The inspect call is what tells the runner where the Agent's only
+    // resolver lives; without it the Agent could not resolve anything.
+    const { calls, exec } = recorder((args) =>
+      args[0] === "inspect" ? { code: 0, stdout: "172.30.0.9\n", stderr: "" } : ok,
+    );
     const handle = await new EgressIsolation(config, exec).setup("agent-1");
 
     expect(handle).toEqual({
       network: "sentinel-test-instance-agent-1-net",
       broker: "sentinel-test-instance-agent-1-broker",
+      brokerIp: "172.30.0.9",
     });
     // Stale cleanup first: names are deterministic, so a crashed previous run
     // would otherwise make "already exists" the normal startup path.
@@ -83,7 +146,22 @@ describe("EgressIsolation lifecycle", () => {
       "network create",
       "run",
       "network connect",
+      "inspect",
     ]);
+  });
+
+  it("refuses to start when the broker's address cannot be determined", async () => {
+    // No broker IP means no --dns for the Agent, which means the Agent cannot
+    // resolve anything on the isolated network — a half-configured run, so it
+    // must fail here and tear the topology back down.
+    const { calls, exec } = recorder((args) =>
+      args[0] === "inspect" ? { code: 0, stdout: "", stderr: "" } : ok,
+    );
+    await expect(new EgressIsolation(config, exec).setup("agent-1")).rejects.toThrow(
+      /broker's address/,
+    );
+    expect(calls.filter((c) => c[0] === "stop").length).toBeGreaterThan(0);
+    expect(calls.filter((c) => c[0] === "network" && c[1] === "rm").length).toBeGreaterThan(0);
   });
 
   it("removes the network when the broker will not start", async () => {

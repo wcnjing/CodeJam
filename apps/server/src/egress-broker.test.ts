@@ -1,9 +1,12 @@
 import { createConnection, createServer, type Server } from "node:net";
+import { createSocket, type Socket as DgramSocket } from "node:dgram";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createDnsForwarder,
   createEgressBroker,
   isForbiddenAddress,
   parseEgressEndpoint,
+  parseEgressEndpoints,
 } from "./egress-broker.js";
 
 const servers: Server[] = [];
@@ -119,17 +122,68 @@ describe("parseEgressEndpoint", () => {
   it("refuses a non-http scheme", () => {
     expect(() => parseEgressEndpoint("ftp://ark.example.invalid")).toThrow(/http/i);
   });
+
+  it("parses a comma-separated allowlist, lowercasing and deduping", () => {
+    expect(
+      parseEgressEndpoints(
+        "https://Ark.Example.invalid, https://google.com:8443,https://ark.example.invalid",
+      ),
+    ).toEqual([
+      { host: "ark.example.invalid", port: 443 },
+      { host: "google.com", port: 8443 },
+    ]);
+    // Empty input is an empty allowlist; the CLI refuses to run with it.
+    expect(parseEgressEndpoints("  ,  ")).toEqual([]);
+    expect(() => parseEgressEndpoints("not-a-url")).toThrow();
+  });
 });
 
 describe("egress broker", () => {
   it("refuses a destination that is not the allowlisted one", async () => {
-    const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
+    const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     const response = await connect(port, "CONNECT evil.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
   });
 
+  it("tunnels to any allowlisted endpoint, not just the first", async () => {
+    // The whole point of a widened broker allowlist: a host the operator
+    // allowlisted (or approved) is actually reachable, while everything that is
+    // still not on the list is refused exactly as before.
+    const upstream = createServer((socket) => {
+      socket.on("data", (chunk) => socket.end("echo:" + chunk.toString("utf8")));
+    });
+    const upstreamPort = await listen(upstream);
+
+    const brokerPort = await listen(
+      createEgressBroker({
+        allow: [
+          { host: "ark.example.invalid", port: 443 },
+          { host: "google.com", port: 443 },
+        ],
+        resolve: async () => ["93.184.216.34"],
+        dial: (_target, onReady) =>
+          createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
+      }),
+    );
+
+    const response = await connect(
+      brokerPort,
+      "CONNECT google.com:443 HTTP/1.1\r\n\r\n",
+      "ping",
+    );
+    expect(response).toContain("200 Connection Established");
+    expect(response).toContain("echo:ping");
+
+    // A destination on neither endpoint is still refused before any DNS.
+    const refused = await connect(
+      brokerPort,
+      "CONNECT evil.example.invalid:443 HTTP/1.1\r\n\r\n",
+    );
+    expect(refused).toContain("403");
+  });
+
   it("refuses the right host on the wrong port", async () => {
-    const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
+    const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     const response = await connect(port, "CONNECT ark.example.invalid:22 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
   });
@@ -137,7 +191,7 @@ describe("egress broker", () => {
   it("never resolves a non-allowlisted name, so it cannot be a DNS oracle", async () => {
     const asked: string[] = [];
     const port = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async (h) => { asked.push(h); return ["8.8.8.8"]; } }),
+      createEgressBroker({ allow: [ALLOW], resolve: async (h) => { asked.push(h); return ["8.8.8.8"]; } }),
     );
     await connect(port, "CONNECT internal.corp.invalid:443 HTTP/1.1\r\n\r\n");
     expect(asked).toEqual([]);
@@ -146,7 +200,7 @@ describe("egress broker", () => {
   it("refuses an allowlisted name that resolves to a private address", async () => {
     // The rebinding case: the name is allowed, the address is not.
     const port = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => ["127.0.0.1"] }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => ["127.0.0.1"] }),
     );
     const response = await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
@@ -154,7 +208,7 @@ describe("egress broker", () => {
 
   it("refuses when any one of several answers is private", async () => {
     const port = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => ["93.184.216.34", "169.254.169.254"] }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => ["93.184.216.34", "169.254.169.254"] }),
     );
     const response = await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(response).toContain("403");
@@ -162,16 +216,16 @@ describe("egress broker", () => {
 
   it("fails closed when DNS fails or returns nothing", async () => {
     const failing = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => { throw new Error("SERVFAIL"); } }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => { throw new Error("SERVFAIL"); } }),
     );
     expect(await connect(failing, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain("502");
 
-    const empty = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => [] }));
+    const empty = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => [] }));
     expect(await connect(empty, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain("502");
   });
 
   it("refuses anything that is not a CONNECT request", async () => {
-    const port = await listen(createEgressBroker({ allow: ALLOW, resolve: async () => ["8.8.8.8"] }));
+    const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     expect(await connect(port, "GET http://ark.example.invalid/ HTTP/1.1\r\n\r\n")).toContain("400");
   });
 
@@ -187,7 +241,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) =>
           createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
@@ -210,7 +264,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) => {
           const socket = createConnection({ host: "127.0.0.1", port: upstreamPort }, () => {
@@ -244,7 +298,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) =>
           createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
@@ -280,7 +334,7 @@ describe("egress broker", () => {
     // Fail closed on a client that opens a socket and dribbles: the broker is
     // the Agent's only edge, so a stuck request must not hold it open forever.
     const brokerPort = await listen(
-      createEgressBroker({ allow: ALLOW, resolve: async () => ["93.184.216.34"], headTimeoutMs: 200 }),
+      createEgressBroker({ allow: [ALLOW], resolve: async () => ["93.184.216.34"], headTimeoutMs: 200 }),
     );
 
     const closed = await new Promise<boolean>((resolve, reject) => {
@@ -308,7 +362,7 @@ describe("egress broker", () => {
 
     const brokerPort = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["2606:4700::1111", "93.184.216.34"],
         dial: (target, onReady) => {
           dialled.push(target.host);
@@ -334,12 +388,170 @@ describe("egress broker", () => {
     const denials: string[] = [];
     const port = await listen(
       createEgressBroker({
-        allow: ALLOW,
+        allow: [ALLOW],
         resolve: async () => ["10.0.0.1"],
         onDenied: (reason) => denials.push(reason),
       }),
     );
     await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
     expect(denials).toContain("resolves to a private address");
+  });
+});
+
+describe("DNS forwarder", () => {
+  // A fake upstream resolver: echoes the query back with the QR bit set, so the
+  // tests can verify the answer was relayed AND that the client's original
+  // transaction id survives the round trip (an upstream may rewrite it).
+  async function fakeUpstream(): Promise<{
+    udp: DgramSocket;
+    tcp: Server;
+    udpPort: number;
+    tcpPort: number;
+  }> {
+    const udp = createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      const answer = Buffer.from(msg);
+      answer.writeUInt16BE(0x8180, 2); // QR+RD+RA
+      udp.send(answer, rinfo.port, rinfo.address);
+    });
+    const tcp = createServer((socket) => {
+      socket.on("data", (chunk) => socket.write(chunk));
+    });
+    const udpPort = await new Promise<number>((resolve) =>
+      udp.bind(0, "127.0.0.1", () => resolve(udp.address().port)),
+    );
+    const tcpPort = await new Promise<number>((resolve) =>
+      tcp.listen(0, "127.0.0.1", () => resolve((tcp.address() as { port: number }).port)),
+    );
+    return { udp, tcp, udpPort, tcpPort };
+  }
+
+  // Starts the forwarder (it binds on creation) and reports the bound ports.
+  async function startForwarder(opts: Parameters<typeof createDnsForwarder>[0]): Promise<{
+    udp: DgramSocket;
+    tcp: Server;
+    udpPort: number;
+    tcpPort: number;
+  }> {
+    // Port 53 is privileged; tests bind 0 and read the assigned ports.
+    const { udp, tcp } = createDnsForwarder({ ...opts, port: opts.port ?? 0 });
+    await Promise.all([
+      new Promise<void>((resolve) => udp.once("listening", () => resolve())),
+      new Promise<void>((resolve) => tcp.once("listening", () => resolve())),
+    ]);
+    return {
+      udp,
+      tcp,
+      udpPort: udp.address().port,
+      tcpPort: (tcp.address() as { port: number }).port,
+    };
+  }
+
+  function udpQuery(port: number, query: Buffer): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const client = createSocket("udp4");
+      const timer = setTimeout(() => {
+        client.close();
+        reject(new Error("dns query timed out"));
+      }, 2000);
+      client.on("message", (answer) => {
+        clearTimeout(timer);
+        client.close();
+        resolve(answer);
+      });
+      client.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      client.send(query, port, "127.0.0.1");
+    });
+  }
+
+  function tcpQuery(port: number, query: Buffer): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const socket = createConnection({ host: "127.0.0.1", port }, () => {
+        const framed = Buffer.alloc(2 + query.length);
+        framed.writeUInt16BE(query.length, 0);
+        query.copy(framed, 2);
+        socket.write(framed);
+      });
+      let buffer = Buffer.alloc(0);
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new Error("tcp dns query timed out"));
+      }, 2000);
+      socket.on("data", (chunk: Buffer) => {
+        buffer = Buffer.concat([buffer, chunk]);
+        if (buffer.length >= 2 && buffer.length >= 2 + buffer.readUInt16BE(0)) {
+          clearTimeout(timer);
+          const length = buffer.readUInt16BE(0);
+          socket.destroy();
+          resolve(buffer.subarray(2, 2 + length));
+        }
+      });
+      socket.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+
+  // One query, hex: id 0x1234, RD, one question for example.com A.
+  const QUERY = Buffer.from(
+    "123401000001000000000000" + "076578616d706c6503636f6d0000010001",
+    "hex",
+  );
+
+  it("relays a UDP query to the upstream and keeps the client's transaction id", async () => {
+    const upstream = await fakeUpstream();
+    const forwarder = await startForwarder({
+      upstreams: ["127.0.0.1:" + upstream.udpPort],
+      upstreamTimeoutMs: 500,
+    });
+    try {
+      const answer = await udpQuery(forwarder.udpPort, QUERY);
+      expect(answer.readUInt16BE(0)).toBe(0x1234);
+      expect(answer.readUInt16BE(2) & 0x8000).toBe(0x8000); // QR set: an answer
+    } finally {
+      forwarder.udp.close();
+      forwarder.tcp.close();
+      upstream.udp.close();
+      upstream.tcp.close();
+    }
+  });
+
+  it("answers over TCP, the retry path for large responses", async () => {
+    const upstream = await fakeUpstream();
+    const forwarder = await startForwarder({
+      upstreams: ["127.0.0.1:" + upstream.tcpPort],
+      upstreamTimeoutMs: 500,
+    });
+    try {
+      const answer = await tcpQuery(forwarder.tcpPort, QUERY);
+      expect(answer.readUInt16BE(0)).toBe(0x1234);
+    } finally {
+      forwarder.udp.close();
+      forwarder.tcp.close();
+      upstream.udp.close();
+      upstream.tcp.close();
+    }
+  });
+
+  it("tries the next upstream when the first one never answers", async () => {
+    // A dead first resolver must not hang the Agent's DNS; the next one serves.
+    const upstream = await fakeUpstream();
+    const forwarder = await startForwarder({
+      upstreams: ["127.0.0.1:1", "127.0.0.1:" + upstream.udpPort],
+      upstreamTimeoutMs: 200,
+    });
+    try {
+      const answer = await udpQuery(forwarder.udpPort, QUERY);
+      expect(answer.readUInt16BE(0)).toBe(0x1234);
+    } finally {
+      forwarder.udp.close();
+      forwarder.tcp.close();
+      upstream.udp.close();
+      upstream.tcp.close();
+    }
   });
 });

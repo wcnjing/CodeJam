@@ -203,4 +203,89 @@ describe("HTTP boundary", () => {
     expect(garbage.json().error).toMatch(/APP_PRINCIPALS/);
     await app.close();
   });
+
+  it("serves the allowlist over HTTP and forwards the widening flag on approvals", async () => {
+    const calls: unknown[] = [];
+    const recording = {
+      listAgents: () => [],
+      systemInfo: async () => ({}),
+      getAllowlist: () => ({ config: ["cfg.example.com"], overrides: [] }),
+      addAllowlistHost: async (host: string) => {
+        calls.push(["add", host]);
+        return [host];
+      },
+      removeAllowlistHost: async (host: string) => {
+        calls.push(["remove", host]);
+        return [];
+      },
+      resolveApproval: async (
+        id: string,
+        decision: string,
+        principal: { id: string },
+        reason: string,
+        allowlist?: boolean,
+      ) => {
+        calls.push(["resolve", id, decision, reason, allowlist]);
+        return { approval: { id, status: "approved", resolvedBy: principal.id }, continuationRun: null };
+      },
+    } as unknown as AgentService;
+    const app = await createApp(
+      loadConfig({ NODE_ENV: "test", APP_PRINCIPALS: "alice:" + ALICE }),
+      recording,
+    );
+    const headers = { authorization: "Bearer " + ALICE };
+
+    // Allowlist reads are gated like every /api route.
+    expect((await app.inject({ method: "GET", url: "/api/allowlist" })).statusCode).toBe(401);
+    const listed = await app.inject({ method: "GET", url: "/api/allowlist", headers });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual({ config: ["cfg.example.com"], overrides: [] });
+
+    // Add and remove; the body is strict, so a stray key is refused.
+    const added = await app.inject({
+      method: "POST",
+      url: "/api/allowlist",
+      headers,
+      payload: { host: "docs.example.com" },
+    });
+    expect(added.statusCode).toBe(201);
+    expect(added.json()).toEqual({ overrides: ["docs.example.com"] });
+    expect(calls).toContainEqual(["add", "docs.example.com"]);
+
+    const stray = await app.inject({
+      method: "POST",
+      url: "/api/allowlist",
+      headers,
+      payload: { host: "docs.example.com", actor: "someone-else" },
+    });
+    expect(stray.statusCode).toBe(400);
+
+    const removed = await app.inject({
+      method: "DELETE",
+      url: "/api/allowlist/docs.example.com",
+      headers,
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(calls).toContainEqual(["remove", "docs.example.com"]);
+
+    // The optional widening flag reaches the service: true, false, and absent.
+    const approvalId = "22222222-2222-4222-8222-222222222222";
+    for (const payload of [
+      { decision: "approve", reason: "trusted", allowlist: true },
+      { decision: "approve", reason: "trusted", allowlist: false },
+      { decision: "approve", reason: "trusted" },
+    ]) {
+      const resolved = await app.inject({
+        method: "POST",
+        url: "/api/approvals/" + approvalId,
+        headers,
+        payload,
+      });
+      expect(resolved.statusCode).toBe(200);
+    }
+    expect(calls).toContainEqual(["resolve", approvalId, "approve", "trusted", true]);
+    expect(calls).toContainEqual(["resolve", approvalId, "approve", "trusted", false]);
+    expect(calls).toContainEqual(["resolve", approvalId, "approve", "trusted", false]);
+    await app.close();
+  });
 });

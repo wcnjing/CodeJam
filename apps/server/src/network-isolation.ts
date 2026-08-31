@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
+import { parseEgressEndpoint, type EgressEndpoint } from "./egress-broker.js";
 import { agentBrokerName, agentNetworkName } from "./container-codex-runner.js";
 
 const execFileAsync = promisify(execFile);
@@ -48,9 +49,10 @@ export function buildBrokerRunArgs(options: {
   broker: string;
   network: string;
   image: string;
-  allowUrl: string;
+  allowUrls: string[];
   port: number;
   user: string;
+  dns?: string[];
 }): string[] {
   return [
     "run",
@@ -63,22 +65,80 @@ export function buildBrokerRunArgs(options: {
     "io.codejam.sentinel=agent-egress",
     "--network",
     options.network,
+    // The broker resolves allowlisted hostnames itself (node:dns) before
+    // connecting, so its resolvers decide whether the isolated Agent's only
+    // edge can reach anything. Inherited resolvers are the default; an explicit
+    // CONTAINER_DNS keeps the broker working when the host resolver is
+    // unreachable from containers.
+    ...(options.dns ?? []).flatMap((dns) => ["--dns", dns]),
     // The broker is the thing an escaped Agent attacks next, so it gets the
     // same containment as the Agent: no new privileges, no capabilities, a
-    // read-only root, and no writable /tmp it could stage anything in.
+    // read-only root, and no writable /tmp it could stage anything in. The one
+    // exception is NET_BIND_SERVICE: the broker answers the Agent network's
+    // DNS on port 53 (privileged), so it needs exactly that capability —
+    // binding low ports — and nothing else.
     "--security-opt",
     "no-new-privileges",
     "--cap-drop",
     "ALL",
+    "--cap-add",
+    "NET_BIND_SERVICE",
     "--read-only",
     "--user",
     options.user,
     "--env",
-    "EGRESS_ALLOW_URL=" + options.allowUrl,
+    "EGRESS_ALLOW_URL=" + options.allowUrls.join(","),
     "--env",
     "EGRESS_LISTEN_PORT=" + options.port,
     options.image,
   ];
+}
+
+/**
+ * Asks the engine for the broker's address on the isolated network — the
+ * address the Agent's `--dns` must point at. The broker is dual-homed, so it
+ * has more than one address; the network name pins the query to the one the
+ * Agent can actually reach. The name contains hyphens, hence the `index` form
+ * (a bare `.Networks.<name>` is not valid Go template syntax).
+ */
+export function buildBrokerInspectArgs(broker: string, network: string): string[] {
+  return [
+    "inspect",
+    "--format",
+    '{{(index .NetworkSettings.Networks "' + network + '").IPAddress}}',
+    broker,
+  ];
+}
+
+/**
+ * The endpoints one run's broker will permit, as EGRESS_ALLOW_URL entries.
+ *
+ * Always the model API, plus every host on the effective command-policy
+ * allowlist: the config baseline (`POLICY_ALLOWED_HOSTS`), the store-backed
+ * overrides the operator edits in the UI, and the run-scoped grant an approval
+ * adds. Without this the broker — the container's ONLY route out — refused
+ * allowlisted hosts, so a command the policy allowed still could not reach its
+ * destination. Allowlisted hosts are CONNECTed on 443, the port a hostname
+ * flag carries no information about; the broker only speaks CONNECT anyway, so
+ * plain-http destinations are out of scope regardless.
+ */
+export function buildEgressAllowUrls(
+  config: AppConfig,
+  extraHosts: readonly string[] = [],
+): string[] {
+  const endpoints: EgressEndpoint[] = [parseEgressEndpoint(config.arkBaseUrl)];
+  for (const host of [...config.policyAllowedHosts, ...extraHosts]) {
+    endpoints.push({ host: host.toLowerCase(), port: 443 });
+  }
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const endpoint of endpoints) {
+    const key = endpoint.host + ":" + endpoint.port;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    urls.push("https://" + endpoint.host + (endpoint.port === 443 ? "" : ":" + endpoint.port));
+  }
+  return urls;
 }
 
 /** Gives the broker its second home: a network that actually has a route out. */
@@ -140,6 +200,13 @@ async function defaultExec(engine: string, args: string[]): Promise<EngineResult
 export interface IsolationHandle {
   network: string;
   broker: string;
+  /**
+   * The broker's address on the isolated network. The Agent's `--dns` points
+   * here: the broker answers DNS for the Agent network (the embedded resolver
+   * refuses external queries on --internal networks), so this is the only
+   * reachable resolver the Agent has.
+   */
+  brokerIp: string;
 }
 
 export class EgressIsolation {
@@ -157,8 +224,12 @@ export class EgressIsolation {
    * whatever was already created and throws: a half-built topology would leave
    * the Agent on an internal network with no broker, which is a hang rather
    * than an error, and leak a network besides.
+   *
+   * `extraAllowedHosts` are the run-scoped hosts (approval grants) that join
+   * the broker's allowlist beside the config baseline and store overrides —
+   * the same effective list the command policy evaluates against.
    */
-  async setup(agentId: string): Promise<IsolationHandle> {
+  async setup(agentId: string, extraAllowedHosts: string[] = []): Promise<IsolationHandle> {
     const network = agentNetworkName(agentId, this.config);
     const broker = agentBrokerName(agentId, this.config);
     // A previous crash can leave both behind; the names are deterministic, so
@@ -175,9 +246,10 @@ export class EgressIsolation {
         broker,
         network,
         image: this.config.containerEgressBrokerImage,
-        allowUrl: this.config.arkBaseUrl,
+        allowUrls: buildEgressAllowUrls(this.config, extraAllowedHosts),
         port: this.config.containerEgressBrokerPort,
         user: this.config.containerUser,
+        dns: this.config.containerDns,
       }),
     );
     if (started.code !== 0) {
@@ -195,7 +267,22 @@ export class EgressIsolation {
       );
     }
 
-    return { network, broker };
+    // The Agent must be told where its only resolver lives (--dns takes an IP,
+    // not a name), so the broker's address on the isolated network has to come
+    // from the engine. Failure here is a containment failure: without it the
+    // Agent cannot resolve anything at all, so refuse the run rather than
+    // start it half-configured.
+    const inspected = await this.exec(buildBrokerInspectArgs(broker, network));
+    const brokerIp = inspected.stdout.trim().split(/\s+/)[0] ?? "";
+    if (inspected.code !== 0 || !brokerIp) {
+      await this.teardown({ network, broker });
+      throw new Error(
+        "Could not determine the broker's address on the isolated network: " +
+          inspected.stderr.trim(),
+      );
+    }
+
+    return { network, broker, brokerIp };
   }
 
   /**
@@ -207,7 +294,7 @@ export class EgressIsolation {
    * never bound means — here, refusing to start the Agent at all.
    */
   async waitUntilReady(
-    handle: IsolationHandle,
+    handle: Pick<IsolationHandle, "network" | "broker">,
     timeoutMs = 15_000,
     intervalMs = 200,
   ): Promise<boolean> {
@@ -222,7 +309,7 @@ export class EgressIsolation {
   }
 
   /** Best-effort and idempotent: teardown runs on paths that already failed. */
-  async teardown(handle: IsolationHandle): Promise<void> {
+  async teardown(handle: Pick<IsolationHandle, "network" | "broker">): Promise<void> {
     await this.exec(buildBrokerStopArgs(handle.broker));
     await this.exec(buildNetworkRemoveArgs(handle.network));
   }

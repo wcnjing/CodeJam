@@ -1,8 +1,14 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Database, DatabaseV1, DatabaseV2, PolicyDecision } from "./types.js";
+import type {
+  Database,
+  DatabaseV1,
+  DatabaseV2,
+  DatabaseV3,
+  PolicyDecision,
+} from "./types.js";
 
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 const emptyDatabase = (): Database => ({
   version: CURRENT_VERSION,
@@ -11,16 +17,17 @@ const emptyDatabase = (): Database => ({
   runs: [],
   policyEvents: [],
   approvals: [],
+  allowlist: [],
 });
 
 /**
  * Shape as found on disk: the version is whatever release last wrote it, and
  * only `version` is trustworthy until `migrate` has walked the value forward.
- * The collection types are the current ones purely so this stays a usable
- * transport type through the chain — each step casts to its own version's real
- * shape before touching a field.
+ * The fields are Partial so older shapes (which lack e.g. v4's `allowlist`)
+ * are still valid transports; each migration step casts to its own version's
+ * real shape before touching a field.
  */
-type StoredDatabase = Omit<Database, "version"> & { version: number };
+type StoredDatabase = Omit<Partial<Database>, "version"> & { version: number };
 
 /**
  * v1 -> v2. Before v2 the approver was a free-text `actor` field on the request
@@ -65,6 +72,21 @@ const MIGRATIONS: Record<number, MigrationStep> = {
   // synchronous by contract, and writing a file from inside one would make the
   // registry a place where I/O hides.
   2: (database) => ({ ...(database as unknown as DatabaseV2), version: 3 }),
+  // v3 -> v4: the standing allowlist override arrives. Every existing approval
+  // predates the "approve and widen" option, so its record is stamped `null`
+  // rather than left to imply a widening that never happened.
+  3: (database) => {
+    const v3 = database as unknown as DatabaseV3;
+    return {
+      ...v3,
+      version: 4,
+      allowlist: [],
+      approvals: v3.approvals.map((approval) => ({
+        ...approval,
+        allowlistWidened: null,
+      })),
+    };
+  },
 };
 
 /** Walks a stored database forward to CURRENT_VERSION, one step per version. */
