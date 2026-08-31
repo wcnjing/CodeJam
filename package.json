@@ -32,7 +32,8 @@
     "bench:generate": "npm run bench:generate -w @launchpad/server",
     "redteam": "npm run redteam -w @launchpad/server",
     "build:broker": "docker build -f Dockerfile.egress-broker -t volc-egress-broker:local .",
-    "verify:egress": "tsx scripts/verify-egress.mjs"
+    "verify:egress": "tsx scripts/verify-egress.mjs",
+    "clean": "pnpm -r exec sh -c '(rm data .data workspaces codex-home -r 2> /dev/null || true)'"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
