@@ -1,0 +1,38 @@
+{
+  "_comment": "Numbers deliberately not from the run their surrounding text cites, and provenance labels with the condition that retires each. Every entry needs a reason a reader can evaluate. Adding an entry to silence the checker rather than to record a fact is the one way this file makes things worse than no file.",
+  "unexplainedRatchet": 24,
+  "_ratchetNote": "70 when the check was switched on; 24 after the taxonomy write-up added two correct run citations to EVALUATION_RELIABILITY_PLAN.md. That drop is the mechanism working rather than a fix: the doc cited a single run at line 12 and attributed everything below it to that run, so citing the right run mid-document re-attributed 49 figures at once. The remaining 24 are the same structural problem further up, and the checker names the correct run for each, so the work is mechanical. Lower this as they are fixed; never raise it to go green.",
+  "figures": [
+    {
+      "doc": "README.md",
+      "value": "6755",
+      "unit": "/",
+      "reason": "Historical before-column of the bank-widening table. It is the detection rate that existed after the wrapper axis was widened and before the fix landed, so it appears in no CI run: no build was ever committed in that state. Attributed in the table itself as a before column."
+    },
+    {
+      "doc": "README.md",
+      "value": "93.8",
+      "unit": "%",
+      "reason": "Stated in the text as measured locally and never committed, describing a rejected first fix that regressed core detection. The sentence says so outright; it appears in no run because that fix was never pushed."
+    }
+  ],
+  "provenanceLabels": [],
+  "_provenanceLabelSchema": {
+    "_howToUse": "Register EVERY provenance label here - 'measured locally', 'pending CI', 'preliminary', 'from a dev machine'. A label is a claim with an expiry date; this is where the expiry lives. The checker fails when a condition is met, because from that moment the label reads as current and is not.",
+    "_workedExample": "The mechanism was built from, and validated against, a real case: README carried 'measured locally, not from CI - refresh once the harness lands'. It was accurate when written and false about ten hours later when that branch's CI ran. Nothing was edited; the world moved. Run against the commit that still carried it, the checker reports EXPIRED and names run 33354116107 as the one that retired it. That entry is now resolved and removed.",
+    "example": {
+      "id": "short-stable-id",
+      "doc": "README.md",
+      "marker": "verbatim substring that identifies the label in the document",
+      "retiresWhen": {
+        "type": "ci-run-exists-for-branch",
+        "branch": "some-branch"
+      },
+      "action": "what to do when it expires"
+    },
+    "supportedConditions": [
+      "ci-run-exists-for-branch",
+      "branch-merged"
+    ]
+  }
+}
