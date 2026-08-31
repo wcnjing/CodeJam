@@ -329,7 +329,16 @@ contributor's laptop.
 > believes.
 >
 > Re-reading each figure against the log of the run it cites has now caught wrong
-> claims **seven separate times**. Five were the same failure: a value carried
+> claims **eight separate times**, and the eighth landed in this very section.
+> The paragraph correcting the fabricated performance block closed by saying the
+> decision was *"still under 0.5% of a run's wall time"* — a figure nobody
+> measured, written while documenting the danger of figures nobody measured. The
+> run says 0.62–0.70% over five commands and 6.6–6.9% over fifty. An external
+> reviewer caught it; the mechanical re-read did not, because I never treated it
+> as a figure. It arrived as a reassuring clause at the end of a sentence about
+> something else, and clauses do not feel like claims. **The check has to run on
+> every number, including the ones that are only there to make a correction feel
+> finished.** Five were the same failure: a value carried
 > forward from an earlier build while the text linked a newer run. Correctness
 > metrics are stable, so they survive that unnoticed; **timing figures move every
 > run, so a stale one is indistinguishable from a real change**.
@@ -442,8 +451,9 @@ to the Runtime process being dead: **p50 1–3 ms** across CI runs.
 README's own containment race — for exactly that long, a denied Agent is still
 executing — and it had never been quantified.
 ([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:overhead`;
-that run reports p50 2 ms / max 3 ms on Node 22 and p50 3 ms / max 5 ms on Node 24,
-n=5 each)
+that run reports p50 2 ms / max 3 ms on Node 22 and p50 3 ms / max 4 ms on Node 24,
+n=5 each. The token tier measures the same window on a larger sample and reports
+max 5 ms at n=24; the two are different denominators and are not mixed here)
 
 **The middleware's real cost is not the policy decision.** A decision is
 **58.19–63.70 µs** across three runners. Recording it is the expensive half:
@@ -456,8 +466,16 @@ code and not of a machine.
 
 The capability engine made the decision itself dearer — 45.70–59.40 µs under the
 old regex engine, 58.19–63.70 µs now, same harness on the same three runners. It
-is still under 0.5% of a run's wall time, and it bought the closures described
-above. The store curve did not change class: same linearity, same O(n).
+bought the closures described above. The store curve did not change class: same
+linearity, same O(n).
+
+**What that costs as a share of a run is workload-dependent, and the range is
+the honest form of it**: the same run measures the decision at **0.62–0.70% of
+wall time over five commands, 3.4–3.5% over 25, and 6.6–6.9% over 50** — the
+Runtime's wall time is roughly fixed near 30 ms while the policy cost scales
+with the number of commands, so any single percentage is a statement about one
+workload rather than about the middleware.
+([run](https://github.com/wcnjing/CodeJam/actions/runs/33298935065), `npm run bench:overhead`)
 
 *The fix is scoped and deliberately not built.* Three options are written up with
 trade-offs; the two cheap ones cap the log by discarding audit records. For a
@@ -731,12 +749,13 @@ Recorded honestly, because each one is a real gap:
   engine materialises two carriers — what a command decodes, and what it pipes
   into a shell. It does not materialise the third: **text written to a file that
   is then executed.** An injection benchmark
-  (`npm run bench:injection`, enforcement 2,104/2,250 = **93.51%** —
-  **measured locally, not from CI**, because the harness is not on `main` yet
-  and so no CI run has produced this figure; every other number on this page is
-  CI-derived and linked, and this one is labelled rather than left to pass as
-  the same kind of evidence. **Refresh it from the injection branch's first CI
-  run once that lands.**)
+  (`npm run bench:injection`, enforcement 2,104/2,250 = **93.51%**, 95% CI
+  92.42–94.46% — from
+  [run 33354116107](https://github.com/wcnjing/CodeJam/actions/runs/33354116107),
+  which reports that figure and the 146-variant ratchet identically on all three
+  runners, so it is not one machine's artefact. **The harness itself is not in
+  this tree**: it lands in the pull request that produced that run, and until
+  that merges the command named here is not runnable from `main`.)
   enumerated every carrier the shell offers and found **146 variants across 49
   signatures and 17 of 30 carriers**, in three causes:
   `runsWrittenScript` withdraws the textual carve-out for `> file` but never
