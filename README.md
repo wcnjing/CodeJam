@@ -166,6 +166,33 @@ because a container with no route out has nowhere to send the bytes.
    exist there, and the command policy is the only control. It is a
    development-only path and should not be given an untrusted Agent.
 
+### Where the two layers can still disagree
+
+They are independent by design, so their allowlists are not the same list. Two
+places where the policy layer permits something the network layer does not, both
+deliberate and both erring toward *less* access:
+
+- **`POLICY_ALLOWED_HOSTS`.** An operator can add standing hosts to the command
+  policy's allowlist through this variable. It does **not** reach the broker,
+  which is built from `ARK_BASE_URL` plus per-run grants only. Under
+  `RUNTIME_PROVIDER=container` a command to such a host therefore passes policy
+  and is refused by the broker with a `403`. That is fail-closed, and it is a
+  configuration surprise: the honest way to grant a standing host to a container
+  run today is to review it through the approval path, per run. Widening the
+  broker from this variable would make a text-file edit into a network change,
+  which is the coupling the network layer exists to avoid.
+- **Loopback.** `policyContextFrom` allows loopback hosts, so an Agent talking
+  to a dev server it started itself is not a policy denial. The broker refuses
+  every private, loopback, link-local and CGNAT address unconditionally. Nothing
+  is lost — a container's own loopback never traverses the broker — but the two
+  layers do not agree on paper, and a reader comparing them should know why.
+
+The reverse — the network permitting what policy denies — cannot happen for an
+approved host, because the grant is applied to both from the same list on the
+same run.
+
+### In one paragraph
+
 The container runtime uses structural default-deny networking. Each run gets an
 internal network with no outbound route, and all external traffic passes through
 a per-run egress broker with a narrow allowlist. A human approval can add one
