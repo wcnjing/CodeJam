@@ -118,8 +118,10 @@ behaved as though it was not. That is the worst of both readings, not a stronger
 property.
 
 **What is true now.** An approval adds the named host to *that continuation
-run's* broker allowlist, as `EGRESS_APPROVED_URLS` on the broker container the
-run creates, and it dies with that container. No standing allowlist is widened,
+run's* broker allowlist — folded into the comma-separated `EGRESS_ALLOW_URL` on
+the broker container the run creates — and it dies with that container. An
+operator who wants the host to persist chooses *add to the allowlist* instead,
+which writes it to the standing allowlist and records that it did. No standing allowlist is widened,
 no other agent sees it, and the next run of the same agent is held again. What an
 approval still cannot do is buy a route to a private address — the broker
 re-checks the resolved address for every allowlisted name, approved ones included

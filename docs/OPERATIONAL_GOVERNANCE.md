@@ -40,7 +40,11 @@ where `/tmp` is the real host `/tmp`, declares only the workspace path.
 The granted exception is **scoped to the exact hosts named and consumed by a
 single run** — proven live: after an approval let one task reach the npm
 registry, the next task to the same registry was held again. Approval is never
-a standing allowlist change.
+a standing allowlist change **unless the approver explicitly asks for it**: the
+approval card's "add to the allowlist" checkbox (and the Allowlist panel in the
+UI) widen the store-backed override list, and such a decision is recorded on
+the approval (`allowlistWidened`) so the audit trail says the approval was also
+a permanent config change.
 
 ## Named, honest gaps
 

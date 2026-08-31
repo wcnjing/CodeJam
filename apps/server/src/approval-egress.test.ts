@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentService } from "./agent-service.js";
 import { policyContextFrom, scanCommands, type Actor } from "./command-policy.js";
 import { loadConfig, type AppConfig } from "./config.js";
-import { ContainerCodexRunner } from "./container-codex-runner.js";
-import { brokerAllowlist, createEgressBroker } from "./egress-broker.js";
+import { ContainerCodexRunner, buildContainerRunArgs } from "./container-codex-runner.js";
+import { createEgressBroker, parseEgressEndpoints } from "./egress-broker.js";
 import { PolicyViolationError } from "./errors.js";
-import { EgressIsolation, type EngineResult } from "./network-isolation.js";
+import { EgressIsolation, buildEgressAllowUrls, type EngineResult } from "./network-isolation.js";
 import { JsonStore } from "./store.js";
 import type { Principal } from "./principals.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
@@ -20,26 +20,34 @@ import { WorkspaceManager } from "./workspace.js";
  * The approval path end to end: policy holds a host, a human grants it, and the
  * RUN'S NETWORK — not just its policy context — is built to include it.
  *
- * The bug this pins down was a disagreement between two layers that are meant
- * to be independent. `extraAllowedHosts` reached the command policy and stopped
- * there; the broker's allowlist was hardcoded to the Ark endpoint. A human
- * approved `registry.npmjs.org`, policy let the command through, and the broker
- * refused the connection — an approval honoured at one layer and denied at the
- * other, which is the worst of both: the operator believes they granted access
- * and the Agent behaves as though they had not.
+ * There are three sources of network authority and they must not be confused:
+ *
+ *   1. the platform endpoint (ARK_BASE_URL), always present;
+ *   2. the STANDING allowlist — POLICY_ALLOWED_HOSTS plus the store-backed
+ *      overrides an operator edits or widens by approving — persistent;
+ *   3. the RUN-SCOPED grant an approval attaches to one continuation run.
+ *
+ * Enforcement is their union. Lifetime is not: 2 outlives the run and 3 dies
+ * with it. This file pins both halves of that, because the failure mode either
+ * way is silent — a grant that never reaches the network is an approval the
+ * operator was told was honoured and the Agent sees refused, and a grant that
+ * outlives its run is a standing allowance nobody decided to make.
  *
  * Nothing here restates the production wiring. The policy decision comes from
  * the real `scanCommands`, the topology from the real `EgressIsolation`, the
- * allowlist from the real `brokerAllowlist` parsing the real argv the runner
- * builds, and the allow/deny answers from a real `createEgressBroker`. The only
- * stand-in is the container engine, through the `EngineExec` seam the module
- * already exposes, because a live engine is exactly what a unit suite cannot
- * assume.
+ * allowlist from the real `buildEgressAllowUrls` parsed by the real
+ * `parseEgressEndpoints` out of the real argv, and the allow/deny answers from
+ * a real `createEgressBroker`. The only stand-in is the container engine,
+ * through the `EngineExec` seam the module already exposes, because a live
+ * engine is exactly what a unit suite cannot assume.
  */
 
 const APPROVED_HOST = "registry.npmjs.org";
+const STANDING_HOST = "deb.debian.org";
 const OTHER_HOST = "attacker.example";
 const ARK_BASE_URL = "https://ark.example.invalid/api/v3";
+const ARK_HOST = "ark.example.invalid";
+const BROKER_IP = "172.30.0.9";
 const ALICE: Principal = { id: "ops-alice" };
 
 const dirs: string[] = [];
@@ -77,18 +85,21 @@ function connect(port: number, request: string): Promise<string> {
   });
 }
 
-const ok: EngineResult = { code: 0, stdout: "", stderr: "" };
-
-/** Records every engine invocation, so the run's topology can be read back. */
+/**
+ * Records every engine invocation so the run's topology can be read back.
+ *
+ * `inspect` has to answer with an address: setup refuses the run without one,
+ * because an Agent that cannot resolve anything is a containment failure
+ * dressed as a model outage.
+ */
 function recorder() {
   const calls: string[][] = [];
-  return {
-    calls,
-    exec: async (args: string[]) => {
-      calls.push(args);
-      return ok;
-    },
+  const exec = async (args: string[]): Promise<EngineResult> => {
+    calls.push(args);
+    if (args[0] === "inspect") return { code: 0, stdout: BROKER_IP + "\n", stderr: "" };
+    return { code: 0, stdout: "", stderr: "" };
   };
+  return { calls, exec };
 }
 
 /** The `--env NAME=value` pairs of one broker `run` invocation. */
@@ -113,6 +124,10 @@ const verbs = (calls: string[][]) =>
 /** Every broker `run` in the order the engine saw them: one per run of the Agent. */
 const brokerRuns = (calls: string[][]) =>
   calls.filter((c) => c[0] === "run" && c.includes("--detach"));
+
+/** The hosts one broker was actually started with, parsed the way the sidecar parses them. */
+const allowedHosts = (args: string[]) =>
+  parseEgressEndpoints(brokerEnv(args).EGRESS_ALLOW_URL ?? "").map((e) => e.host);
 
 const CURL_APPROVED = "/bin/bash -lc 'curl https://" + APPROVED_HOST + "/react'";
 
@@ -143,13 +158,13 @@ class PolicyGatedIsolatedRunner implements AgentRunner {
 
   async run(request: RunnerRequest): Promise<RunnerResult> {
     this.calls.push(request);
-    const approved = request.extraAllowedHosts ?? [];
-    const handle = await this.isolation.setup(request.agentId, approved);
+    const extra = request.extraAllowedHosts ?? [];
+    const handle = await this.isolation.setup(request.agentId, [...extra]);
     try {
       const actor: Actor = { agentId: request.agentId, threadId: request.threadId };
       const context = policyContextFrom(
         this.config.arkBaseUrl,
-        [...this.config.policyAllowedHosts, ...approved],
+        [...this.config.policyAllowedHosts, ...extra],
         [this.config.arkApiKey],
         ["/workspace", "/tmp", "/var/tmp"],
       );
@@ -228,13 +243,12 @@ describe("an approved host reaches the network, scoped to one run", () => {
     expect(pending[0]).toMatchObject({ status: "pending", rule: "network-egress-denied" });
     expect(pending[0]?.hosts).toContain(APPROVED_HOST);
 
-    // That first run's broker was built with no grant at all — the variable is
-    // absent rather than empty, so an ordinary run carries no approval state.
-    const before = brokerEnv(brokerRuns(calls)[0]!);
-    expect(before.EGRESS_ALLOW_URL).toBe(ARK_BASE_URL);
-    expect(before).not.toHaveProperty("EGRESS_APPROVED_URLS");
+    // That first run's broker was built with the platform endpoint alone: no
+    // standing entry configured, and nothing granted yet.
+    expect(allowedHosts(brokerRuns(calls)[0]!)).toEqual([ARK_HOST]);
 
-    // 2. An authenticated principal grants exactly that host.
+    // 2. An authenticated principal grants exactly that host, WITHOUT widening
+    //    the standing allowlist — the run-scoped path.
     const { continuationRun } = await service.resolveApproval(
       pending[0]!.id,
       "approve",
@@ -244,73 +258,120 @@ describe("an approved host reaches the network, scoped to one run", () => {
     expect(continuationRun).not.toBeNull();
     await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
 
-    // 3. The continuation's broker carries the grant, in its own variable so an
-    //    operator can tell a granted allowance from the standing one.
-    const granted = brokerEnv(brokerRuns(calls)[1]!);
-    expect(granted.EGRESS_ALLOW_URL).toBe(ARK_BASE_URL);
-    expect(granted.EGRESS_APPROVED_URLS).toBe("https://" + APPROVED_HOST);
+    // 3. The continuation's broker carries the grant beside the platform
+    //    endpoint, and nothing else.
+    const granted = brokerRuns(calls)[1]!;
+    expect(allowedHosts(granted)).toEqual([ARK_HOST, APPROVED_HOST]);
 
-    // 4. Parsed the way the sidecar parses it: Ark plus exactly that one host.
-    const allowlist = brokerAllowlist(granted.EGRESS_ALLOW_URL!, granted.EGRESS_APPROVED_URLS!);
-    expect(allowlist).toEqual([
-      { host: "ark.example.invalid", port: 443 },
-      { host: APPROVED_HOST, port: 443 },
-    ]);
+    // The audit record says the grant did NOT become standing.
+    const resolved = service.getApproval(pending[0]!.id);
+    expect(resolved.status).toBe("approved");
+    expect(resolved.resolvedBy).toBe(ALICE.id);
+    expect(resolved.allowlistWidened ?? null).toBeNull();
+    expect(service.getAllowlist().overrides).not.toContain(APPROVED_HOST);
 
-    // 5. A real broker built from that allowlist lets the approved host through
-    //    and still refuses everything else. The upstream is on loopback, which
-    //    the address guard rightly forbids, so DNS answers a public address and
-    //    the injected dial redirects the socket — the guard stays fully armed.
+    // 4. A real broker built from that argv lets the approved host through and
+    //    still refuses everything else. The upstream is on loopback, which the
+    //    address guard rightly forbids, so DNS answers a public address and the
+    //    injected dial redirects the socket — the guard stays fully armed.
     const upstream = createServer((socket) => socket.end("hello"));
     const upstreamPort = await listen(upstream);
     const brokerPort = await listen(
       createEgressBroker({
-        allow: allowlist,
+        allow: parseEgressEndpoints(brokerEnv(granted).EGRESS_ALLOW_URL!),
         resolve: async () => ["93.184.216.34"],
         dial: (_target, onReady) =>
           createConnection({ host: "127.0.0.1", port: upstreamPort }, onReady),
       }),
     );
 
-    const permitted = await connect(
-      brokerPort,
-      "CONNECT " + APPROVED_HOST + ":443 HTTP/1.1\r\n\r\n",
-    );
-    expect(permitted).toContain("200 Connection Established");
+    expect(
+      await connect(brokerPort, "CONNECT " + APPROVED_HOST + ":443 HTTP/1.1\r\n\r\n"),
+    ).toContain("200 Connection Established");
 
-    const refused = await connect(brokerPort, "CONNECT " + OTHER_HOST + ":443 HTTP/1.1\r\n\r\n");
-    expect(refused).toContain("403 Forbidden");
+    expect(
+      await connect(brokerPort, "CONNECT " + OTHER_HOST + ":443 HTTP/1.1\r\n\r\n"),
+    ).toContain("403 Forbidden");
 
     // The grant is a name on the list, not a port range on that name.
-    const wrongPort = await connect(
-      brokerPort,
-      "CONNECT " + APPROVED_HOST + ":8443 HTTP/1.1\r\n\r\n",
-    );
-    expect(wrongPort).toContain("403 Forbidden");
+    expect(
+      await connect(brokerPort, "CONNECT " + APPROVED_HOST + ":8443 HTTP/1.1\r\n\r\n"),
+    ).toContain("403 Forbidden");
 
-    // Ark is still reachable: the grant added to the allowlist, it did not
-    // replace it.
-    const ark = await connect(brokerPort, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n");
-    expect(ark).toContain("200 Connection Established");
+    // The platform endpoint is still reachable: the grant added, it did not
+    // replace.
+    expect(
+      await connect(brokerPort, "CONNECT " + ARK_HOST + ":443 HTTP/1.1\r\n\r\n"),
+    ).toContain("200 Connection Established");
 
-    // 6. Teardown: the granted topology does not survive the run that held it.
-    const grantedRunIndex = calls.indexOf(brokerRuns(calls)[1]!);
-    const after = verbs(calls.slice(grantedRunIndex));
+    // 5. Teardown: the granted topology does not survive the run that held it.
+    const after = verbs(calls.slice(calls.indexOf(granted)));
     expect(after).toContain("stop sentinel-test-" + agent.id + "-broker");
     expect(after).toContain("network rm");
 
-    // 7. A fresh, independent run asking for the same host is held again, and
-    //    its broker is built with no grant. The approval bought one run.
+    // 6. A fresh, independent run asking for the same host is held again, and
+    //    its broker is back to the platform endpoint alone. The approval bought
+    //    one run.
     const second = await service.sendMessage(agent.id, "fetch the react version again");
     await expect.poll(() => service.getRun(second.run.id).status).toBe("held");
-    expect(brokerEnv(brokerRuns(calls)[2]!)).not.toHaveProperty("EGRESS_APPROVED_URLS");
+    expect(allowedHosts(brokerRuns(calls)[2]!)).toEqual([ARK_HOST]);
     expect(service.listApprovals(agent.id).filter((a) => a.status === "pending")).toHaveLength(1);
   }, 30_000);
 
+  it("makes an approve-and-widen host standing, so the NEXT run keeps it", async () => {
+    // The other half of the model, and the one that must not be confused with a
+    // run-scoped grant: widening writes to the store, so it survives teardown
+    // and applies to runs nobody approved individually.
+    const { config, root } = await makeConfig();
+    const { calls, exec } = recorder();
+    const runner = new PolicyGatedIsolatedRunner(config, exec);
+    const service = await makeService(config, root, runner);
+    const agent = await service.createAgent({ name: "Widened" });
+
+    const { run } = await service.sendMessage(agent.id, "fetch");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
+    const approval = service.listApprovals(agent.id)[0]!;
+
+    const { continuationRun } = await service.resolveApproval(
+      approval.id,
+      "approve",
+      ALICE,
+      "trusted registry, permanently",
+      true, // addToAllowlist
+    );
+    await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
+
+    // The audit record distinguishes this from a run-scoped grant.
+    const resolved = service.getApproval(approval.id);
+    expect(resolved.allowlistWidened).toContain(APPROVED_HOST);
+    expect(service.getAllowlist().overrides).toContain(APPROVED_HOST);
+
+    // And the next run — with no approval of its own — completes, because the
+    // standing allowlist reaches BOTH layers: policy allows the command and the
+    // broker carries the host.
+    const second = await service.sendMessage(agent.id, "fetch again");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+    expect(allowedHosts(brokerRuns(calls).at(-1)!)).toContain(APPROVED_HOST);
+  }, 30_000);
+
+  it("puts a config-baseline standing host on the broker without any approval", async () => {
+    // POLICY_ALLOWED_HOSTS used to reach the command policy only, which made an
+    // operator-configured host policy-allowed and network-refused. It now feeds
+    // buildEgressAllowUrls too, so the two layers agree from the start.
+    const { config } = await makeConfig({ POLICY_ALLOWED_HOSTS: STANDING_HOST });
+    expect(buildEgressAllowUrls(config)).toEqual([
+      "https://" + ARK_HOST,
+      "https://" + STANDING_HOST,
+    ]);
+    // And it composes with a run-scoped grant rather than replacing it.
+    expect(buildEgressAllowUrls(config, [APPROVED_HOST])).toEqual([
+      "https://" + ARK_HOST,
+      "https://" + STANDING_HOST,
+      "https://" + APPROVED_HOST,
+    ]);
+  });
+
   it("does not leak the grant to another agent's run", async () => {
-    // Scoping is per RUN, and the topology is named per agent, so the check
-    // that matters is that a second agent's broker is built from its own
-    // (empty) list rather than from anything the first agent was granted.
     const { config, root } = await makeConfig();
     const { calls, exec } = recorder();
     const runner = new PolicyGatedIsolatedRunner(config, exec);
@@ -337,53 +398,40 @@ describe("an approved host reaches the network, scoped to one run", () => {
       c.includes("sentinel-test-" + other.id + "-broker"),
     );
     expect(otherBroker, "the second agent never got a broker").toBeDefined();
-    expect(brokerEnv(otherBroker!)).not.toHaveProperty("EGRESS_APPROVED_URLS");
+    expect(allowedHosts(otherBroker!)).toEqual([ARK_HOST]);
   }, 30_000);
 
   it("refuses an approved host that resolves into a private range", async () => {
     // Approval is not a way past the rebinding check. The host is on the
     // allowlist and still does not connect, because the guard runs on the
     // RESOLVED address and runs for every allowlisted name, not only Ark's.
-    const allowlist = brokerAllowlist(ARK_BASE_URL, "https://" + APPROVED_HOST);
     const denials: string[] = [];
     const port = await listen(
       createEgressBroker({
-        allow: allowlist,
+        allow: parseEgressEndpoints(ARK_BASE_URL + ",https://" + APPROVED_HOST),
         resolve: async () => ["169.254.169.254"],
         onDenied: (reason) => denials.push(reason),
       }),
     );
 
-    const response = await connect(port, "CONNECT " + APPROVED_HOST + ":443 HTTP/1.1\r\n\r\n");
-    expect(response).toContain("403 Forbidden");
+    expect(await connect(port, "CONNECT " + APPROVED_HOST + ":443 HTTP/1.1\r\n\r\n")).toContain(
+      "403 Forbidden",
+    );
     expect(denials).toContain("resolves to a private address");
   });
 
   it("refuses an approved host whose answers are only partly private", async () => {
     // One public answer alongside a private one is a rebinding attempt, not a
     // dual-stack convenience. The grant does not soften that.
-    const allowlist = brokerAllowlist(ARK_BASE_URL, "https://" + APPROVED_HOST);
     const port = await listen(
       createEgressBroker({
-        allow: allowlist,
+        allow: parseEgressEndpoints(ARK_BASE_URL + ",https://" + APPROVED_HOST),
         resolve: async () => ["93.184.216.34", "127.0.0.1"],
       }),
     );
-    expect(
-      await connect(port, "CONNECT " + APPROVED_HOST + ":443 HTTP/1.1\r\n\r\n"),
-    ).toContain("403 Forbidden");
-  });
-
-  it("refuses to build a topology at all for a grant it cannot express", async () => {
-    // Fail closed on nonsense rather than dropping the entry: a grant that
-    // cannot be turned into an endpoint must not become a broker that silently
-    // lacks it, because the operator has already been told it was honoured.
-    const { config } = await makeConfig();
-    const { calls, exec } = recorder();
-    await expect(
-      new EgressIsolation(config, exec).setup("a", ["not a host"]),
-    ).rejects.toThrow();
-    expect(calls, "nothing should have been created").toHaveLength(0);
+    expect(await connect(port, "CONNECT " + APPROVED_HOST + ":443 HTTP/1.1\r\n\r\n")).toContain(
+      "403 Forbidden",
+    );
   });
 });
 
@@ -397,8 +445,8 @@ describe("ContainerCodexRunner hands the run's grant to the network", () => {
    */
   async function runAndCapture(extraAllowedHosts?: string[]) {
     const { config } = await makeConfig({
-      // A path no engine lives at: setup and readiness run through the seam,
-      // and the Agent's spawn is what fails.
+      // A path no engine lives at: setup, readiness and inspect run through the
+      // seam, and the Agent's spawn is what fails.
       CONTAINER_ENGINE: path.join(tmpdir(), "sentinel-no-such-engine"),
       CONTAINER_EGRESS_READY_TIMEOUT_MS: "2000",
     });
@@ -421,19 +469,44 @@ describe("ContainerCodexRunner hands the run's grant to the network", () => {
 
   it("puts the run's extraAllowedHosts into the broker it starts", async () => {
     const calls = await runAndCapture([APPROVED_HOST]);
-    const broker = brokerRuns(calls)[0]!;
-    expect(brokerEnv(broker).EGRESS_APPROVED_URLS).toBe("https://" + APPROVED_HOST);
+    expect(allowedHosts(brokerRuns(calls)[0]!)).toEqual([ARK_HOST, APPROVED_HOST]);
   }, 30_000);
 
-  it("starts an ungranted run's broker with no approval variable", async () => {
+  it("starts an ungranted run's broker with the platform endpoint alone", async () => {
     const calls = await runAndCapture();
-    expect(brokerEnv(brokerRuns(calls)[0]!)).not.toHaveProperty("EGRESS_APPROVED_URLS");
+    expect(allowedHosts(brokerRuns(calls)[0]!)).toEqual([ARK_HOST]);
+  }, 30_000);
+
+  it("points the Agent's resolver at the broker it just inspected", async () => {
+    // An --internal network has no outbound DNS, so without --dns at the
+    // broker's address the Agent cannot resolve an allowlisted host at all and
+    // the grant is useless even though the CONNECT allowlist carries it.
+    //
+    // Two hops, checked separately because only the first goes through the
+    // engine seam: setup() must READ the address, and the Agent's argv must
+    // CARRY it. The Agent container is spawned directly rather than through
+    // the seam, so its argv is asserted on the builder that produces it.
+    const calls = await runAndCapture([APPROVED_HOST]);
+    const inspect = calls.find((c) => c[0] === "inspect");
+    expect(inspect, "the broker's address was never read").toBeDefined();
+    expect(inspect!.at(-1)).toBe("sentinel-test-a-broker");
+
+    const { config } = await makeConfig();
+    const { exec } = recorder();
+    const handle = await new EgressIsolation(config, exec).setup("a", [APPROVED_HOST]);
+    expect(handle.brokerIp).toBe(BROKER_IP);
+
+    const argv = buildContainerRunArgs(
+      { agentId: "a", workspacePath: "/w", prompt: "x", threadId: null },
+      config,
+      handle.brokerIp,
+    );
+    expect(argv[argv.indexOf("--dns") + 1]).toBe(BROKER_IP);
   }, 30_000);
 
   it("tears the granted topology down even though the run threw", async () => {
     const calls = await runAndCapture([APPROVED_HOST]);
-    const started = calls.indexOf(brokerRuns(calls)[0]!);
-    const after = verbs(calls.slice(started));
+    const after = verbs(calls.slice(calls.indexOf(brokerRuns(calls)[0]!)));
     expect(after).toContain("stop sentinel-test-a-broker");
     expect(after).toContain("network rm");
   }, 30_000);

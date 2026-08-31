@@ -24,7 +24,10 @@ import { createConnection } from "node:net";
 import { promisify } from "node:util";
 // Imported, not restated: the check must exercise the argv the runner actually
 // builds, or it is testing a copy of the production code rather than the code.
-import { buildBrokerProbeArgs } from "../apps/server/src/network-isolation.js";
+import {
+  buildBrokerProbeArgs,
+  buildBrokerRunArgs,
+} from "../apps/server/src/network-isolation.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,6 +53,13 @@ const BROKER = `verify-egress-broker-${suffix}`.padEnd(63, "x");
 // a grant is an environment variable on a broker container created for one run
 // and destroyed with it, never a mutation of a broker already running.
 const GRANT_BROKER = `verify-egress-grant-${suffix}`.padEnd(63, "x");
+// Matches the product defaults; overridable for hosts whose resolver containers
+// cannot reach (the same reason CONTAINER_DNS exists).
+const BROKER_USER = process.env.CONTAINER_USER || "1000:1000";
+const BROKER_DNS = (process.env.CONTAINER_DNS || "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter(Boolean);
 
 let failures = 0;
 const results = [];
@@ -80,6 +90,28 @@ async function curlFrom(url, { viaProxy, broker = BROKER }) {
     "-sS", "--max-time", "15", "-o", "/dev/null", "-w", "%{http_code}", url,
   ]);
   return stdout.trim().split("\n").pop() ?? "000";
+}
+
+/**
+ * The broker argv the RUNNER builds, not a copy of it.
+ *
+ * The hand-rolled version here drifted the moment the broker gained a second
+ * job: it answers DNS for the Agent network on port 53, which needs
+ * `--cap-add NET_BIND_SERVICE`, and without that capability the sidecar exits 1
+ * at startup and every check below fails for a reason that has nothing to do
+ * with containment. Importing the builder is what stops this check from
+ * verifying a broker the product never starts.
+ */
+function brokerArgs(name, allowUrls) {
+  return buildBrokerRunArgs({
+    broker: name,
+    network: NET,
+    image: BROKER_IMAGE,
+    allowUrls,
+    port: 8080,
+    user: BROKER_USER,
+    dns: BROKER_DNS,
+  });
 }
 
 async function cleanup() {
@@ -118,11 +150,9 @@ try {
   const created = await engine(["network", "create", "--internal", NET]);
   record(created.code === 0, "Isolated network created", created.code === 0 ? NET : created.stderr.trim());
 
-  const started = await engine([
-    "run", "--detach", "--rm", "--name", BROKER, "--network", NET,
-    "--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
-    "-e", `EGRESS_ALLOW_URL=${ALLOW_URL}`, BROKER_IMAGE,
-  ]);
+  const started = await engine(
+    brokerArgs(BROKER, [ALLOW_URL]),
+  );
   record(started.code === 0, "Broker sidecar started", started.code === 0 ? BROKER : started.stderr.trim());
 
   const connected = await engine(["network", "connect", "bridge", BROKER]);
@@ -190,14 +220,11 @@ try {
   // A human approval adds ONE host to ONE run's broker. Everything above proves
   // the standing allowlist; this proves the granted one, and proves the grant is
   // a property of a container rather than of a running process: it arrives as
-  // EGRESS_APPROVED_URLS on a broker started for the granted run and dies with
-  // that container.
-  const grantStarted = await engine([
-    "run", "--detach", "--rm", "--name", GRANT_BROKER, "--network", NET,
-    "--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--read-only",
-    "-e", `EGRESS_ALLOW_URL=${ALLOW_URL}`,
-    "-e", `EGRESS_APPROVED_URLS=https://${DENY_HOST}`, BROKER_IMAGE,
-  ]);
+  // one more entry in that run's EGRESS_ALLOW_URL, on a broker created for the
+  // granted run and destroyed with it.
+  const grantStarted = await engine(
+    brokerArgs(GRANT_BROKER, [ALLOW_URL, `https://${DENY_HOST}`]),
+  );
   record(
     grantStarted.code === 0,
     "Granted-run broker started",

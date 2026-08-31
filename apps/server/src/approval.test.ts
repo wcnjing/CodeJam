@@ -143,6 +143,65 @@ describe("human approval gate", () => {
     await expect.poll(() => service.getRun(second.run.id).status).toBe("held");
   });
 
+  it("widens the standing allowlist when the approval explicitly asks for it", async () => {
+    const runner = new EgressGatedRunner();
+    const service = await makeService(runner);
+    const agent = await service.createAgent({ name: "Widened" });
+
+    const { run } = await service.sendMessage(agent.id, "fetch it");
+    await expect.poll(() => service.getRun(run.id).status).toBe("held");
+    const approval = service.listApprovals(agent.id)[0]!;
+
+    // Approve with the "add to allowlist" flag: the flagged host joins the
+    // standing override allowlist and the continuation still runs.
+    const { continuationRun } = await service.resolveApproval(
+      approval.id,
+      "approve",
+      ALICE,
+      "npm registry is a trusted dependency source",
+      true,
+    );
+    await expect.poll(() => service.getRun(continuationRun!.id).status).toBe("completed");
+
+    // The widening is a recorded, audit-visible fact of the decision...
+    expect(service.getApproval(approval.id).allowlistWidened).toEqual(["registry.npmjs.org"]);
+    // ...and it really is standing, not run-scoped.
+    expect(service.getAllowlist().overrides).toContain("registry.npmjs.org");
+
+    // A fresh task to the same host now runs WITHOUT being held: the override
+    // reaches the runner through the same field the grant did.
+    const callsBefore = runner.calls.length;
+    const second = await service.sendMessage(agent.id, "fetch it again");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+    expect(runner.calls[callsBefore]!.extraAllowedHosts).toContain("registry.npmjs.org");
+    // No second approval was ever requested.
+    expect(service.listApprovals(agent.id)).toHaveLength(1);
+  });
+
+  it("lets the operator edit the standing allowlist directly", async () => {
+    const service = await makeService(new EgressGatedRunner());
+    expect(service.getAllowlist()).toEqual({ config: [], overrides: [] });
+
+    // Add: normalised to a bare lowercase hostname, deduped.
+    await service.addAllowlistHost("  Example.com  ");
+    await service.addAllowlistHost("example.com");
+    expect(service.getAllowlist().overrides).toEqual(["example.com"]);
+
+    // Remove.
+    await service.removeAllowlistHost("EXAMPLE.COM");
+    expect(service.getAllowlist().overrides).toEqual([]);
+
+    // A scheme/port/path is refused, not silently mangled into a host.
+    await expect(service.addAllowlistHost("https://example.com/path")).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    await expect(service.addAllowlistHost("example.com:443")).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    await expect(service.addAllowlistHost("")).rejects.toMatchObject({ statusCode: 400 });
+    expect(service.getAllowlist().overrides).toEqual([]);
+  });
+
   it("keeps a denied request blocked and starts no continuation", async () => {
     const runner = new EgressGatedRunner();
     const service = await makeService(runner);

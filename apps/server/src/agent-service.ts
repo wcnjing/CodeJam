@@ -189,6 +189,39 @@ export class AgentService {
   }
 
   /**
+   * The standing allowlist, split by origin so the UI can show what is editable.
+   *
+   * `config` is the immutable POLICY_ALLOWED_HOSTS baseline (plus Ark's own host
+   * and loopback, which the runners always add); `overrides` is the
+   * store-backed list the operator edits here or widens by approving a held
+   * command. Only `overrides` is removable through this API.
+   */
+  getAllowlist(): { config: string[]; overrides: string[] } {
+    return {
+      config: [...this.config.policyAllowedHosts],
+      overrides: [...(this.store.snapshot().allowlist ?? [])],
+    };
+  }
+
+  /** Adds a host to the standing override allowlist. Returns the new list. */
+  async addAllowlistHost(rawHost: string): Promise<string[]> {
+    const host = normalizeAllowlistHost(rawHost);
+    return this.store.mutate((database) => {
+      if (!database.allowlist.includes(host)) database.allowlist.push(host);
+      return [...database.allowlist];
+    });
+  }
+
+  /** Removes a host from the standing override allowlist. Returns the new list. */
+  async removeAllowlistHost(rawHost: string): Promise<string[]> {
+    const host = normalizeAllowlistHost(rawHost);
+    return this.store.mutate((database) => {
+      database.allowlist = database.allowlist.filter((entry) => entry !== host);
+      return [...database.allowlist];
+    });
+  }
+
+  /**
    * Resolves a held run. Policy decisions require an authenticated principal
    * and reason; command-allowance decisions use the separate continuation route
    * and record the operator's Continue/Stop choice automatically.
@@ -196,12 +229,21 @@ export class AgentService {
    * A policy approval grants exactly the named hosts to one continuation run.
    * A budget continuation grants no capability and simply starts another
    * bounded run in the same Codex thread.
+   *
+   * When `addToAllowlist` is set, a policy approval ALSO adds its flagged hosts
+   * to the store-backed standing allowlist (the same list the allowlist API
+   * edits) in the same atomic mutation, so a host the operator explicitly
+   * trusts is not re-flagged on every future task. This is the one deliberate
+   * exception to "an approval is never a standing config change" — it exists
+   * because the operator asked for it on that decision, and it is recorded on
+   * the approval (`allowlistWidened`) so the audit trail says so.
    */
   async resolveApproval(
     id: string,
     decision: "approve" | "deny",
     principal: Principal | null,
     reason: string,
+    addToAllowlist = false,
   ): Promise<{ approval: ApprovalRequest; continuationRun: AgentRun | null }> {
     const pendingRequest = this.getApproval(id);
     const budgetContinuation = pendingRequest.rule === "step-budget-exceeded";
@@ -225,6 +267,7 @@ export class AgentService {
         approval.resolvedByAttribution = principal ? "credential" : null;
         approval.decisionReason = trimmedReason;
         approval.resolvedAt = now();
+        approval.allowlistWidened = null;
         return structuredClone(approval);
       });
       return { approval: denied, continuationRun: null };
@@ -280,6 +323,19 @@ export class AgentService {
       approval.decisionReason = trimmedReason;
       approval.resolvedAt = now();
       approval.continuationRunId = run.id;
+      // "Approve and widen": the operator explicitly trusted these hosts, so
+      // they join the standing override allowlist — in the SAME mutation as the
+      // approval, so a crash cannot leave an approved run whose grant did not
+      // survive, or a widened allowlist with no recorded decision. Recorded on
+      // the approval so the audit trail says the decision was a config change.
+      // Budget continuations carry no hosts, so widening never applies to them.
+      const widen = addToAllowlist && approval.hosts.length > 0;
+      if (widen) {
+        for (const host of approval.hosts) {
+          if (!database.allowlist.includes(host)) database.allowlist.push(host);
+        }
+      }
+      approval.allowlistWidened = widen ? [...approval.hosts] : null;
       return {
         approval: structuredClone(approval),
         agentSnapshot,
@@ -490,7 +546,13 @@ export class AgentService {
         workspacePath: agentAtStart.workspacePath,
         prompt: run.prompt,
         threadId: agentAtStart.codexThreadId,
-        extraAllowedHosts,
+        // The standing override allowlist rides in here so every runner picks it
+        // up through the same field it already merges with the config baseline
+        // and any run-scoped grant from an approval.
+        extraAllowedHosts: [
+          ...(this.store.snapshot().allowlist ?? []),
+          ...extraAllowedHosts,
+        ],
       });
       const completedAt = now();
       await this.settleRun(run.id, agentAtStart.id, (database) => {
@@ -695,4 +757,23 @@ export class AgentService {
       this.cancellationRequests.delete(agentId);
     }
   }
+}
+
+/**
+ * Normalises a host the operator typed into the allowlist UI (or one an
+ * approval flagged): bare hostname, lowercased, no scheme/port/path/whitespace
+ * — the same shape `hostFromToken` produces for a policy resource, so a value
+ * added here can actually match a flagged destination.
+ */
+const ALLOWLIST_HOST_PATTERN = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
+
+function normalizeAllowlistHost(raw: string): string {
+  const host = raw.trim().toLowerCase();
+  if (host.length === 0 || host.length > 253 || !ALLOWLIST_HOST_PATTERN.test(host)) {
+    throw new HttpError(
+      400,
+      "Enter a bare hostname (e.g. registry.npmjs.org) — no scheme, port, or path.",
+    );
+  }
+  return host;
 }

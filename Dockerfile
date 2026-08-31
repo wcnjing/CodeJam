@@ -21,6 +21,11 @@ WORKDIR /app
 
 ARG DEBIAN_MIRROR=""
 ARG DEBIAN_SECURITY_MIRROR=""
+# Extra tools for the Agents that run inside this container (local-process
+# provider). Mirrors Dockerfile.runtime so CONTAINER_RUNTIME_APT_PACKAGES means
+# the same thing in both images; curl is in the default because it is the
+# network tool the egress demos and legitimate fetches rely on.
+ARG RUNTIME_APT_PACKAGES="ca-certificates git ripgrep curl"
 
 RUN if [ -n "$DEBIAN_SECURITY_MIRROR" ]; then \
       find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
@@ -31,7 +36,7 @@ RUN if [ -n "$DEBIAN_SECURITY_MIRROR" ]; then \
         -exec sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g" {} +; \
     fi \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git ripgrep \
+    && apt-get install -y --no-install-recommends $RUNTIME_APT_PACKAGES \
     && npm install --global @openai/codex@0.111.0 \
     && codex --version \
     && rm -rf /var/lib/apt/lists/*

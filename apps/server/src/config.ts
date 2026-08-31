@@ -50,6 +50,12 @@ const envSchema = z.object({
   // is never attached to this one.
   CONTAINER_EGRESS_OUTBOUND_NETWORK: z.string().min(1).default("bridge"),
   CONTAINER_EGRESS_READY_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
+  // Comma-separated nameservers passed to the Agent and broker containers via
+  // `--dns`. Empty inherits the engine's resolver (usually the host's). Useful
+  // when the host resolver is unreachable from containers (WSL NAT, VPN). On
+  // the isolated --internal network the agent's own DNS is dead by design;
+  // this knob is what keeps the broker's lookups working there.
+  CONTAINER_DNS: z.string().default(""),
   RUNTIME_INSTANCE_ID: z
     .string()
     .trim()
@@ -134,6 +140,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerEgressBrokerPort: env.CONTAINER_EGRESS_BROKER_PORT,
     containerEgressOutboundNetwork: env.CONTAINER_EGRESS_OUTBOUND_NETWORK,
     containerEgressReadyTimeoutMs: env.CONTAINER_EGRESS_READY_TIMEOUT_MS,
+    containerDns: env.CONTAINER_DNS.split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
     principals,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",

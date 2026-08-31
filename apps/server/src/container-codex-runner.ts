@@ -85,6 +85,7 @@ function brokerUrl(agentId: string, config: AppConfig): string {
 export function buildContainerRunArgs(
   request: RunnerRequest,
   config: AppConfig,
+  brokerIp?: string,
 ): string[] {
   const name = containerName(request.agentId, config.runtimeInstanceId);
   const engineName = config.containerEngine.split(/[\\/]/).at(-1)?.toLowerCase();
@@ -145,6 +146,17 @@ export function buildContainerRunArgs(
     "HOME=/tmp",
     "--env",
     "NO_COLOR=1",
+    // DNS for the Agent. With egress isolation on, the embedded resolver
+    // refuses external queries on the --internal network and no external
+    // resolver is reachable at all, so the ONLY resolver that can answer is
+    // the broker's DNS forwarder — the Agent points --dns at the broker's
+    // address on the isolated network. In bridge mode (isolation off), the
+    // optional CONTAINER_DNS resolvers apply instead.
+    ...(config.containerEgressIsolation
+      ? brokerIp
+        ? ["--dns", brokerIp]
+        : []
+      : config.containerDns.flatMap((dns) => ["--dns", dns])),
     "--mount",
     "type=bind,src=" + request.workspacePath + ",dst=/workspace",
     "--mount",
@@ -166,8 +178,8 @@ export class ContainerCodexRunner implements AgentRunner {
   /**
    * `exec` is the same injectable engine seam EgressIsolation already exposes,
    * surfaced one level up so a test can drive the real start path — setup,
-   * readiness, teardown — without a container engine. Production passes
-   * nothing and gets the real engine.
+   * readiness, broker inspect, teardown — without a container engine.
+   * Production passes nothing and gets the real engine.
    */
   constructor(
     private readonly config: AppConfig,
@@ -182,19 +194,16 @@ export class ContainerCodexRunner implements AgentRunner {
    * yet fails as what looks like a model outage — the failure mode most likely
    * to be misread as flakiness rather than as containment being broken.
    *
-   * `approvedHosts` is the run's own `extraAllowedHosts`. It has to be here and
-   * not only in the policy context below: policy and the network are two
-   * independent layers, and a grant that reaches one of them is an approval
-   * that a human sees honoured and the Agent sees refused. The topology is
-   * built fresh per run from this list, never cached, so the grant cannot
-   * outlive the run that was granted it.
+   * `extraAllowedHosts` are this run's approval grants; they join the broker's
+   * own allowlist (beside the config baseline and store overrides) so a host a
+   * human approved is actually reachable through the container's only edge.
    */
   private async startIsolation(
     agentId: string,
-    approvedHosts: readonly string[] = [],
+    extraAllowedHosts: string[] = [],
   ): Promise<IsolationHandle | null> {
     if (!this.config.containerEgressIsolation) return null;
-    const handle = await this.isolation.setup(agentId, approvedHosts);
+    const handle = await this.isolation.setup(agentId, extraAllowedHosts);
     this.isolated.set(agentId, handle);
     const ready = await this.isolation.waitUntilReady(
       handle,
@@ -275,9 +284,9 @@ export class ContainerCodexRunner implements AgentRunner {
       throw new Error("Agent already has an active Runtime container");
     }
 
-    await this.startIsolation(request.agentId, request.extraAllowedHosts ?? []);
+    const handle = await this.startIsolation(request.agentId, request.extraAllowedHosts ?? []);
     try {
-      return await this.runContained(request);
+      return await this.runContained(request, handle?.brokerIp ?? undefined);
     } catch (error) {
       // The spawn and the setup after it used to sit outside any teardown path,
       // so anything throwing there left the network and the broker behind until
@@ -288,10 +297,10 @@ export class ContainerCodexRunner implements AgentRunner {
     }
   }
 
-  private async runContained(request: RunnerRequest): Promise<RunnerResult> {
+  private async runContained(request: RunnerRequest, brokerIp?: string): Promise<RunnerResult> {
     const child = spawn(
       this.config.containerEngine,
-      buildContainerRunArgs(request, this.config),
+      buildContainerRunArgs(request, this.config, brokerIp),
       {
         cwd: request.workspacePath,
         env: this.childEnvironment(),

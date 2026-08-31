@@ -110,10 +110,34 @@ boundaries.
 here rather than restating it, so there is one place to update and no way for
 two documents to disagree about where enforcement happens.
 
-Two layers run independently, and each covers the other's blind spot. The
-command policy reads text and can be defeated by text it cannot read. The
-network containment reads nothing and cannot be defeated by an encoding,
-because a container with no route out has nowhere to send the bytes.
+Two layers enforce, and for anything **not** on the standing allowlist they are
+independent and cover each other's blind spot: the command policy reads text and
+can be defeated by text it cannot read; the network containment reads nothing and
+cannot be defeated by an encoding, because a container with no route out has
+nowhere to send the bytes.
+
+Be precise about the limit of that independence. A host on the **standing
+allowlist** is fed to *both* layers from the same list, so for that host they are
+not independent — it is policy-allowed and network-reachable together, which is
+the point of putting it there. Independence is a property of the default-deny
+case, not of every case.
+
+### Three sources of network authority
+
+They are combined for enforcement and kept apart everywhere else, because they
+have different lifetimes and a reviewer has to be able to tell which is which:
+
+| # | Source | Where it lives | Lifetime |
+| --- | --- | --- | --- |
+| 1 | **Platform endpoint** — `ARK_BASE_URL` | config | permanent; the platform cannot run without it |
+| 2 | **Standing allowlist** — `POLICY_ALLOWED_HOSTS` (immutable baseline) plus store-backed overrides the operator edits in the Allowlist panel or adds by approving with *add to the allowlist* | config + `database.allowlist` | persists until someone removes it; every edit is authenticated and audited |
+| 3 | **Run-scoped grant** — `extraAllowedHosts` on one continuation run | nothing persisted; the broker container's env | destroyed at teardown; the next run starts without it |
+
+**Broker effective allowlist = 1 ∪ 2 ∪ 3.** The union is an enforcement detail;
+storage and evidence keep the three apart. An approval records its hosts in
+`approval.hosts` and, only if the operator chose to widen, the same hosts again
+in `approval.allowlistWidened` — so *was this permanent?* is answerable from the
+audit record alone.
 
 1. **Capability extraction.** Codex reports every shell command it runs on its
    JSON event stream, as the command *starts*. `shell-parse.ts` turns the
@@ -136,26 +160,42 @@ because a container with no route out has nowhere to send the bytes.
    (`APP_PRINCIPALS`) and a written reason, both recorded. Secret-access rules
    are never reviewable: no human may approve exfiltrating a protected secret,
    and that is a code-level invariant, not a configuration default.
-5. **Scoped temporary authority.** An approval creates one *continuation run*
-   carrying `extraAllowedHosts`. That grant reaches **both** layers: the run's
-   policy context and the run's broker allowlist. It is scoped to that single
-   run — invisible to other agents, invisible to the next run of the same
-   agent, and gone when the run's topology is torn down. A fresh run asking for
-   the same host is held again and needs a new decision.
+5. **Scoped temporary authority, or a standing one — the operator chooses.**
+   A plain **Approve** creates one *continuation run* carrying
+   `extraAllowedHosts` (source 3). That grant reaches **both** layers — the
+   run's policy context and the run's broker allowlist — and is scoped to that
+   single run: invisible to other agents, invisible to the next run of the same
+   agent, gone when the run's topology is torn down. A fresh run asking for the
+   same host is held again and needs a new decision. **Approve with "add to the
+   allowlist"** instead writes the host to the standing allowlist (source 2) in
+   the same atomic mutation as the approval, so it also applies to later runs
+   nobody approved individually, and `approval.allowlistWidened` records that it
+   did.
 6. **Per-run internal network.** Under `RUNTIME_PROVIDER=container` (the
    default), each run gets a container network created with `--internal`. The
    engine installs no NAT and no gateway, so nothing attached to it has a route
    off it. This is structural default-deny: not a rule about traffic, an
    absence of anywhere for traffic to go.
-7. **Broker-mediated egress.** A dual-homed egress-broker sidecar is the single
-   point with a foot on both networks, and the Agent reaches it as `HTTPS_PROXY`
-   by container name. It is a CONNECT proxy with a narrow allowlist — the model
-   endpoint, plus whatever step 5 granted for this run — and it fails closed on
-   every other path: an unparseable request, a name not on the list, a DNS
-   failure, or a resolved address in a private, loopback, link-local or CGNAT
-   range. The private-address check runs on the **resolved** address, for every
-   allowlisted name including approved ones, so an approval is not a way past
+7. **Broker-mediated egress, and broker-mediated DNS.** A dual-homed
+   egress-broker sidecar is the single point with a foot on both networks, and
+   the Agent reaches it as `HTTPS_PROXY` by container name. It is a CONNECT
+   proxy over the union of the three sources above, and it fails closed on every
+   other path: an unparseable request, a name not on the list, a DNS failure, or
+   a resolved address in a private, loopback, link-local or CGNAT range. The
+   private-address check runs on the **resolved** address, for every allowlisted
+   name — standing and granted alike — so neither kind of approval is a way past
    the DNS-rebinding defence.
+
+   The broker is also the network's **resolver**. An `--internal` network's
+   embedded resolver refuses to forward external queries, so without this the
+   Agent could not resolve an allowlisted host at all and every grant would be
+   useless while looking like a model outage. The broker runs a dependency-free
+   UDP+TCP DNS forwarder, gets `--cap-add NET_BIND_SERVICE` for port 53 and
+   nothing else, and the Agent's `--dns` points at the broker's address on the
+   isolated network — read back from the engine at setup, and a hard failure if
+   it cannot be read. Resolution opens no hole: an answer alone carries no data,
+   and every connection is still gated by the CONNECT allowlist or has no route
+   at all.
 8. **Persisted evidence.** Every decision is written to an append-only audit log
    in the same atomic write as the run's outcome, so evidence and outcome can
    never disagree. Commands are redacted of URL credentials, high-entropy tokens
@@ -166,37 +206,42 @@ because a container with no route out has nowhere to send the bytes.
    exist there, and the command policy is the only control. It is a
    development-only path and should not be given an untrusted Agent.
 
-### Where the two layers can still disagree
+### Where the two layers agree, and where they still differ
 
-They are independent by design, so their allowlists are not the same list. Two
-places where the policy layer permits something the network layer does not, both
-deliberate and both erring toward *less* access:
+The standing allowlist reaching only the command policy used to be a real
+divergence: a host an operator put in `POLICY_ALLOWED_HOSTS` was policy-allowed
+and network-refused, so the command passed the guard and the broker answered
+`403`. **That is fixed.** `buildEgressAllowUrls` folds the config baseline and
+the store-backed overrides into the broker's allowlist alongside the run's
+grant, so source 2 now reaches both layers and the two agree by construction.
 
-- **`POLICY_ALLOWED_HOSTS`.** An operator can add standing hosts to the command
-  policy's allowlist through this variable. It does **not** reach the broker,
-  which is built from `ARK_BASE_URL` plus per-run grants only. Under
-  `RUNTIME_PROVIDER=container` a command to such a host therefore passes policy
-  and is refused by the broker with a `403`. That is fail-closed, and it is a
-  configuration surprise: the honest way to grant a standing host to a container
-  run today is to review it through the approval path, per run. Widening the
-  broker from this variable would make a text-file edit into a network change,
-  which is the coupling the network layer exists to avoid.
+One deliberate difference remains, and it is not a gap:
+
 - **Loopback.** `policyContextFrom` allows loopback hosts, so an Agent talking
   to a dev server it started itself is not a policy denial. The broker refuses
-  every private, loopback, link-local and CGNAT address unconditionally. Nothing
-  is lost — a container's own loopback never traverses the broker — but the two
-  layers do not agree on paper, and a reader comparing them should know why.
+  every private, loopback, link-local and CGNAT address unconditionally, and it
+  refuses them on the *resolved* address, which is what stops a hostile DNS
+  record for an allowlisted name from borrowing the broker's network position.
+  Nothing is lost — a container's own loopback never traverses the broker — but
+  the two lists are not identical on paper and a reader comparing them should
+  know why.
 
 The reverse — the network permitting what policy denies — cannot happen for an
-approved host, because the grant is applied to both from the same list on the
-same run.
+allowlisted host, because both layers are fed from the same effective list on
+the same run.
 
 ### In one paragraph
 
 The container runtime uses structural default-deny networking. Each run gets an
 internal network with no outbound route, and all external traffic passes through
-a per-run egress broker with a narrow allowlist. A human approval can add one
-host to that allowlist for the duration of a single continuation run.
+a per-run egress broker that is also the network's only resolver. The broker
+permits exactly three sources: the platform's model endpoint, the standing
+operator allowlist, and any host approved for this run. A human approval adds a
+host for the duration of a single continuation run, or — if the operator
+explicitly chooses to widen — to the standing allowlist until it is removed.
+
+The local-process runtime does NOT provide equivalent network containment and is
+a development-only path.
 
 The local-process runtime does NOT provide equivalent network containment and is
 a development-only path.
@@ -269,7 +314,7 @@ to a control here and to an entry in
 | Prompt injection / tool misuse | Streamed command policy at the Runtime boundary; the injection demo shows the attack arriving inside data the Agent reads |
 | Credential exposure | `.secrets/` is a protected resource; evidence is redacted before storage; 0/40 secret-channel attacks allowed |
 | Sandbox escape | Container Runtime is destroyed on the first denied command; teardown measured at p50 1–3 ms, tail not well characterised |
-| Cross-user access / data exfiltration | Run-scoped approval grants, never standing allowlist changes; a live collector proves zero bytes left |
+| Cross-user access / data exfiltration | Approval grants are run-scoped by default; an operator may explicitly approve *and widen* the standing allowlist (recorded on the decision); a live collector proves zero bytes left |
 | Runaway execution | Step budget enforced by the platform, independent of policy mode |
 | Sensitive trace capture | Redaction before the audit store; unbounded-growth risk tracked as TM-OPS-001 |
 
@@ -303,18 +348,21 @@ and destroys the Runtime container on the first denial.
 > denies commands with a *recognisable* disallowed destination — an explicit
 > URL or host, a known egress tool with a resolvable target, an interpreter
 > making a network call, a reverse shell, or a read of protected material. It is
-> **not** a network allowlist: a command whose destination is *implicit* (a bare
-> `npm install` hitting the default registry, a `git push` to a preconfigured
-> remote) is **not** blocked by *this* layer. The claims in this section are
-> scoped to what a command-text guard can actually enforce.
->
-> Default-deny egress is enforced separately, one layer down. Under
-> `RUNTIME_PROVIDER=container` the run has no outbound route at all and reaches
-> only the broker's narrow allowlist, so the implicit destinations above are
-> refused by the network even though this layer did not recognise them — see
-> [Current Security Model](#current-security-model). Under
-> `RUNTIME_PROVIDER=local-process` there is no such layer and this guard is the
-> only control.
+> **not** a network allowlist *by itself*: a command whose destination is
+> *implicit* (a bare `npm install` hitting the default registry, a `git push` to
+> a preconfigured remote) is **not** blocked by this layer. In the hardened
+> container runtime the network side is enforced separately — the per-run egress
+> broker permits exactly the effective allowlist (model API + `POLICY_ALLOWED_HOSTS`
+> + the hosts added in the Allowlist panel or by an "approve and widen"
+> decision), so an allowlisted host is reachable and everything else has no
+> route out. The broker also answers the Agent network's DNS (the embedded
+> resolver refuses external queries on `--internal` networks), so allowlisted
+> hosts resolve by name from inside the Agent; the runtime image ships `curl`
+> by default (`CONTAINER_RUNTIME_APT_PACKAGES`). With the `local-process`
+> runtime, where there is no broker, the command-text guard is the only control
+> and the claims below are scoped to what it can actually enforce. The whole
+> picture, including which grants are permanent and which expire with the run,
+> is in [Current Security Model](#current-security-model).
 
 The engine is layered so that a rule is a statement about capabilities, not a
 pattern over shell syntax:
@@ -466,35 +514,52 @@ the default config this is **`held`**, not blocked: `registry.npmjs.org` is a
 plausibly-legitimate destination, so the Run pauses and raises an approval
 request showing the exact command and rule.
    - **Deny** (with a reason) → the held Run stays denied; nothing continues.
-   - **Approve** (with a reason) → a run-scoped host grant lets the command past
-     the *policy* and resumes the task as a continuation Run. A *second* task to
-     the same host is held again — the grant never widened the standing allowlist.
+   - **Approve** (with a reason) → a run-scoped host grant resumes the task
+     as a continuation Run that reaches the registry. A *second* task to the same
+     host is held again — the grant alone never widens the standing allowlist.
+   - **Approve with “add to the allowlist”** (the checkbox on the approval
+     card, pre-checked for egress holds) → the same continuation runs, and the
+     flagged host also joins the *standing* allowlist, so a second task to it
+     completes without another approval. The widening is recorded on the
+     decision (`allowlistWidened`) and editable any time from the **Allowlist**
+     panel in the sidebar.
 
    This is the deterministic spine of the demo: the policy **always** holds this
    command, and approve/deny is a real, recorded human decision. (In a live run
    the model reached for `node -e "fetch(...)"` rather than `curl`; the
    interpreter-egress rule caught it anyway.)
 
-   > **An approval now reaches both layers, and only for that run.** With the
-   > default `CONTAINER_EGRESS_ISOLATION=true`, approving `registry.npmjs.org`
-   > adds it to the continuation run's *policy* context **and** to that run's
-   > broker allowlist (`EGRESS_APPROVED_URLS` on the broker container the run
-   > creates). The resumed Run reaches the host; a run that was not granted it,
-   > for this or any other agent, still cannot. The grant dies with the broker
-   > container at teardown, so it cannot outlive the decision that made it.
+   > **An approval is a policy decision — and, when you choose it, a network
+   > one.** With the default `CONTAINER_EGRESS_ISOLATION=true`, the per-run
+   > broker permits exactly the effective allowlist (model API +
+   > `POLICY_ALLOWED_HOSTS` + the hosts added in the Allowlist panel or by an
+   > "approve and widen" decision + this run's grant), and it answers the Agent
+   > network's DNS — the embedded resolver refuses external queries on
+   > `--internal` networks — so an allowlisted host resolves *and* connects from
+   > inside the Agent.
    >
-   > What an approval still cannot do is widen anything beyond the named host on
-   > its default port, and it cannot buy a route to a private address: the
-   > broker re-checks the *resolved* address for every allowlisted name,
-   > approved ones included, so an approval is not a way past the DNS-rebinding
-   > defence. See [Current Security Model](#current-security-model).
+   > The two decisions differ in how long they last, and the audit trail keeps
+   > them apart:
    >
-   > Earlier transcripts in [docs/evidence/](docs/evidence/) show the previous
-   > behaviour — `EAI_AGAIN` on a direct fetch and `403` through the proxy on an
-   > *approved* host — because the grant reached policy and stopped there. That
-   > was the bug this closes, and the transcripts are kept rather than deleted
-   > because an approval honoured at one layer and denied at another is the
-   > exact failure worth being able to recognise again.
+   > - **Approve** releases the policy hold with a **run-scoped grant**. The
+   >   host reaches this continuation run's broker and dies with it at teardown.
+   >   A fresh run to the same host is held again.
+   > - **Approve with "add to the allowlist"** additionally writes the host to
+   >   the **standing allowlist**, which is persistent, operator-owned, and
+   >   reaches every later run until someone removes it.
+   >
+   > What neither can do is widen beyond the named host, or buy a route to a
+   > private address: the broker re-checks the *resolved* address for every
+   > allowlisted name, standing and granted alike, so an approval is not a way
+   > past the DNS-rebinding defence. See
+   > [Current Security Model](#current-security-model).
+   >
+   > Earlier transcripts in [docs/evidence/](docs/evidence/) show the behaviour
+   > before either path existed — `EAI_AGAIN` on a direct fetch and `403`
+   > through the proxy on an *approved* host, because the grant reached policy
+   > and stopped there. They are kept rather than deleted: an approval honoured
+   > at one layer and denied at another is the exact failure worth being able to
+   > recognise again.
 
 **3. Hard block (secret rule, never reviewable).** A command that reads a
 protected secret *and* egresses is `secret-exfiltration` — hard-blocked, never
@@ -1219,9 +1284,11 @@ Recorded honestly, because each one is a real gap:
   Under `RUNTIME_PROVIDER=container` they are refused anyway, by a network with
   no route out and a broker allowlist that does not contain them — structural
   default-deny, described in full under
-  [Current Security Model](#current-security-model) and verified against a real
-  engine by `npm run verify:egress`. Under `RUNTIME_PROVIDER=local-process`
-  there is no such layer, and an implicit destination is simply reachable.
+  [Current Security Model](#current-security-model), sketched in
+  [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md), and verified against a
+  real engine by `npm run verify:egress`. Under
+  `RUNTIME_PROVIDER=local-process` there is no such layer, and an implicit
+  destination is simply reachable.
 - **Single process.** Policy decisions now live in an append-only JSONL log
   beside the JSON database rather than inside it, pruned past
   `AUDIT_RETENTION_DAYS` on append, on read, and by compaction at startup
@@ -1521,7 +1588,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `CODEX_SANDBOX_MODE` | `workspace-write` | Codex inner sandbox mode. |
 | `CODEX_TIMEOUT_MS` | `600000` | Maximum duration of one turn. |
 | `POLICY_ENFORCEMENT` | `enforce` | `monitor` records policy decisions without terminating (shadow mode). |
-| `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. |
+| `POLICY_ALLOWED_HOSTS` | Ark host only | Extra comma-separated hosts the agent may reach; everything else is denied. This config baseline is read-only in the UI — add/remove further hosts from the **Allowlist** panel (or by approving a held command with “add to the allowlist”); those store-backed overrides survive restarts. |
 | `POLICY_REVIEW_RULES` | `network-egress-denied,network-egress-denied-implicit` | Rules whose denials hold for human approval instead of hard-blocking. Secret rules are never reviewable. |
 | `POLICY_MAX_COMMANDS` | `50` | Commands per allowance. At the boundary the task is held for Continue/Stop; Continue grants a fresh allowance. |
 | `LOCAL_POC_DATA_ROOT` | Platform-specific | Local metadata, workspace, and session directory. |

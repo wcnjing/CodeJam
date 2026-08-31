@@ -1,4 +1,6 @@
 import { createServer, createConnection, type Server, type Socket } from "node:net";
+import { createSocket, type Socket as DgramSocket } from "node:dgram";
+import { getServers } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -9,19 +11,18 @@ import { isIP } from "node:net";
  * reach; anything it fails to recognise — a base64-encoded command, a binary it
  * did not model — reaches the internet anyway. This broker removes the network
  * instead of describing it: the Agent container is attached to a network with
- * no route out, and this process is its only edge. A destination that is not on
- * the configured allowlist has nowhere to go, encoded or not.
- *
- * The allowlist is a LIST, not a single endpoint: the model endpoint the
- * platform always needs, plus whatever a human approval added for this one run.
- * Every entry is treated identically — an approved host is not a trusted host,
- * it is merely a named one, so the post-DNS re-check below runs for it exactly
- * as it does for the model endpoint. Approval buys a name on the list and
- * nothing else.
+ * no route out, and this process is its only edge. A destination that is not
+ * the one configured endpoint has nowhere to go, encoded or not.
  *
  * Fails closed everywhere: an unparseable request, a non-allowlisted target, a
  * DNS failure, or a resolved address in a private range all end the socket
  * without connecting anything.
+ *
+ * The broker also answers DNS for the Agent network (see createDnsForwarder):
+ * an `--internal` network has no outbound DNS, so without this the Agent could
+ * not resolve anything, allowlisted hosts included. Resolution through the
+ * broker opens no hole — answers alone cannot carry data; every connection is
+ * still gated by the CONNECT allowlist or has no route out.
  */
 
 export interface EgressEndpoint {
@@ -168,50 +169,30 @@ export function parseEgressEndpoint(baseUrl: string): EgressEndpoint {
 }
 
 /**
- * Builds the broker's allowlist from the two environment variables that feed
- * it, and refuses anything it cannot express.
- *
- * The two sources stay separate all the way down — `EGRESS_ALLOW_URL` is the
- * model endpoint the platform always needs, `EGRESS_APPROVED_URLS` is what a
- * human granted for this one continuation run — so an operator inspecting a
- * live broker can tell a standing allowance from a granted one.
- *
- * Every failure is a throw, never a skip. A grant that is silently dropped
- * gives the worst possible pairing: an approval recorded as honoured and an
- * Agent that still cannot reach the host, with an absence as the only evidence.
- * The caller turns the throw into a non-zero exit, which fails the run closed.
+ * Parses a comma-separated EGRESS_ALLOW_URL into the endpoints the Agent may
+ * reach. The broker's allowlist used to be a single endpoint (the model API);
+ * it is now the model API plus the effective command-policy allowlist, so a
+ * host an operator has allowlisted is actually reachable, not just
+ * policy-allowed. Duplicates collapse; empty input yields an empty list, which
+ * the CLI refuses.
  */
-export function brokerAllowlist(allowUrl: string, approvedUrls = ""): EgressEndpoint[] {
-  const allow = allowUrl.trim();
-  if (!allow) {
-    throw new Error("EGRESS_ALLOW_URL is required: the broker refuses to run without an allowlist.");
-  }
-  let base: EgressEndpoint;
-  try {
-    base = parseEgressEndpoint(allow);
-  } catch (error) {
-    throw new Error("EGRESS_ALLOW_URL is not usable: " + (error as Error).message);
-  }
-
-  const endpoints = [base];
-  for (const entry of approvedUrls.split(",").map((item) => item.trim()).filter(Boolean)) {
-    try {
-      endpoints.push(parseEgressEndpoint(entry));
-    } catch (error) {
-      throw new Error(
-        "EGRESS_APPROVED_URLS entry is not usable: " + entry + ": " + (error as Error).message,
-      );
-    }
+export function parseEgressEndpoints(raw: string): EgressEndpoint[] {
+  const seen = new Set<string>();
+  const endpoints: EgressEndpoint[] = [];
+  for (const part of raw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const endpoint = parseEgressEndpoint(trimmed);
+    const key = endpoint.host + ":" + endpoint.port;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    endpoints.push(endpoint);
   }
   return endpoints;
 }
 
 export interface BrokerOptions {
-  /**
-   * Every endpoint this broker may reach. Empty is legal and means "nothing":
-   * a caller that computed an empty allowlist gets a broker that refuses
-   * everything, which is the failing-closed reading of that mistake.
-   */
+  /** Every destination the Agent may reach; anything else is refused. */
   allow: EgressEndpoint[];
   /** Injectable for tests; defaults to real DNS. */
   resolve?: (hostname: string) => Promise<string[]>;
@@ -348,10 +329,8 @@ export function createEgressBroker(options: BrokerOptions): Server {
 
       // Allowlist first: an unknown name is never even resolved, so the
       // broker cannot be used as a DNS oracle for arbitrary hostnames.
-      // Host AND port both have to match one entry; an approved name does not
-      // open every port on that name.
       const allowed = options.allow.some(
-        (entry) => entry.host === target.host && entry.port === target.port,
+        (endpoint) => endpoint.host === target.host && endpoint.port === target.port,
       );
       if (!allowed) {
         return deny(client, "403 Forbidden", "destination not allowlisted", label);
@@ -399,4 +378,145 @@ export function createEgressBroker(options: BrokerOptions): Server {
       client.once("close", tearDown);
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// DNS forwarding
+// ---------------------------------------------------------------------------
+
+export interface DnsForwarderOptions {
+  /** Port to listen on. 53 in production; injectable for tests. */
+  port?: number;
+  /**
+   * Upstream nameservers to relay queries to, as `host` or `host:port`.
+   * Defaults to the process's configured resolvers (the broker container's
+   * /etc/resolv.conf, which under the engine points at its embedded DNS and
+   * therefore resolves external names).
+   */
+  upstreams?: readonly string[];
+  /**
+   * How long to wait for an upstream answer before trying the next resolver.
+   * Injectable so tests run fast.
+   */
+  upstreamTimeoutMs?: number;
+}
+
+/**
+ * A tiny DNS forwarder, UDP and TCP, dependency-free.
+ *
+ * The Agent's `--internal` network has no outbound DNS at all (the engine's
+ * embedded resolver refuses to forward external queries there), so an
+ * allowlisted host could not even be resolved from the Agent container. This
+ * gives the broker — already the Agent's only edge — the second half of the
+ * job: it answers the Agent's queries by relaying them verbatim to the
+ * broker's own resolvers. Resolution is not a data channel: answers alone
+ * carry nothing out, and every connection is still gated by the CONNECT
+ * allowlist or has no route.
+ *
+ * Only node builtins, so the sidecar image keeps its no-dependency property.
+ */
+export function createDnsForwarder(options: DnsForwarderOptions = {}) {
+  const port = options.port ?? 53;
+  const upstreams =
+    options.upstreams && options.upstreams.length > 0
+      ? options.upstreams.map(normalizeUpstream)
+      : getServers().map((server) => ({ host: server, port: 53 }));
+  if (upstreams.length === 0) {
+    throw new Error("DNS forwarder has no upstream resolvers to relay to");
+  }
+  const timeoutMs = options.upstreamTimeoutMs ?? 2_000;
+
+  const udp = createSocket("udp4");
+
+  udp.on("message", (query, rinfo) => {
+    // Remember the client's transaction id: an upstream resolver may rewrite
+    // it, and the client will drop a response whose id does not match its
+    // query.
+    const originalId = query.readUInt16BE(0);
+    relayUdp(query, (answer) => {
+      const restored = Buffer.from(answer);
+      restored.writeUInt16BE(originalId, 0);
+      udp.send(restored, rinfo.port, rinfo.address);
+    });
+  });
+
+  function relayUdp(query: Buffer, onAnswer: (answer: Buffer) => void): void {
+    let attempt = 0;
+    let done = false;
+    let timer: NodeJS.Timeout | null = null;
+    let socket: DgramSocket | null = null;
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (socket) {
+        const closing = socket;
+        socket = null;
+        closing.close();
+      }
+    };
+
+    const next = () => {
+      if (done) return;
+      cleanup();
+      const upstream = upstreams[attempt];
+      if (!upstream) {
+        // Every resolver failed; drop the query (the client retries).
+        done = true;
+        return;
+      }
+      attempt += 1;
+      socket = createSocket("udp4");
+      socket.once("message", (answer) => {
+        done = true;
+        cleanup();
+        onAnswer(answer);
+      });
+      // Error or timeout: move to the next resolver with a fresh socket.
+      socket.once("error", () => next());
+      timer = setTimeout(() => next(), timeoutMs);
+      socket.send(query, upstream.port, upstream.host);
+    };
+
+    next();
+  }
+
+  // TCP is the retry path for large answers (the client sets TC and retries
+  // over TCP). Relay the length-prefixed stream verbatim.
+  const tcp = createServer((client) => {
+    const upstream = netUpstream(upstreams);
+    if (!upstream) {
+      client.destroy();
+      return;
+    }
+    const up = createConnection({ host: upstream.host, port: upstream.port });
+    client.pipe(up).pipe(client);
+    client.on("error", () => up.destroy());
+    up.on("error", () => client.destroy());
+  });
+
+  udp.bind(port);
+  tcp.listen(port);
+
+  return { udp, tcp };
+}
+
+interface UpstreamAddress {
+  host: string;
+  port: number;
+}
+
+function normalizeUpstream(raw: string): UpstreamAddress {
+  const trimmed = raw.trim();
+  const separator = trimmed.lastIndexOf(":");
+  if (separator > 0) {
+    const port = Number(trimmed.slice(separator + 1));
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) {
+      return { host: trimmed.slice(0, separator), port };
+    }
+  }
+  return { host: trimmed, port: 53 };
+}
+
+function netUpstream(upstreams: UpstreamAddress[]): UpstreamAddress | null {
+  return upstreams[0] ?? null;
 }
