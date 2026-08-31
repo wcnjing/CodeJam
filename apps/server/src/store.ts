@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Database } from "./types.js";
+import type { Database, DatabaseV1 } from "./types.js";
 
 const CURRENT_VERSION = 2;
 
@@ -13,7 +13,13 @@ const emptyDatabase = (): Database => ({
   approvals: [],
 });
 
-/** Shape as found on disk: the version is whatever release last wrote it. */
+/**
+ * Shape as found on disk: the version is whatever release last wrote it, and
+ * only `version` is trustworthy until `migrate` has walked the value forward.
+ * The collection types are the current ones purely so this stays a usable
+ * transport type through the chain — each step casts to its own version's real
+ * shape before touching a field.
+ */
 type StoredDatabase = Omit<Database, "version"> & { version: number };
 
 /**
@@ -21,16 +27,52 @@ type StoredDatabase = Omit<Database, "version"> & { version: number };
  * body, so any name a v1 record carries was asserted by the client rather than
  * derived from its credential. Stamping those "self-asserted" is the whole
  * point of the bump: without it, migrated records would sit beside
- * credential-derived ones in the same shape, and the guarantee the type now
+ * credential-derived ones in the same shape, and the guarantee the type
  * documents would be false for part of the store with no way to tell which.
  * Retention keeps approvals for 90 days, so a real deployment carries them
  * across the upgrade.
  */
-function migrateV1ToV2(database: StoredDatabase): void {
-  for (const approval of database.approvals ?? []) {
-    approval.resolvedByAttribution = approval.resolvedBy === null ? null : "self-asserted";
+function migrateV1ToV2(v1: DatabaseV1): Database {
+  return {
+    ...v1,
+    version: 2,
+    approvals: v1.approvals.map((approval) => ({
+      ...approval,
+      resolvedByAttribution: approval.resolvedBy === null ? null : ("self-asserted" as const),
+    })),
+  };
+}
+
+/**
+ * Each step takes the previous version's own type and returns the next, so a
+ * field added at v3 cannot be silently assumed present on a v1 record. Add a
+ * step here rather than widening one that already shipped: the older shapes are
+ * frozen history, and the compiler is what keeps a later migration honest about
+ * what actually existed when the record was written.
+ */
+type MigrationStep = (database: StoredDatabase) => StoredDatabase;
+
+const MIGRATIONS: Record<number, MigrationStep> = {
+  // The cast lives here and only here. Parsed JSON is untyped by nature, so one
+  // assertion at that boundary is unavoidable; keeping it in the registry means
+  // each migrator below is still checked against the real shape of its own
+  // version, which is the property worth having.
+  1: (database) => migrateV1ToV2(database as unknown as DatabaseV1),
+};
+
+/** Walks a stored database forward to CURRENT_VERSION, one step per version. */
+function migrate(parsed: StoredDatabase): { database: Database; migrated: boolean } {
+  let current = parsed;
+  let migrated = false;
+  while (current.version !== CURRENT_VERSION) {
+    const step = MIGRATIONS[current.version];
+    if (!step) {
+      throw new Error("Unsupported database format");
+    }
+    current = step(current as never);
+    migrated = true;
   }
-  database.version = CURRENT_VERSION;
+  return { database: current as unknown as Database, migrated };
 }
 
 export class JsonStore {
@@ -50,13 +92,8 @@ export class JsonStore {
       if (!Array.isArray(parsed.agents)) {
         throw new Error("Unsupported database format");
       }
-      const migrated = parsed.version === 1;
-      if (migrated) {
-        migrateV1ToV2(parsed);
-      } else if (parsed.version !== CURRENT_VERSION) {
-        throw new Error("Unsupported database format");
-      }
-      this.data = { ...emptyDatabase(), ...parsed, version: CURRENT_VERSION };
+      const { database, migrated } = migrate(parsed);
+      this.data = { ...emptyDatabase(), ...database, version: CURRENT_VERSION };
       // Write the upgrade back once, so the labelling survives a crash and the
       // next start is not a second migration of the same records.
       if (migrated) await this.persist();
