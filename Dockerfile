@@ -26,6 +26,12 @@ ARG DEBIAN_SECURITY_MIRROR=""
 # the same thing in both images; curl is in the default because it is the
 # network tool the egress demos and legitimate fetches rely on.
 ARG RUNTIME_APT_PACKAGES="ca-certificates git ripgrep curl"
+# The POC-as-Compose deployment (docker-compose.poc.yml) runs the control plane
+# in a container that drives the HOST Docker daemon through the mounted socket,
+# so it needs the docker CLI inside this image. Off by default: the plain
+# local-process compose deployment does not and should not carry a container
+# engine binary.
+ARG INSTALL_DOCKER_CLI="false"
 
 RUN if [ -n "$DEBIAN_SECURITY_MIRROR" ]; then \
       find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
@@ -37,6 +43,9 @@ RUN if [ -n "$DEBIAN_SECURITY_MIRROR" ]; then \
     fi \
     && apt-get update \
     && apt-get install -y --no-install-recommends $RUNTIME_APT_PACKAGES \
+    && if [ "$INSTALL_DOCKER_CLI" = "true" ]; then \
+         apt-get install -y --no-install-recommends docker.io; \
+       fi \
     && npm install --global @openai/codex@0.111.0 \
     && codex --version \
     && rm -rf /var/lib/apt/lists/*

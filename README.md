@@ -1009,6 +1009,34 @@ Open <http://localhost:3000>. Stop it without deleting Agent data:
 docker compose down
 ```
 
+### The POC as Compose (`docker-compose.poc.yml`)
+
+`npm run poc` (container runtime with per-run egress isolation and brokers) is
+also available as a single Compose file. The control plane runs in a container
+that drives the **host** Docker daemon through the mounted socket, so the image
+carries the docker CLI (`INSTALL_DOCKER_CLI=true`) and the state directories
+are bind-mounted at the **same absolute paths** on both sides (default
+`$PWD/.poc-data` — set `POC_ROOT` to move them).
+
+```bash
+# 1. Build all three images: Agent Runtime, egress broker, control plane.
+docker compose -f docker-compose.poc.yml --profile build build
+# 2. Start the control plane; open http://localhost:3000.
+docker compose -f docker-compose.poc.yml up
+```
+
+Required overrides where the defaults do not fit:
+
+```bash
+export DOCKER_GID=$(getent group docker | cut -d: -f3)   # docker socket access
+export POC_UID=$(id -u) POC_GID=$(id -g)                 # owns .poc-data; must
+export CONTAINER_USER="$POC_UID:$POC_GID"                # match the spawned agents
+```
+
+The `runtime` and `broker` services are build-only (profile `build`); `up`
+starts only the control plane. The Agent Runtime and broker images must exist
+on the host daemon — that is what step 1 produces.
+
 ## Development
 
 ```bash

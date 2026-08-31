@@ -1,0 +1,102 @@
+name: sentinel-poc
+
+# The local POC (scripts/start-local-poc.sh) as Compose.
+#
+# The control plane runs in a container that drives the HOST Docker daemon
+# through the mounted socket ("sibling" containers): it creates the per-run
+# --internal networks, the egress brokers, and the Agent Runtime containers on
+# the host engine. That is why the socket is mounted, why the image carries the
+# docker CLI (INSTALL_DOCKER_CLI=true), and why the state dirs are bind-mounted
+# at the SAME absolute paths on both sides — the daemon resolves the bind
+# sources the control plane hands it (workspace paths) on the HOST filesystem.
+#
+# Usage (run from the repo root, where .env lives):
+#
+#   docker compose -f docker-compose.poc.yml --profile build build
+#   docker compose -f docker-compose.poc.yml up
+#   # open http://localhost:3000 and unlock with an APP_PRINCIPALS token
+#
+# Required overrides for machines where the defaults don't fit:
+#   - DOCKER_GID   host docker group id  (getent group docker | cut -d: -f3)
+#   - POC_UID/POC_GID  host uid:gid that owns the POC state dirs and runs the
+#                  spawned Agent containers (defaults 1000:1000)
+#   - POC_ROOT     where data/, workspaces/, codex-home/ live; defaults to
+#                  $PWD/.poc-data (absolute; MUST match inside the container)
+#
+# environment: values override env_file (.env), so RUNTIME_PROVIDER=container
+# wins over the local-process default in .env while the rest (.env ARK keys,
+# APP_PRINCIPALS, POLICY_ALLOWED_HOSTS, ...) flows straight through.
+
+services:
+  # Build-only services: `--profile build build` produces the two images the
+  # sentinel service needs on the host daemon; `up` never starts them.
+  runtime:
+    image: volc-agent-runtime:local
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+      args:
+        NODE_IMAGE: ${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}
+        DEBIAN_MIRROR: ${CONTAINER_APT_MIRROR:-}
+        DEBIAN_SECURITY_MIRROR: ${CONTAINER_APT_SECURITY_MIRROR:-}
+        RUNTIME_APT_PACKAGES: ${CONTAINER_RUNTIME_APT_PACKAGES:-ca-certificates git ripgrep curl}
+    profiles: ["build"]
+
+  broker:
+    image: volc-egress-broker:local
+    build:
+      context: .
+      dockerfile: Dockerfile.egress-broker
+      args:
+        NODE_IMAGE: ${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}
+    profiles: ["build"]
+
+  sentinel:
+    image: volc-agent-sentinel:poc
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${CONTAINER_RUNTIME_BASE_IMAGE:-node:22-bookworm-slim}
+        DEBIAN_MIRROR: ${CONTAINER_APT_MIRROR:-}
+        DEBIAN_SECURITY_MIRROR: ${CONTAINER_APT_SECURITY_MIRROR:-}
+        RUNTIME_APT_PACKAGES: ${CONTAINER_RUNTIME_APT_PACKAGES:-ca-certificates git ripgrep curl}
+        # The control plane drives the host daemon through the socket, so it
+        # needs the docker CLI inside the image. Off for the plain deployment.
+        INSTALL_DOCKER_CLI: "true"
+    env_file:
+      - ${sentinel_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      RUNTIME_PROVIDER: container
+      CONTAINER_ENGINE: docker
+      CONTAINER_RUNTIME_IMAGE: volc-agent-runtime:local
+      CONTAINER_EGRESS_BROKER_IMAGE: volc-egress-broker:local
+      CONTAINER_EGRESS_ISOLATION: "true"
+      CODEX_SANDBOX_MODE: ${CODEX_SANDBOX_MODE:-workspace-write}
+      APP_DATA_DIR: "${POC_ROOT:-$PWD/.poc-data}/data"
+      AGENT_WORKSPACE_ROOT: "${POC_ROOT:-$PWD/.poc-data}/workspaces"
+      CODEX_HOME: "${POC_ROOT:-$PWD/.poc-data}/codex-home"
+      # The uid:gid the spawned Agent Runtime containers run as; keep it equal
+      # to POC_UID:POC_GID so they can write the workspace bind mounts.
+      CONTAINER_USER: ${CONTAINER_USER:-1000:1000}
+    ports:
+      - "${PUBLIC_PORT:-3000}:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The control plane and the host daemon must resolve the same absolute
+      # paths, so the Agent containers' bind mounts land where the daemon sees
+      # them. $PWD is the repo root at compose time; set POC_ROOT to override.
+      - "${POC_ROOT:-$PWD/.poc-data}:${POC_ROOT:-$PWD/.poc-data}"
+    # Run as the host user so the POC state dirs and the agent workspaces are
+    # owned by the same uid the spawned containers use (defaults assume uid
+    # 1000, the image's node user).
+    user: "${POC_UID:-1000}:${POC_GID:-1000}"
+    # The node process is not root, so it needs the host docker group to read
+    # /var/run/docker.sock. Adjust DOCKER_GID to the host's docker group id.
+    group_add:
+      - "${DOCKER_GID:-999}"
+    restart: unless-stopped
+    init: true
