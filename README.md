@@ -704,6 +704,38 @@ Recorded honestly, because each one is a real gap:
   control removes the dependence on reading text at all, and that is still
   deliberately not attempted — see
   [docs/KILL_SWITCH_PLAN.md](docs/KILL_SWITCH_PLAN.md).
+- **Open: 146 bypasses where materialised text is never re-examined.** The
+  engine materialises two carriers — what a command decodes, and what it pipes
+  into a shell. It does not materialise the third: **text written to a file that
+  is then executed.** An injection benchmark
+  (`npm run bench:injection`, enforcement 2,104/2,250 = **93.51%**; the harness
+  itself lands on a separate branch, this is its first published result)
+  enumerated every carrier the shell offers and found **146 variants across 49
+  signatures and 17 of 30 carriers**, in three causes:
+  `runsWrittenScript` withdraws the textual carve-out for `> file` but never
+  re-reads the file, so a **bare host** escapes; it scans redirects only, so a
+  file written by `tee`, `dd of=`, `sed -n w` or `eval "$(cat f)"` is not seen
+  as a write at all and **even a URL escapes**; and `feedsAnExecutor` covers
+  pipelines but not `sh <<< …` or `sh <(echo …)`.
+  Every signature is named in `injection.ts` and gated — a 147th fails the
+  build. The fix is one function, `writtenScriptPayloads`, beside the existing
+  `pipedScriptPayloads`; it is not built here because it belongs to the
+  capability engine rather than the benchmark lane.
+  **The count is the honest part.** A first pass found six, under one carrier,
+  and called the class bounded; enumerating the carriers took the same finding
+  to 146 against an unchanged engine. Six was a floor, not a count — the fourth
+  time in this project that a class looked small because the axis could not
+  express it. The `direct` class is 525/525, so this is a materialisation gap
+  and not a regression in the ordinary rules.
+  **This does not contradict the 100% figures above, and the relationship is
+  the point.** The generated bank reports 6,860/6,860 and the corpus reports
+  0/114 escapes because neither has a carrier axis — every variant they generate
+  runs its command directly, and every one of those is still denied. Three
+  independent measurements agreeing at 100% did not make the system safe here;
+  they agreed because they shared a blind spot. That is the strongest available
+  argument for the thing this README says elsewhere and it is worth stating
+  where the numbers are: a rate is only ever a rate over what the harness can
+  express.
 - **Containment versus prevention.** Confirmed against a live Ark endpoint:
   Codex emits `item.started` carrying the full command with `exit_code: null,
   status: "in_progress"` before the command finishes, so the engine reacts
