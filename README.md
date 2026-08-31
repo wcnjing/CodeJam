@@ -192,7 +192,7 @@ rather than this one's.
 | Attacks the policy would allow | `npm run bench:security` | **0/114** (0.0%) |
 | Secret-channel attacks allowed | `npm run bench:security` | **0/40** |
 | Legitimate tasks blocked (false positives) | `npm run bench:security` | 1/84 (1.2%) |
-| Per-command decision latency | `npm run bench:security` | p50 40.7 µs · p95 181.1 µs · p99 279.6 µs |
+| Per-command decision latency | `npm run bench` | p50 38.6 µs · p95 184.7 µs · p99 346.4 µs |
 | Adversarial probe sweep | `npm run redteam` | **56/56 denied**, 0 bypasses |
 | Generated attack bank (bulk tier) | `npm run bench:generate` | **6,860/6,860** (100.00%), ratchet 0 |
 | Injection benchmark (enforcement tier) | `npm run bench:injection` | 3,714/3,750 (99.04%), **36 documented residuals** |
@@ -206,8 +206,21 @@ carriers* — a payload written into a Makefile, a git hook or a crontab and
 executed later by something else — which the classifier does not re-read. Under
 the container runtime, the network-exfiltration half of that class is contained
 structurally anyway, because the destination is unreachable whether or not the
-classifier recognised the command. Latency is hardware-dependent; run the CLI on
-your own machine for the figure that applies to it.
+classifier recognised the command.
+
+<!-- figures: local reason="Two local runs of the policy latency benchmark on this commit, quoted against each other precisely to show the run-to-run spread. Neither is from CI; the provenance label registered in docs/figures-exempt.json retires this block when a CI run exists for this branch." -->
+
+Latency is hardware-dependent and the tail is noisy: the same commit's
+`npm run bench` reports a run-to-run coefficient of variation of 2.9% at p50 and
+**14.0% at p99**, so read p50 as the figure and the p99 as an order of magnitude.
+`npm run bench:security` on this machine printed p50 40.7 µs / p95 181.1 µs /
+p99 279.6 µs for the same policy — that spread between two runs minutes apart is
+the point. Run it on your own machine for the figure that applies to it. The
+full harness with provenance — git SHA, node, OS, corpus size, policy hash, and
+every proportion as numerator / denominator / confidence interval — is written to
+[`bench-results.json`](bench-results.json) by `npm run bench`.
+
+<!-- /figures -->
 
 ## Direction: threat modeling and safety
 

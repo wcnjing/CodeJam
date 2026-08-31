@@ -38,6 +38,16 @@
         "branch": "feat/close-carrier-residual"
       },
       "action": "Re-derive the injection-benchmark residual figures (3,714/3,750, the carrier-class strata) against that CI run, cite it, and remove this label and its figures: local marker."
+    },
+    {
+      "id": "close-carrier-residual-local-latency",
+      "doc": "README.md",
+      "marker": "Two local runs of the policy latency benchmark on this commit",
+      "retiresWhen": {
+        "type": "ci-run-exists-for-branch",
+        "branch": "feat/close-carrier-residual"
+      },
+      "action": "Replace the two locally measured latency spreads with the CI run's figures, cite the run, and remove this label and its figures: local marker."
     }
   ],
   "_provenanceLabelSchema": {
