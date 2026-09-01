@@ -28,11 +28,26 @@ Environments:
 | `npm run test` | **CI windows, Node 24** | exit 1 — **94/106 pass, 12 fail** across 16 files, 3.24s |
 | `npm run check` | local Windows | exit 1 — the same 12 failures (see below) |
 
-The suite has grown since this document was written: 78 tests across 14 files
-then, **106 across 16** now, after Phase 1 added `bench/metrics.test.ts` and
-`evaluation-contract.test.ts`. The figures above are the current ones. The ~25s
-local `npm run check` figure is superseded by CI's measured `npm run test` times,
-which are the ones a reader can click through and check.
+<!-- figures: local reason="Re-measured on the merged commit on a developer machine because the row above it had gone stale by more than a factor of one and a half. No CI run exists for this branch yet; the provenance label registered in docs/figures-exempt.json retires this block when one does." -->
+
+**Those rows are the ORIGINAL baseline and are kept as history. The suite has
+grown well past them.** Measured on the merged commit (`9a152f2`, Windows 11,
+Node 24.16.0), the `@sentinel/server` workspace is **392 tests, 21 failing**;
+`@sentinel/web` is 22 passing and `@sentinel/evaluation` 6, both platform-clean.
+The 12 became 21 as POSIX-only tests were added — `container-isolation.test.ts`
+and `safe-write.test.ts` did not exist when this section was written — and the
+count is now **stored and gated** rather than restated: see
+[`.github/windows-baseline.json`](../.github/windows-baseline.json) and
+`npm run test:windows-baseline`.
+
+<!-- /figures -->
+
+That gate is the real correction here. The number lived in three places — this
+document, the CI workflow comment, and the README — and all three drifted apart
+because nothing compared any of them against a run. A count that drifts silently
+is worse than no gate: it reads as verified when nothing verified it. The
+baseline now fails CI on drift in **either** direction, so a new POSIX-only
+assumption and a fixed one are both visible.
 
 **The platform-vs-Node-major confound is resolved — by measurement, not
 inference.** This section previously carried a caveat: the POSIX and Windows
@@ -51,26 +66,40 @@ layout with no commits on `main`. It has been flattened so the tree matches
 ### Finding: the validation command is green on POSIX, red on Windows out of the box
 
 This is a **platform** defect, not a broken suite. On Linux, `npm ci && npm run
-check` is exit 0 with all 106 tests passing, on both Node 22 and Node 24. On
-Windows the same command fails: 94 pass, 12 fail, across 4 files —
-`runner-policy.test.ts` (8/8), `budget.test.ts` (2/2),
-`container-runner-policy.test.ts` (1/1) and `container-codex-runner.test.ts`
-(1/2). Two distinct POSIX-only assumptions account for all 12:
+check` is exit 0, on both Node 22 and Node 24. On Windows the same command fails.
+On the merged commit that is **21 failures across 6 files**, and *three* distinct
+POSIX-only assumptions account for every one of them — the third arrived with
+`safe-write.test.ts` after this section was first written:
 
-- **11 failures — `spawn EFTYPE`.** `runner-policy.test.ts`, `budget.test.ts` and
-  `container-runner-policy.test.ts` write a stand-in `codex.mjs` with a
-  `#!/usr/bin/env node` shebang, `chmod 0o755` it, and spawn it directly. Windows
-  does not dispatch on the executable bit or the shebang, so every spawn throws
-  `EFTYPE`. This takes out **the entire runtime enforcement test suite** — the
-  tests that prove the container is killed, monitor mode observes, the agent slot
-  is released, the protected asset is untouched, and evidence is redacted.
-- **1 failure — hardcoded POSIX paths.** `container-codex-runner.test.ts` asserts
-  bind-mount arguments containing literal `/tmp/codex-home` and
+| File | Failing | Cause |
+| --- | ---: | --- |
+| `runner-policy.test.ts` | 8 | `spawn EFTYPE` |
+| `container-isolation.test.ts` | 5 | `spawn EFTYPE` |
+| `safe-write.test.ts` | 3 | POSIX file modes |
+| `budget.test.ts` | 2 | `spawn EFTYPE` |
+| `container-codex-runner.test.ts` | 2 | hardcoded POSIX paths |
+| `container-runner-policy.test.ts` | 1 | `spawn EFTYPE` |
+
+- **16 failures — `spawn EFTYPE`.** These files write a stand-in `codex.mjs` or
+  fake container engine with a `#!/usr/bin/env node` shebang, `chmod 0o755` it,
+  and spawn it directly. Windows does not dispatch on the executable bit or the
+  shebang, so every spawn throws `EFTYPE`. This takes out **the entire runtime
+  enforcement test suite** — the tests that prove the container is killed,
+  monitor mode observes, the agent slot is released, the protected asset is
+  untouched, and evidence is redacted. In `container-isolation.test.ts` it
+  surfaces one layer up as "Could not create the isolated network", which is the
+  fake engine failing to spawn rather than anything about isolation.
+- **3 failures — POSIX file modes.** `safe-write.test.ts` asserts
+  `(mode & 0o777) === 0o600`. Windows does not carry POSIX permission bits, so no
+  assertion of that shape can pass there.
+- **2 failures — hardcoded POSIX paths.** `container-codex-runner.test.ts`
+  asserts bind-mount arguments containing literal `/tmp/codex-home` and
   `/tmp/agent-workspace`.
 
-Everything that does not spawn a process passes: policy evaluation, the corpus
-scorecard, the security benchmark, the threat model, the store, the HTTP boundary,
-agent lifecycle, and approvals.
+Everything that does not spawn a process or assert a POSIX mode passes: policy
+evaluation, the corpus scorecard, the security benchmark, the threat model, the
+store, the HTTP boundary, agent lifecycle, approvals, the approval-to-broker
+egress path, and network-layer evidence.
 
 #### Windows: additional coverage, not outstanding debt
 

@@ -48,6 +48,16 @@
         "branch": "feat/close-carrier-residual"
       },
       "action": "Replace the two locally measured latency spreads with the CI run's figures, cite the run, and remove this label and its figures: local marker."
+    },
+    {
+      "id": "merged-windows-baseline-local",
+      "doc": "docs/EVALUATION_RELIABILITY_PLAN.md",
+      "marker": "Re-measured on the merged commit on a developer machine because the row above it had gone stale",
+      "retiresWhen": {
+        "type": "ci-run-exists-for-branch",
+        "branch": "feat/close-carrier-residual"
+      },
+      "action": "Re-derive the Windows failure counts from that run's windows leg, cite it, and remove this label and its figures: local marker. The stored baseline in .github/windows-baseline.json is the gate; this label only covers the prose copy of the number."
     }
   ],
   "_provenanceLabelSchema": {

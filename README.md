@@ -1070,23 +1070,30 @@ work. One thing does not:
   or refuses to run and says how to proceed. Verified end to end against an
   npm-generated shim: the run completes and enforcement still fires.
 
-A non-blocking `windows-latest` CI leg runs on every push, so this claim rests on
-public evidence rather than on someone's machine. Because Windows is outside the
-stated requirements, that leg is **reporting, not a gate** — it is why the branch
-badge is green while the leg is red, and that is deliberate rather than tolerated.
+A `windows-latest` CI leg runs on every push, so this claim rests on public
+evidence rather than on someone's machine. Windows is outside the stated
+requirements, so `npm run test` there is expected to exit non-zero — but *how*
+red it is, is now gated.
 
-> **A "known-red" leg is a figure that stops being read, and this one drifted.**
-> The signal on this leg is the failure *count*, and the README reported it as
-> "12 throughout" — a claim about stability, which is exactly the kind that stops
-> being re-derived once it has been true twice. It is 20 now, and the growth is
-> not the shebang class getting worse: it is two new POSIX-only suites landing
-> since, one of which (`container-isolation.test.ts`) exists because the egress
-> broker was added. The job's own name in
-> [.github/workflows/ci.yml](.github/workflows/ci.yml) still reads *"expected red
-> — 12 POSIX-only failures"*, so the stale number is in two places and the label
-> is one of them. A count that is allowed to be red needs a *stated expected
-> value* that something checks; "known-red" on its own degrades into "not
-> looked at".
+> **A "known-red" leg is a figure that stops being read, and this one drifted —
+> so it was replaced with a ratchet.** The signal on this leg is the failure
+> *count*, and it lived in three places that disagreed: this README said "12
+> throughout" (a stability claim, which is exactly the kind that stops being
+> re-derived once it has been true twice), the workflow's own job name said 12,
+> and the real number had grown as POSIX-only suites landed —
+> `container-isolation.test.ts` exists because the egress broker was added, and
+> `safe-write.test.ts` asserts POSIX permission bits. Nothing compared any of the
+> three against a run.
+>
+> On the merged commit it is **21 of 392** in `@sentinel/server`, and that number
+> is now stored in [.github/windows-baseline.json](.github/windows-baseline.json)
+> with a named cause per file, checked by `npm run test:windows-baseline` as a
+> **blocking** CI step. It fails on drift in either direction: more failures
+> means a POSIX-only assumption was added, fewer means one was fixed and the
+> baseline was not lowered. The job-level `continue-on-error` is gone, because a
+> leg that cannot fail cannot carry a claim — which is precisely how "12"
+> survived as long as it did. Same shape as the ratchets already used for the
+> generated attack bank and the figure contract.
 
 **A replay demo path that does not overclaim.** `RUNTIME_PROVIDER=replay` streams
 a recorded event stream so the governance loop can be shown with no key, no
