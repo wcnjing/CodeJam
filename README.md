@@ -113,7 +113,7 @@ rather than this one's.
 | Attacks the policy would allow | `npm run bench:security` | **0/114** (0.0%) |
 | Secret-channel attacks allowed | `npm run bench:security` | **0/40** |
 | Legitimate tasks blocked (false positives) | `npm run bench:security` | 1/84 (1.2%) |
-| Per-command decision latency | `npm run bench` | p50 38.6 µs · p95 184.7 µs · p99 346.4 µs |
+| Per-command decision latency | `npm run bench` | p50 46.9 µs · p95 211.0 µs · p99 377.5 µs |
 | Adversarial probe sweep | `npm run redteam` | **56/56 denied**, 0 bypasses |
 | Generated attack bank (bulk tier) | `npm run bench:generate` | **6,860/6,860** (100.00%), ratchet 0 |
 | Injection benchmark (enforcement tier) | `npm run bench:injection` | 3,714/3,750 (99.04%), **36 documented residuals** |
@@ -132,11 +132,14 @@ classifier recognised the command.
 <!-- figures: local reason="Two local runs of the policy latency benchmark on this commit, quoted against each other precisely to show the run-to-run spread. Neither is from CI; the provenance label registered in docs/figures-exempt.json retires this block when a CI run exists for this branch." -->
 
 Latency is hardware-dependent and the tail is noisy: the same commit's
-`npm run bench` reports a run-to-run coefficient of variation of 2.9% at p50 and
-**14.0% at p99**, so read p50 as the figure and the p99 as an order of magnitude.
-`npm run bench:security` on this machine printed p50 40.7 µs / p95 181.1 µs /
-p99 279.6 µs for the same policy — that spread between two runs minutes apart is
-the point. Run it on your own machine for the figure that applies to it. The
+`npm run bench` reports a run-to-run coefficient of variation of 1.5% at p50 and
+**13.0% at p99**, so read p50 as the figure and the p99 as an order of magnitude.
+`npm run bench:security` on this machine printed p50 56.1 µs / p95 244.7 µs /
+p99 381.0 µs for the same policy, minutes apart, on an otherwise idle laptop —
+that spread between two runs of the same code is the point, and it is why this
+row is the only one in the table that moved when every figure was re-derived on
+the merged commit. Run it on your own machine for the figure that applies to it.
+The
 full harness with provenance — git SHA, node, OS, corpus size, policy hash, and
 every proportion as numerator / denominator / confidence interval — is written to
 [`bench-results.json`](bench-results.json) by `npm run bench`.
@@ -1382,12 +1385,26 @@ Recorded honestly, because each one is a real gap:
   text at all. Two independent layers, each covering the other's miss, which is
   the whole argument for having two.
 
+  **And that containment is now visible rather than silent.** It used not to be:
+  the broker logged a denial to its own stderr and nothing else, so a run where
+  the network quietly caught what the classifier missed looked identical in the
+  audit trail to a run where nothing happened. The broker's denials are now
+  collected through the engine — during the run, and again at teardown before the
+  `--rm` container takes its log with it — correlated to the run, and persisted
+  as **network-layer** evidence beside the policy events, rendered as its own
+  kind in the timeline. So this residual now leaves a record that says exactly
+  what it is: the classifier did not see this one coming, and the network refused
+  it anyway. Where the log cannot be read the run reports `unavailable`, not
+  "clean" — an absence of evidence is never rendered as evidence of absence.
+
   **Be exact about what that does and does not buy.** It bounds the *network*
   half of the residual, on the *container* runtime only:
 
   - It does **not** close the classification gap. The command is still allowed,
-    no policy event is recorded, and no human is asked. A reviewer looking at the
-    audit trail sees an ordinary run.
+    no *policy* event is recorded, and no human is asked before it runs. What the
+    reviewer now gets is an after-the-fact network denial, which is strictly
+    better than the ordinary-looking run they used to get and strictly worse than
+    a pre-execution decision they could have reviewed.
   - It does **not** cover non-network capabilities. A deferred payload that
     writes a file, corrupts the workspace, or burns CPU is untouched by network
     containment; the step budget and the container's own limits are what bound
@@ -1500,10 +1517,12 @@ Baseline-vs-Sentinel escape rate, secret-channel allow rate, per-family coverage
 classifier quality, and policy latency — computed on demand from the same engine
 that enforces, so it can never drift from what actually runs.
 
-<sub>Captured from the running engine at revision `1affb80` — 198 labelled
+<sub>Re-captured from the running engine on the merged commit — 198 labelled
 cases, 0.0% predicted escape rate, 0/40 secret-channel attacks allowed. The
-dashboard is computed on demand, so run it rather than reading figures off the
-image: latency in particular is hardware-dependent.</sub>
+previous capture showed a p95 near 138.6 µs, which had drifted from what the
+engine now reports; the dashboard is computed on demand, so run it rather than
+reading figures off the image. Latency in particular is hardware-dependent and
+noisy at the tail.</sub>
 
 ![Sentinel Security Evaluation dashboard: baseline-vs-Sentinel policy-predicted escape rate, secret-channel attacks allowed, per-family coverage, and the governance loop](docs/assets/security-evaluation.png)
 
@@ -1521,7 +1540,16 @@ model chose to run, not what the operator typed. The full record — including
 what approving it did and did not grant — is in
 [docs/evidence/](docs/evidence/).</sub>
 
-![A held run showing the Human approval required card with the network-egress-denied rule, the exact command, and approve/deny controls](docs/assets/held-approval.png)
+![A held run showing the Human approval required card with the network-egress-denied rule, the exact command curl https://registry.npmjs.org/react, the destination, a required reason field, an approve-and-widen checkbox, and Approve as alice / Deny as alice buttons](docs/assets/held-approval.png)
+
+<sub>Re-captured on the merged commit under `RUNTIME_PROVIDER=container`. The
+"if this had not been caught" line reads *"the broker would still have refused
+this non-allowlisted destination"* — the earlier capture showed the pre-merge
+copy, which claimed the Agent could have reached any host on the container's
+network. That was true before the network layer existed and false after, and it
+is the copy [Task 3 corrected](#limitations). The card also now offers
+**approve and add to the standing allowlist** beside the run-scoped approval,
+which is the distinction the audit record keeps.</sub>
 
 ### Agent Playground
 

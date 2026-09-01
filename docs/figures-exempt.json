@@ -16,6 +16,12 @@
       "value": "93.8",
       "unit": "%",
       "reason": "Stated in the text as measured locally and never committed, describing a rejected first fix that regressed core detection. The sentence says so outright; it appears in no run because that fix was never pushed."
+    },
+    {
+      "doc": "README.md",
+      "value": "138.6",
+      "unit": "µs",
+      "reason": "Historical, and quoted only as the value that drifted. It is the p95 visible in the SUPERSEDED security-evaluation screenshot, cited in the caption of its replacement to say what changed. It appears in no CI run because it was read off an image captured on a contributor's machine, which is the defect the sentence is describing. Delete this entry when the sentence goes."
     }
   ],
   "provenanceLabels": [
