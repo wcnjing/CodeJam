@@ -38,7 +38,9 @@
     "build:broker": "docker build -f Dockerfile.egress-broker -t volc-egress-broker:local .",
     "verify:egress": "tsx scripts/verify-egress.mjs",
     "test:windows-baseline": "node scripts/check-windows-baseline.mjs",
-    "diagram": "npx --yes @mermaid-js/mermaid-cli@11 -i docs/architecture-one-page.mmd -o docs/architecture-one-page.png -b white -w 2200",
+    "diagram": "npm run diagram:landscape && npm run diagram:detail",
+    "diagram:landscape": "npx --yes @mermaid-js/mermaid-cli@11 -i docs/architecture-landscape.mmd -o docs/architecture-landscape.png -b white -w 1600",
+    "diagram:detail": "npx --yes @mermaid-js/mermaid-cli@11 -i docs/architecture-one-page.mmd -o docs/architecture-one-page.png -b white -w 2200",
     "clean": "pnpm -r exec sh -c '(rm data .data workspaces codex-home -r 2> /dev/null || true)'"
   },
   "devDependencies": {
