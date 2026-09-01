@@ -1,0 +1,44 @@
+{
+  "_comment": "The Windows failure baseline, as a ratchet rather than a comment. `npm run test:windows-baseline` measures the server suite on Windows and compares it against this file, failing on drift in EITHER direction. A count that only lives in a workflow comment drifts silently, and a silently drifting count is worse than no gate: it reads as verified when nothing verified it. Every entry names WHY that file fails, so a reviewer can tell a POSIX-only assumption from a real regression without running anything.",
+  "measuredOn": {
+    "commit": "21d328f + PR #13 review fixes",
+    "os": "Windows 11 26200",
+    "node": "24.16.0",
+    "workspace": "@sentinel/server"
+  },
+  "totalTests": 393,
+  "failedTests": 21,
+  "byFile": {
+    "budget.test.ts": {
+      "failed": 2,
+      "cause": "spawn EFTYPE",
+      "why": "Spawns a fake `codex.mjs` stand-in with a #!/usr/bin/env node shebang and mode 0755. Windows dispatches on neither the shebang nor the executable bit, so every spawn throws EFTYPE."
+    },
+    "container-codex-runner.test.ts": {
+      "failed": 2,
+      "cause": "hardcoded POSIX paths",
+      "why": "Asserts literal /tmp/codex-home and /tmp/agent-workspace in the bind-mount arguments."
+    },
+    "container-isolation.test.ts": {
+      "failed": 5,
+      "cause": "spawn EFTYPE",
+      "why": "Same shebang stand-in, used as a fake container engine. Surfaces one layer up as 'Could not create the isolated network', which is the engine spawn failing rather than anything about isolation."
+    },
+    "container-runner-policy.test.ts": {
+      "failed": 1,
+      "cause": "spawn EFTYPE",
+      "why": "Same shebang stand-in."
+    },
+    "runner-policy.test.ts": {
+      "failed": 8,
+      "cause": "spawn EFTYPE",
+      "why": "Same shebang stand-in. This is the whole runtime-enforcement suite, which is why the Windows leg cannot be read as covering enforcement."
+    },
+    "safe-write.test.ts": {
+      "failed": 3,
+      "cause": "POSIX file modes",
+      "why": "Asserts `(mode & 0o777) === 0o600`. Windows does not carry POSIX permission bits, so the value is 0o666 or 0o444 and no assertion of this shape can pass."
+    }
+  },
+  "_howToUpdate": "Only ever edit this file together with the change that moved the number, and say which direction it moved in the commit message. UP means a new POSIX-only assumption was added -- prefer fixing the test to widening the baseline. DOWN means one was fixed, and the baseline must follow or the gate stops meaning anything."
+}

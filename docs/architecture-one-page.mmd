@@ -1,0 +1,111 @@
+flowchart TB
+
+%% Sentinel - one-page architecture. THIS FILE IS THE SOURCE.
+%% The .png beside it is generated and must never be hand-edited:
+%%     npm run diagram
+%% Read top to bottom. Each numbered band is a layer; the dark hexagons are
+%% trust boundaries, and what crosses one is written on the arrow. The two
+%% amber nodes are the enforcement points - command policy and the egress
+%% broker - and they sit in different bands on purpose: they are independent
+%% layers, and each covers the other's blind spot.
+
+  subgraph FE["1 · FRONTEND — UNTRUSTED"]
+    direction LR
+    UI["Agent UI<br/>create · start · stop · delete"]
+    PG["Playground<br/>prompt in, transcript out"]
+    EV["Security evidence view<br/>policy events · audit timeline · live scorecard"]
+    AC["Approval controls<br/>Approve as ID / Deny as ID<br/>reason is required"]
+  end
+
+  B1{{"TRUST BOUNDARY — browser to backend<br/>HTTP + bearer token. No policy runs in the browser.<br/>The Ark key never crosses this line in either direction."}}
+
+  subgraph CP["2 · CONTROL PLANE — TRUSTED BACKEND"]
+    direction LR
+    API["Fastify API<br/>resolves bearer token to a named principal<br/>APP_PRINCIPALS"]
+    SVC["AgentService<br/>run lifecycle · executeRun · settleRun"]
+    APPR["Approval endpoint<br/>POST /api/approvals/:id<br/>401 without a principal · reason mandatory"]
+  end
+
+  subgraph MW["3 · MIDDLEWARE — SENTINEL"]
+    direction LR
+    CAP["Capability extraction<br/>shell-parse.ts to capabilities.ts<br/>NETWORK_EGRESS · SECRET_READ · FILE_WRITE<br/>materialises decoded, piped and written payloads"]
+    POL{"Policy evaluation<br/>command-policy.ts<br/>first match decides<br/>evaluator error = DENY"}
+    APS["Approval state<br/>pending · approved · denied<br/>who decided, when, and why"]
+    AUD["Audit and policy events<br/>redacted before storage"]
+  end
+
+  B2{{"TRUST BOUNDARY — backend to runtime<br/>Process spawn, argv only. No shell on any path.<br/>Commands out on a JSON event stream; allow / deny back."}}
+
+  subgraph RT["4 · RUNTIME — one disposable container per run"]
+    direction LR
+    RUN["AgentRunner<br/>ContainerCodexRunner<br/>read-only root · cap-drop ALL · non-root · noexec /tmp"]
+    CODEX["Codex runtime<br/>codex exec --json<br/>emits item.started before a command finishes"]
+    CMD["Command execution<br/>/bin/bash -lc ..."]
+  end
+
+  B3{{"NETWORK BOUNDARY — structural, not a rule<br/>The run's network is created --internal: the engine installs<br/>no NAT and no gateway, so there is no route off it at all."}}
+
+  subgraph NW["5 · NETWORK ENFORCEMENT — default-deny by construction"]
+    direction LR
+    NET["Per-run internal network<br/>created and destroyed with the run"]
+    BRK{"Egress broker (dual-homed sidecar)<br/>HTTP CONNECT proxy · the only edge<br/>allowlist checked BEFORE DNS<br/>resolved address re-checked for EVERY name"}
+    ALW["Allowed destinations<br/>EGRESS_ALLOW_URL — the model endpoint, every run<br/>EGRESS_APPROVED_URLS — this run's granted host<br/>anything else: 403, never resolved"]
+  end
+
+  EXT["6 · EXTERNAL PROVIDER<br/>Ark model endpoint<br/>plus, for one run, an approved host"]
+
+  subgraph DATA["DATA / EVIDENCE — one atomic write per outcome"]
+    direction LR
+    RMD["Run metadata<br/>status: running · completed · held · blocked · failed"]
+    AEV["Audit events<br/>append-only JSONL · AUDIT_RETENTION_DAYS"]
+    PDE["Policy decisions<br/>rule · redacted command · capabilities · enforced"]
+  end
+
+  UI --> B1
+  PG --> B1
+  AC -->|"APPROVE / DENY<br/>principal + reason"| B1
+  B1 --> API
+  API --> SVC
+  API --> APPR
+
+  SVC -->|"RunnerRequest<br/>+ extraAllowedHosts"| B2
+  APPR -->|"APPROVE<br/>grant this host"| APS
+  APS -->|"CONTINUE<br/>continuation run, one run only"| SVC
+
+  B2 --> RUN
+  RUN --> CODEX
+  CODEX --> CMD
+  CODEX -->|"command text, as the command STARTS"| CAP
+  CAP --> POL
+
+  POL -->|"ALLOW<br/>command proceeds"| CMD
+  POL -->|"DENY — secret rule<br/>destroy container, run = blocked"| RUN
+  POL -->|"HOLD — reviewable egress<br/>run = held, agent stays ready"| APS
+
+  APS -->|"pending request:<br/>rule · command · hosts"| AUD
+  POL --> AUD
+  AUD --> RMD
+  AUD --> AEV
+  AUD --> PDE
+  DATA -.->|"served read-only, back through the API"| B1
+
+  CMD -->|"every outbound byte"| B3
+  B3 --> NET
+  NET -->|"HTTPS_PROXY=broker-name:8080<br/>resolved by the network's embedded DNS"| BRK
+  BRK --> ALW
+  ALW -->|"ALLOW: on the list, resolves public"| EXT
+  ALW -.->|"DENY: 403 / 502, socket closed<br/>logged as egress-denied"| BRK
+
+  RUN -.->|"CLEANUP — always, throwing paths included<br/>stop broker · remove network · container --rm"| NW
+
+  classDef boundary fill:#1f2933,stroke:#0b1015,stroke-width:2px,color:#ffffff;
+  classDef enforce fill:#c98a2e,stroke:#7a5312,stroke-width:3px,color:#ffffff;
+  classDef external fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,stroke-dasharray: 6 4,color:#111827;
+  classDef store fill:#eef2ff,stroke:#4f46e5,color:#1e1b4b;
+  classDef untrusted fill:#fff1f2,stroke:#be123c,color:#4c0519;
+
+  class B1,B2,B3 boundary;
+  class POL,BRK enforce;
+  class EXT external;
+  class RMD,AEV,PDE store;
+  class UI,PG,EV,AC untrusted;

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ApprovalRequest, Principal } from "../types";
-import { explainRule, type PolicyMode } from "../lib/ruleExplanations";
+import { explainRule, type PolicyMode, type RuntimeMode } from "../lib/ruleExplanations";
 import { DecisionExplanation } from "./DecisionExplanation";
 
 export function PendingApprovalCard({
@@ -11,6 +11,7 @@ export function PendingApprovalCard({
   busy,
   onResolve,
   mode = null,
+  runtime = null,
 }: {
   approval: ApprovalRequest;
   /** Resolved from the credential. Null means this session cannot decide. */
@@ -21,6 +22,7 @@ export function PendingApprovalCard({
   /** Decision, plus whether the flagged hosts join the standing allowlist. */
   onResolve: (decision: "approve" | "deny", addToAllowlist: boolean) => void;
   mode?: PolicyMode | null;
+  runtime?: RuntimeMode | null;
 }) {
   // A fresh approval remounts the card (keyed by id upstream), so the default
   // matches this hold: an egress hold offers to widen, and it is pre-checked —
@@ -42,6 +44,7 @@ export function PendingApprovalCard({
           command={approval.command}
           detail={approval.detail}
           mode={mode}
+          runtime={runtime}
         />
         <div className="approval-actions">
           <button
@@ -82,6 +85,7 @@ export function PendingApprovalCard({
         detail={approval.detail}
         hosts={approval.hosts}
         mode={mode}
+        runtime={runtime}
       />
       <div className="approval-controls">
         <label>

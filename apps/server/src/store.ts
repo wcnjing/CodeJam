@@ -5,10 +5,11 @@ import type {
   DatabaseV1,
   DatabaseV2,
   DatabaseV3,
+  DatabaseV4,
   PolicyDecision,
 } from "./types.js";
 
-const CURRENT_VERSION = 4;
+const CURRENT_VERSION = 5;
 
 const emptyDatabase = (): Database => ({
   version: CURRENT_VERSION,
@@ -16,6 +17,7 @@ const emptyDatabase = (): Database => ({
   messages: [],
   runs: [],
   policyEvents: [],
+  networkEvents: [],
   approvals: [],
   allowlist: [],
 });
@@ -87,6 +89,16 @@ const MIGRATIONS: Record<number, MigrationStep> = {
       })),
     };
   },
+  // v4 -> v5: network-layer denials become evidence. Existing runs are left
+  // WITHOUT `networkEvidence` rather than stamped "collected": nothing read a
+  // broker log for them, so claiming the absence of denials is meaningful would
+  // be inventing evidence. An absent field reads as "not known either way",
+  // which is what is true.
+  4: (database) => ({
+    ...(database as unknown as DatabaseV4),
+    version: 5,
+    networkEvents: [],
+  }),
 };
 
 /** Walks a stored database forward to CURRENT_VERSION, one step per version. */

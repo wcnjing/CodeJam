@@ -12,21 +12,27 @@ const kindLabel: Record<TimelineEvent["kind"], string> = {
   run: "Run",
   policy: "Policy",
   approval: "Approval",
+  // Distinct from "Policy" on purpose: a policy decision is made before the
+  // command runs, a network denial after it already did.
+  network: "Network",
 };
 
 export function AuditTimeline({ events }: { events: TimelineEvent[] }) {
   if (events.length === 0) {
     return (
       <p className="policy-empty">
-        Nothing has happened on this Agent yet. Every Run outcome, policy decision, and
-        approval appears here, most recent first.
+        Nothing has happened on this Agent yet. Every Run outcome, policy decision,
+        network-layer denial, and approval appears here, most recent first.
       </p>
     );
   }
   return (
     <ol className="audit-timeline">
       {events.map((event) => (
-        <li key={event.id} className={"audit-event severity-" + event.severity}>
+        <li
+          key={event.id}
+          className={"audit-event severity-" + event.severity + " audit-kind-" + event.kind}
+        >
           <span className="audit-dot" aria-hidden="true" />
           <div className="audit-body">
             <div className="audit-row">

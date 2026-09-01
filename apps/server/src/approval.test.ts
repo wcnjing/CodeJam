@@ -56,6 +56,35 @@ class SecretExfilRunner implements AgentRunner {
   }
 }
 
+/**
+ * Completes, and reports one network-layer denial. Enough to give an Agent
+ * persisted network evidence without needing a broker or an engine.
+ */
+class ContainedRunner implements AgentRunner {
+  constructor(private readonly host: string) {}
+  async run(): Promise<RunnerResult> {
+    return {
+      output: "done",
+      threadId: "thread-1",
+      usage: null,
+      networkDenials: [
+        {
+          host: this.host,
+          port: 443,
+          reason: "destination not allowlisted",
+          observedAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    };
+  }
+  async cancel(): Promise<boolean> {
+    return false;
+  }
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
 const ALICE: Principal = { id: "ops-alice" };
 const BOB: Principal = { id: "ops-bob" };
 const OPS: Principal = { id: "ops" };
@@ -329,6 +358,59 @@ describe("evidence lifecycle", () => {
     // Nothing orphaned in the store for the deleted Agent.
     expect(service.listApprovals(agent.id)).toHaveLength(0);
     expect(service.listApprovals()).toHaveLength(0);
+  });
+
+  it("removes network denials with the Agent, and leaves other Agents' alone", async () => {
+    // Network evidence is persisted safety evidence like a policy event, and it
+    // names a host and a run id. Left behind, it is a record nothing can
+    // resolve: the agent it points at no longer exists. The stated retention
+    // policy is that evidence does not outlive its Agent -- see
+    // docs/OPERATIONAL_GOVERNANCE.md -- and the two kinds go together, because
+    // divergent lifetimes would trap anyone reading one list and reasoning
+    // about the other.
+    // Built inline rather than through makeService so the test holds the store
+    // itself: the assertion that matters is about rows in the store, not about
+    // what an accessor will still return for an Agent that no longer exists.
+    const root = await mkdtemp(path.join(tmpdir(), "approval-test-"));
+    dirs.push(root);
+    const config = loadConfig({
+      NODE_ENV: "test",
+      APP_DATA_DIR: path.join(root, "data"),
+      AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
+      CODEX_HOME: path.join(root, "codex"),
+      ARK_API_KEY: "test-key",
+      ARK_MODEL: "ep-test",
+    });
+    const store = new JsonStore(path.join(root, "data", "db.json"));
+    const service = new AgentService(
+      config,
+      store,
+      new WorkspaceManager(path.join(root, "workspaces")),
+      new ContainedRunner("telemetry.example"),
+    );
+    await service.initialize();
+    const doomed = await service.createAgent({ name: "Doomed" });
+    const survivor = await service.createAgent({ name: "Survivor" });
+
+    const first = await service.sendMessage(doomed.id, "go");
+    await expect.poll(() => service.getRun(first.run.id).status).toBe("completed");
+    const second = await service.sendMessage(survivor.id, "go");
+    await expect.poll(() => service.getRun(second.run.id).status).toBe("completed");
+
+    expect(service.getNetworkEvents(doomed.id)).toHaveLength(1);
+    expect(service.getNetworkEvents(survivor.id)).toHaveLength(1);
+
+    await service.deleteAgent(doomed.id);
+
+    // The deleted Agent's rows are gone from the store, not merely unreachable
+    // through an accessor that would now 404. Asserted against the raw snapshot
+    // for exactly that reason.
+    const remaining = store.snapshot().networkEvents;
+    expect(remaining.filter((event) => event.agentId === doomed.id)).toHaveLength(0);
+    // And the surviving Agent's evidence is untouched: deletion is scoped, not
+    // a sweep.
+    expect(remaining.filter((event) => event.agentId === survivor.id)).toHaveLength(1);
+    expect(service.getNetworkEvents(survivor.id)).toHaveLength(1);
   });
 
   it("does not duplicate the user message on an approved continuation", async () => {

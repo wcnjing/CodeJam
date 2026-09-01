@@ -6,8 +6,20 @@ export interface RuleExplanation {
   glyph: string;
   /** Plain-language answer to "why did this happen?" */
   summary: string;
-  /** What would have happened if the platform had not intervened. */
+  /**
+   * What would have happened if the POLICY layer had not intervened, assuming
+   * nothing else would have. True as written for `local-process`, which has no
+   * broker; `describeConsequence` corrects it for the container runtime, where
+   * a lower-level refusal would have caught some of these anyway.
+   */
   consequence: string;
+  /**
+   * The same question answered for a deployment whose network layer would ALSO
+   * have refused. Present only on rules where the two layers overlap — egress
+   * rules — because for a file write or a secret read the broker has nothing to
+   * say and claiming otherwise would be worse than saying nothing.
+   */
+  containedConsequence?: string;
 }
 
 /**
@@ -26,6 +38,27 @@ export interface PolicyMode {
 }
 
 /**
+ * Whether this deployment has a network layer under the policy layer.
+ *
+ * The consequence copy used to assert that without the policy hold the Agent
+ * "could reach any host reachable from the container's network". Under the
+ * container runtime that is false: the run has no route out except a broker
+ * whose allowlist does not contain the destination, so it would have been
+ * refused regardless. Overclaiming what one layer prevents is the same defect
+ * as understating it -- both leave the reader with a wrong model of which
+ * control is load-bearing.
+ */
+export interface RuntimeMode {
+  provider: "local-process" | "container" | "replay";
+  egressIsolation: boolean;
+}
+
+/** True when a refusal would have come from the network layer as well. */
+export function hasNetworkContainment(runtime: RuntimeMode | null): boolean {
+  return runtime?.provider === "container" && runtime.egressIsolation;
+}
+
+/**
  * Keyed by the `rule` string the policy engine attaches to a PolicyDecision
  * or ApprovalRequest (see apps/server/src/command-policy.ts and
  * agent-service.ts's step-budget-exceeded event). Kept in one place so the
@@ -38,9 +71,11 @@ const RULE_EXPLANATIONS: Record<string, RuleExplanation> = {
     severity: "critical",
     glyph: "◆",
     summary:
-      "This command read a protected credential and sent data off the machine in the same step. Reading a secret is allowed on its own, and network calls are allowed on their own — combining both is a hard rule with no review path, because that combination is exactly what a credential theft looks like.",
+      "This command read a protected credential and sent data off the machine in the same step. Reading protected material is independently denied by the protected-file rule, and this command would have been stopped for that alone — but because it also carried a network call, it is classified as exfiltration, which is the more serious finding and the one with no review path at all. No human can approve it.",
     consequence:
       "Had this executed, a real credential would have left the Runtime container for a destination the platform does not control.",
+    containedConsequence:
+      "Had the policy layer not stopped this, the broker would still have refused the destination — but the secret would already have been read into the command's own process. That is why this rule is enforced before execution and is never reviewable: containment limits where the data can go, not whether it was gathered.",
   },
   "protected-secret-access": {
     label: "Protected file access",
@@ -59,6 +94,8 @@ const RULE_EXPLANATIONS: Record<string, RuleExplanation> = {
       "This command contacts a host that is not on the standing allowlist. Some non-allowlisted destinations are plausibly legitimate (a package registry, a docs site), which is why this class is one a human is permitted to review.",
     consequence:
       "Left unchecked, the Agent could reach any host reachable from the container's network, not just the ones the operator has vetted.",
+    containedConsequence:
+      "Without the policy hold, the broker would still have refused this non-allowlisted destination — the run has no route out except the broker. The policy layer adds pre-execution explanation, human review, and an auditable decision rather than relying only on a lower-level network refusal.",
   },
   "network-egress-denied-implicit": {
     label: "Destination named without a recognised network tool",
@@ -68,6 +105,8 @@ const RULE_EXPLANATIONS: Record<string, RuleExplanation> = {
       "This command names a host that is not on the allowlist, but no recognised network tool alongside it. That shape is how an obfuscated command hides its binary: the binary can be disguised or built at runtime, the destination cannot.",
     consequence:
       "Left unchecked, an egress tool spelled in a way the platform does not recognise would reach a host the operator never vetted.",
+    containedConsequence:
+      "Without the policy hold, the broker would still have refused this destination, whatever binary the command used to reach it — the network layer does not read command text at all. What the policy layer adds here is a named decision a human can review before the command runs.",
   },
   "file-write-outside-workspace": {
     label: "Write outside the sandbox",
@@ -126,6 +165,19 @@ export function explainRule(rule: string): RuleExplanation {
  * so a deployment running in monitor mode, or one that has narrowed
  * POLICY_REVIEW_RULES, is described accurately instead of aspirationally.
  */
+/**
+ * What would have happened without the policy layer, for THIS deployment.
+ *
+ * Falls back to the runtime-independent text when the runtime is unknown or has
+ * no network containment, which is the honest answer for `local-process`: there
+ * is no broker there, and the original wording is accurate as written.
+ */
+export function describeConsequence(rule: string, runtime: RuntimeMode | null): string {
+  const explanation = explainRule(rule);
+  if (!hasNetworkContainment(runtime)) return explanation.consequence;
+  return explanation.containedConsequence ?? explanation.consequence;
+}
+
 export function describeDisposition(rule: string, mode: PolicyMode | null): string {
   if (!mode) return "The configured enforcement mode for this rule is not known.";
   if (mode.enforcement === "monitor") {

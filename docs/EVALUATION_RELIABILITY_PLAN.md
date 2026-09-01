@@ -28,11 +28,29 @@ Environments:
 | `npm run test` | **CI windows, Node 24** | exit 1 — **94/106 pass, 12 fail** across 16 files, 3.24s |
 | `npm run check` | local Windows | exit 1 — the same 12 failures (see below) |
 
-The suite has grown since this document was written: 78 tests across 14 files
-then, **106 across 16** now, after Phase 1 added `bench/metrics.test.ts` and
-`evaluation-contract.test.ts`. The figures above are the current ones. The ~25s
-local `npm run check` figure is superseded by CI's measured `npm run test` times,
-which are the ones a reader can click through and check.
+**Those rows are the ORIGINAL baseline and are kept as history. The suite has
+grown well past them.** On [run 33465066517](https://github.com/wcnjing/CodeJam/actions/runs/33465066517):
+
+| Check | Environment | Result |
+| --- | --- | --- |
+| `npm run test` | CI ubuntu, Node 22 | exit 0 — 384 passed, 8 skipped across 33 server files, plus 22 web and 6 evaluation |
+| `npm run test` | CI ubuntu, Node 24 | exit 0 — identical |
+| `npm run test` | CI windows, Node 24 | exit 1 — **21 failed, 367 passed, 4 skipped (392)** across 6 of 33 files |
+| `npm run test:windows-baseline` | CI windows, Node 24 | exit 0 — *"total 21 failed of 392 (baseline 21 of 392) — Baseline held"* |
+
+The 12 became 21 as POSIX-only tests were added — `container-isolation.test.ts`
+and `safe-write.test.ts` did not exist when this section was written — and the
+count is now **stored and gated** rather than restated: see
+[`.github/windows-baseline.json`](../.github/windows-baseline.json) and
+`npm run test:windows-baseline`. The gate's first CI run is the one cited above,
+so the baseline is a clean-runner measurement rather than one laptop's.
+
+That gate is the real correction here. The number lived in three places — this
+document, the CI workflow comment, and the README — and all three drifted apart
+because nothing compared any of them against a run. A count that drifts silently
+is worse than no gate: it reads as verified when nothing verified it. The
+baseline now fails CI on drift in **either** direction, so a new POSIX-only
+assumption and a fixed one are both visible.
 
 **The platform-vs-Node-major confound is resolved — by measurement, not
 inference.** This section previously carried a caveat: the POSIX and Windows
@@ -51,26 +69,40 @@ layout with no commits on `main`. It has been flattened so the tree matches
 ### Finding: the validation command is green on POSIX, red on Windows out of the box
 
 This is a **platform** defect, not a broken suite. On Linux, `npm ci && npm run
-check` is exit 0 with all 106 tests passing, on both Node 22 and Node 24. On
-Windows the same command fails: 94 pass, 12 fail, across 4 files —
-`runner-policy.test.ts` (8/8), `budget.test.ts` (2/2),
-`container-runner-policy.test.ts` (1/1) and `container-codex-runner.test.ts`
-(1/2). Two distinct POSIX-only assumptions account for all 12:
+check` is exit 0, on both Node 22 and Node 24. On Windows the same command fails.
+On the merged commit that is **21 failures across 6 files**, and *three* distinct
+POSIX-only assumptions account for every one of them — the third arrived with
+`safe-write.test.ts` after this section was first written:
 
-- **11 failures — `spawn EFTYPE`.** `runner-policy.test.ts`, `budget.test.ts` and
-  `container-runner-policy.test.ts` write a stand-in `codex.mjs` with a
-  `#!/usr/bin/env node` shebang, `chmod 0o755` it, and spawn it directly. Windows
-  does not dispatch on the executable bit or the shebang, so every spawn throws
-  `EFTYPE`. This takes out **the entire runtime enforcement test suite** — the
-  tests that prove the container is killed, monitor mode observes, the agent slot
-  is released, the protected asset is untouched, and evidence is redacted.
-- **1 failure — hardcoded POSIX paths.** `container-codex-runner.test.ts` asserts
-  bind-mount arguments containing literal `/tmp/codex-home` and
+| File | Failing | Cause |
+| --- | ---: | --- |
+| `runner-policy.test.ts` | 8 | `spawn EFTYPE` |
+| `container-isolation.test.ts` | 5 | `spawn EFTYPE` |
+| `safe-write.test.ts` | 3 | POSIX file modes |
+| `budget.test.ts` | 2 | `spawn EFTYPE` |
+| `container-codex-runner.test.ts` | 2 | hardcoded POSIX paths |
+| `container-runner-policy.test.ts` | 1 | `spawn EFTYPE` |
+
+- **16 failures — `spawn EFTYPE`.** These files write a stand-in `codex.mjs` or
+  fake container engine with a `#!/usr/bin/env node` shebang, `chmod 0o755` it,
+  and spawn it directly. Windows does not dispatch on the executable bit or the
+  shebang, so every spawn throws `EFTYPE`. This takes out **the entire runtime
+  enforcement test suite** — the tests that prove the container is killed,
+  monitor mode observes, the agent slot is released, the protected asset is
+  untouched, and evidence is redacted. In `container-isolation.test.ts` it
+  surfaces one layer up as "Could not create the isolated network", which is the
+  fake engine failing to spawn rather than anything about isolation.
+- **3 failures — POSIX file modes.** `safe-write.test.ts` asserts
+  `(mode & 0o777) === 0o600`. Windows does not carry POSIX permission bits, so no
+  assertion of that shape can pass there.
+- **2 failures — hardcoded POSIX paths.** `container-codex-runner.test.ts`
+  asserts bind-mount arguments containing literal `/tmp/codex-home` and
   `/tmp/agent-workspace`.
 
-Everything that does not spawn a process passes: policy evaluation, the corpus
-scorecard, the security benchmark, the threat model, the store, the HTTP boundary,
-agent lifecycle, and approvals.
+Everything that does not spawn a process or assert a POSIX mode passes: policy
+evaluation, the corpus scorecard, the security benchmark, the threat model, the
+store, the HTTP boundary, agent lifecycle, approvals, the approval-to-broker
+egress path, and network-layer evidence.
 
 #### Windows: additional coverage, not outstanding debt
 
@@ -250,6 +282,14 @@ The closed figure is CI-verified on all three runners:
 [run 33369414249](https://github.com/wcnjing/CodeJam/actions/runs/33369414249)
 reports `2250/2250 = 100.00%` and `ratchet 0`.
 
+**Read that as a record of that round, not as the current figure.** The bank has
+since been widened again along the carrier axis and is no longer 2,250 variants;
+it found more of the same materialisation class, and the enforcement rate and
+ratchet moved with it. The current numbers, and what the residual now means given
+that network containment exists, are in the README's
+[Limitations](../README.md#limitations) — this document does not carry a second
+copy of them.
+
 The check this implies is unglamorous and has no automation: **periodically read
 the instrument's raw output rather than its summary.** Every other failure here
 is caught by a machine. This one is caught by looking.
@@ -366,6 +406,29 @@ format the day 3 was adopted. And `injection.test.ts` asserted
 `missUpperBound === null` "with residuals present", which was correct until the
 residuals were closed. Neither was wrong when written. Both were pinned to a
 world that changed.
+
+**And it is not confined to tests — a document does it too.**
+`docs/ARCHITECTURE.md` described the store as *"`JsonStore` serializes writes and
+atomically replaces one JSON file"*. That was an accurate sentence. It became,
+without anyone editing it, a description of a defect that had been removed:
+recording one policy decision used to re-serialise every prior decision
+(14.16–17.59 ms at 5,000 events), and policy events now go to an append-only
+JSONL log where that sentence no longer describes the write path at all.
+
+This is the same shape one layer up, and the layer matters. A stale test is at
+least *executed* — it has a chance, however poor, of noticing when its subject
+moves, which is how the r² gate was eventually caught. A stale sentence is
+executed by nobody. It is read, believed, and re-cited, and the only thing that
+disturbs it is a person happening to check that specific claim against the
+current code. `verify:figures` would not have caught it either: there is no
+figure in it, only a description, and the check reads numbers.
+
+The general form is worth stating at this level rather than the test level: **any
+artefact that describes a defect will outlive the defect and keep describing
+it.** Gates, comments, architecture docs, threat-register entries, and
+onboarding material all qualify. When a defect closes, the fix is not done until
+everything that described it has been re-read — and nothing in any toolchain here
+tells you what that set is.
 
 ### Two more that do not fit the five
 
@@ -1211,5 +1274,8 @@ for the other — do not merge them.
 - Writing or extending policy rules (Person 1).
 - Writing new attack cases or obfuscations for the corpus (Person 2).
 - Dashboard, approval UI, audit timeline, or recovery UX (Person 3).
-- Network-layer egress enforcement — deliberately deferred by the project, see
-  [docs/KILL_SWITCH_PLAN.md](KILL_SWITCH_PLAN.md).
+- Network-layer egress enforcement — out of scope for *this lane*. It was
+  deferred when this plan was written and has since been built for the container
+  runtime; see
+  [Current Security Model](../README.md#current-security-model) and
+  [docs/EGRESS_CONTAINMENT.md](EGRESS_CONTAINMENT.md).

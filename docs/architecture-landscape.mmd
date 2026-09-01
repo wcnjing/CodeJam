@@ -1,0 +1,62 @@
+%% Sentinel - the judge-facing one-pager. THIS FILE IS THE SOURCE.
+%% The .png beside it is generated and must never be hand-edited: npm run diagram
+%% Six boxes, one spine; the decisions ride on the ARROWS, and the dashed frames
+%% are the trust boundaries. Labels are kept short on purpose - mermaid sizes a
+%% rank to its widest label, so prose here costs the horizontal space that makes
+%% this fit on a slide. The component-level version is architecture-one-page.mmd.
+flowchart LR
+  subgraph B1["① BROWSER"]
+    FE["<b>Frontend</b><br/>Playground<br/>evidence view<br/>approve / deny"]
+  end
+  subgraph B2["② TRUSTED BACKEND"]
+    direction TB
+    CP["<b>Control Plane</b><br/>Fastify API<br/>AgentService<br/>approvals"]
+    POL{"<b>Sentinel</b><br/><b>Policy</b><br/>capabilities<br/>fails closed"}
+  end
+  subgraph B3["③ RUNTIME"]
+    RT["<b>Runtime</b><br/>disposable<br/>container<br/>codex exec"]
+  end
+  subgraph B4["④ NETWORK"]
+    direction TB
+    BR{"<b>Network</b><br/><b>Broker</b><br/>allowlist<br/>+ DNS"}
+  end
+  subgraph B5["⑤ EXTERNAL"]
+    EXT["<b>Provider</b><br/>Ark endpoint<br/>+ allowlisted<br/>hosts"]
+  end
+  %% Lives in the trusted backend; drawn outside the frames only because dagre
+  %% stretches a subgraph across the whole diagram to reach it, which reads as a
+  %% boundary enclosing things it does not. The label says where it lives.
+  EV[("<b>Evidence Store</b> · trusted backend<br/>runs · policy decisions<br/>network denials · approvals")]
+
+  FE --> CP
+  CP --> POL
+  POL ==>|"<b>ALLOW</b>"| RT
+  POL -.->|"<b>DENY</b>"| RT
+  POL -.->|"<b>HOLD</b>"| FE
+  FE -->|"<b>APPROVE</b>"| CP
+  CP -.->|"<b>CONTINUE</b>"| POL
+  RT ==>|"all egress"| BR
+  BR ==>|"allowed"| EXT
+  BR -.->|"<b>403</b>"| RT
+  RT -.->|"<b>CLEANUP</b>"| BR
+  POL --> EV
+  BR --> EV
+  EV --> FE
+
+  classDef untrusted fill:#fff1f2,stroke:#be123c,stroke-width:2px,color:#4c0519;
+  classDef trusted fill:#eef2ff,stroke:#4f46e5,stroke-width:2px,color:#1e1b4b;
+  classDef enforce fill:#c98a2e,stroke:#7a5312,stroke-width:3px,color:#ffffff;
+  classDef external fill:#f3f4f6,stroke:#6b7280,stroke-width:2px,stroke-dasharray: 6 4,color:#111827;
+  classDef store fill:#ecfdf5,stroke:#047857,stroke-width:2px,color:#064e3b;
+
+  class FE untrusted;
+  class CP,RT trusted;
+  class POL,BR enforce;
+  class EXT external;
+  class EV store;
+
+  style B1 fill:#ffffff,stroke:#be123c,stroke-width:2px,stroke-dasharray: 8 4
+  style B2 fill:#ffffff,stroke:#4f46e5,stroke-width:2px,stroke-dasharray: 8 4
+  style B3 fill:#ffffff,stroke:#0f766e,stroke-width:2px,stroke-dasharray: 8 4
+  style B4 fill:#ffffff,stroke:#1f2933,stroke-width:2px,stroke-dasharray: 8 4
+  style B5 fill:#ffffff,stroke:#6b7280,stroke-width:2px,stroke-dasharray: 8 4

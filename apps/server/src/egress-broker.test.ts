@@ -139,6 +139,17 @@ describe("parseEgressEndpoint", () => {
 });
 
 describe("egress broker", () => {
+  it("refuses everything when the allowlist is empty", async () => {
+    // The CLI refuses to start on an empty EGRESS_ALLOW_URL, so this is the
+    // belt to that braces: if an empty list ever reaches the server anyway, it
+    // must mean "nothing" and never "anything". Fail-closed is a property of
+    // the matcher, not only of the argument check in front of it.
+    const port = await listen(createEgressBroker({ allow: [], resolve: async () => ["8.8.8.8"] }));
+    expect(await connect(port, "CONNECT ark.example.invalid:443 HTTP/1.1\r\n\r\n")).toContain(
+      "403",
+    );
+  });
+
   it("refuses a destination that is not the allowlisted one", async () => {
     const port = await listen(createEgressBroker({ allow: [ALLOW], resolve: async () => ["8.8.8.8"] }));
     const response = await connect(port, "CONNECT evil.example.invalid:443 HTTP/1.1\r\n\r\n");

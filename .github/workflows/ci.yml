@@ -165,23 +165,34 @@ jobs:
       # and a reachable model endpoint, none of which exist on a CI runner. It is
       # a developer/demo-day tool, not a build gate.
 
-  # NON-BLOCKING, and expected to be red today. Do not "fix" this by deleting it.
+  # Expected red, and GATED on exactly how red.
   #
-  # `npm run test` fails 12 of its tests on Windows for two POSIX-only reasons
-  # documented in docs/EVALUATION_RELIABILITY_PLAN.md §0: the fake-Codex stand-in
-  # is spawned relying on a shebang and the executable bit (Windows dispatches on
-  # neither, so every spawn throws EFTYPE), and container-codex-runner.test.ts
-  # asserts literal /tmp bind-mount paths.
+  # `npm run test` fails on Windows for three POSIX-only reasons documented in
+  # docs/EVALUATION_RELIABILITY_PLAN.md §0: the fake-Codex and fake-engine
+  # stand-ins are spawned relying on a shebang and the executable bit (Windows
+  # dispatches on neither, so every spawn throws EFTYPE),
+  # container-codex-runner.test.ts asserts literal /tmp bind-mount paths, and
+  # safe-write.test.ts asserts POSIX permission bits.
   #
-  # This leg exists because the Windows figures in §0 were themselves a
-  # single-machine assertion. Running them here makes both platform claims
-  # verifiable from the same evidence, without a red badge on the branch. When
-  # Persons 1-2 fix the spawn and the hardcoded paths, drop continue-on-error and
-  # fold windows-latest into the matrix above.
+  # The count used to live in this comment, and it rotted: it read 12 while the
+  # suite had grown past it and the README said ~20. Nothing compared either
+  # against a run. It now lives in .github/windows-baseline.json and is checked
+  # by `npm run test:windows-baseline`, which fails on drift in EITHER direction
+  # — more failures means a POSIX-only assumption was added, fewer means one was
+  # fixed and the baseline was not lowered. That step is BLOCKING, because a
+  # baseline nobody can fail is not a baseline.
+  #
+  # `npm run test` itself stays continue-on-error: it is expected to exit
+  # non-zero, and the baseline check is what reads the result. When the spawn,
+  # the hardcoded paths and the mode assertions are fixed, drop this leg and fold
+  # windows-latest into the matrix above.
   windows:
-    name: "windows (known-red — see EVALUATION_RELIABILITY_PLAN §0)"
+    name: "windows (expected red — baseline-gated, see EVALUATION_RELIABILITY_PLAN §0)"
     runs-on: windows-latest
-    continue-on-error: true
+    # NOT continue-on-error at the job level any more. That flag made the whole
+    # leg unfalsifiable: every step could fail and the job still reported green,
+    # which is why the stale "12 failures" survived so long. The individual steps
+    # expected to be red carry the flag instead, and the baseline gate does not.
     steps:
       - uses: actions/checkout@v4
 
@@ -196,16 +207,25 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # Expected: 12 failures. A change in that COUNT is the signal worth reading
-      # here — it means either a POSIX-only assumption was added, or one was fixed.
-      - name: Test (expected red — 12 POSIX-only failures)
+      # Expected to exit non-zero. The COUNT is the signal, and the step below is
+      # what reads it; this one exists so the full output is in the job log.
+      - name: Test (expected red — POSIX-only failures)
+        continue-on-error: true
         run: npm run test
+
+      # BLOCKING. Compares the Windows failure count, per file, against
+      # .github/windows-baseline.json and fails on drift in either direction.
+      # This is the step that makes the leg mean something: without it "expected
+      # red" is unfalsifiable.
+      - name: Windows failure baseline (gate)
+        if: always()
+        run: npm run test:windows-baseline
 
       # Everything below carries `if: always()`. Without it a failing test step
       # aborts the job, which is what happened on the first CI run: Build and
       # every step after it were skipped, so this leg verified typecheck and test
-      # and nothing else. The 12 test failures are known and expected; they must
-      # not also hide whether the build and the CLIs work on Windows.
+      # and nothing else. The POSIX-only test failures are known and expected;
+      # they must not also hide whether the build and the CLIs work on Windows.
 
       - name: Build
         if: always()

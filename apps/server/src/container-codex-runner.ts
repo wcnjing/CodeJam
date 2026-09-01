@@ -2,7 +2,12 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
-import { EgressIsolation, type IsolationHandle } from "./network-isolation.js";
+import {
+  EgressIsolation,
+  type BrokerDenialRecord,
+  type EngineExec,
+  type IsolationHandle,
+} from "./network-isolation.js";
 import {
   buildCodexArgs,
   emptyParsedEvents,
@@ -10,7 +15,12 @@ import {
 } from "./codex-runner.js";
 import { BudgetExceededError, PolicyViolationError, RunCancelledError } from "./errors.js";
 import { policyContextFrom, scanCommands, type Actor, type DetectedViolation } from "./command-policy.js";
-import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
+import type {
+  AgentRunner,
+  NetworkDenialObservation,
+  RunnerRequest,
+  RunnerResult,
+} from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -175,8 +185,17 @@ export class ContainerCodexRunner implements AgentRunner {
   /** Live topology per agent, so teardown can run even if the run throws. */
   private readonly isolated = new Map<string, IsolationHandle>();
 
-  constructor(private readonly config: AppConfig) {
-    this.isolation = new EgressIsolation(config);
+  /**
+   * `exec` is the same injectable engine seam EgressIsolation already exposes,
+   * surfaced one level up so a test can drive the real start path — setup,
+   * readiness, broker inspect, teardown — without a container engine.
+   * Production passes nothing and gets the real engine.
+   */
+  constructor(
+    private readonly config: AppConfig,
+    exec?: EngineExec,
+  ) {
+    this.isolation = new EgressIsolation(config, exec);
   }
 
   /**
@@ -192,9 +211,10 @@ export class ContainerCodexRunner implements AgentRunner {
   private async startIsolation(
     agentId: string,
     extraAllowedHosts: string[] = [],
+    runId?: string,
   ): Promise<IsolationHandle | null> {
     if (!this.config.containerEgressIsolation) return null;
-    const handle = await this.isolation.setup(agentId, extraAllowedHosts);
+    const handle = await this.isolation.setup(agentId, extraAllowedHosts, runId);
     this.isolated.set(agentId, handle);
     const ready = await this.isolation.waitUntilReady(
       handle,
@@ -209,9 +229,73 @@ export class ContainerCodexRunner implements AgentRunner {
     return handle;
   }
 
+  /**
+   * Denials read back for the run in flight, keyed by agent.
+   *
+   * `null` is a real value here and means "the log could not be read", which
+   * must survive all the way to the operator as "unknown" rather than being
+   * flattened into "none".
+   */
+  private readonly denials = new Map<string, BrokerDenialRecord[] | null>();
+
+  /**
+   * Reads the broker's denials and merges them into what this run already has.
+   *
+   * Called twice: once after the Agent's process settles, and once more from
+   * teardown before the broker container is stopped. The second is what catches
+   * a denial in the run's final moments — the container is `--rm`, so once it
+   * stops its log is gone and there is no later chance. The engine replays the
+   * whole log each time, so the two reads overlap; records are deduplicated on
+   * their own content.
+   *
+   * A failed read never downgrades a successful one. If the first read worked
+   * and the second failed, the run keeps the evidence it has rather than
+   * discarding it — but a run whose ONLY read failed stays `null`, and reports
+   * unknown.
+   */
+  private async collectDenials(agentId: string): Promise<void> {
+    const handle = this.isolated.get(agentId);
+    if (!handle) return;
+    const fresh = await this.isolation.collectDenials(handle);
+    if (fresh === null) {
+      // Preserve an earlier successful read; only record the failure if there
+      // is nothing better.
+      if (!this.denials.has(agentId)) this.denials.set(agentId, null);
+      return;
+    }
+    const existing = this.denials.get(agentId) ?? [];
+    const seen = new Set((existing ?? []).map((record) => JSON.stringify(record)));
+    const merged = [...(existing ?? [])];
+    for (const record of fresh) {
+      const key = JSON.stringify(record);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(record);
+    }
+    this.denials.set(agentId, merged);
+  }
+
+  /** What the run should report: undefined (no broker), null (unknown), or the list. */
+  private takeDenials(agentId: string): NetworkDenialObservation[] | null | undefined {
+    if (!this.config.containerEgressIsolation) return undefined;
+    if (!this.denials.has(agentId)) return null;
+    const records = this.denials.get(agentId) ?? null;
+    this.denials.delete(agentId);
+    if (records === null) return null;
+    return records.map((record) => ({
+      host: record.host,
+      port: record.port,
+      reason: record.reason,
+      observedAt: record.at || new Date().toISOString(),
+    }));
+  }
+
   private async stopIsolation(agentId: string): Promise<void> {
     const handle = this.isolated.get(agentId);
     if (!handle) return;
+    // Last chance: the broker runs --rm, so its log dies with the container.
+    // Read before stopping, not after.
+    await this.collectDenials(agentId);
     this.isolated.delete(agentId);
     await this.isolation.teardown(handle);
   }
@@ -275,15 +359,34 @@ export class ContainerCodexRunner implements AgentRunner {
       throw new Error("Agent already has an active Runtime container");
     }
 
-    const handle = await this.startIsolation(request.agentId, request.extraAllowedHosts ?? []);
+    const handle = await this.startIsolation(
+      request.agentId,
+      request.extraAllowedHosts ?? [],
+      request.runId,
+    );
     try {
-      return await this.runContained(request, handle?.brokerIp ?? undefined);
+      const result = await this.runContained(request, handle?.brokerIp ?? undefined);
+      // Attached here rather than inside runContained: its `finally` is what
+      // performs the teardown read, and that has to have happened before the
+      // evidence is final. By the time this line runs, it has.
+      const denials = this.takeDenials(request.agentId);
+      // Omitted entirely rather than set to undefined: with
+      // exactOptionalPropertyTypes, "absent" and "explicitly undefined" are
+      // different types, and absent is the one that means "there was no broker".
+      return denials === undefined ? result : { ...result, networkDenials: denials };
     } catch (error) {
       // The spawn and the setup after it used to sit outside any teardown path,
       // so anything throwing there left the network and the broker behind until
       // the next run for this agent cleared them. stopIsolation is idempotent,
       // so the inner finally having already run is harmless.
       await this.stopIsolation(request.agentId);
+      // A blocked or failed run is exactly when containment evidence matters
+      // most, so it rides out on the error the same way monitor observations do.
+      const denials = this.takeDenials(request.agentId);
+      if (denials !== undefined) {
+        (error as { networkDenials?: NetworkDenialObservation[] | null }).networkDenials =
+          denials;
+      }
       throw error;
     }
   }
@@ -390,6 +493,10 @@ export class ContainerCodexRunner implements AgentRunner {
         child.once("error", reject);
         child.once("close", (code) => resolve(code ?? 1));
       });
+      // First read, while the topology is still up and the run is still being
+      // decided. Teardown reads again; this one exists so a broker that dies
+      // between here and there does not take the run's evidence with it.
+      await this.collectDenials(request.agentId);
       if (stdout.trim()) parseCodexEventLine(stdout.trim(), parsed);
       // The final flush may have added commands; evaluate them before deciding.
       applyPolicy();

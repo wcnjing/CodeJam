@@ -860,3 +860,100 @@ describe("run-outcome SLI under fault injection", () => {
     }
   }, 30_000);
 });
+
+// ---------------------------------------------------------------------------
+// Network-layer evidence, over HTTP
+// ---------------------------------------------------------------------------
+
+/** Reports a fixed network verdict, standing in for the broker log read. */
+class ContainedRunner implements AgentRunner {
+  constructor(private readonly verdict: RunnerResult["networkDenials"]) {}
+  async run(): Promise<RunnerResult> {
+    return {
+      output: "done",
+      threadId: "t1",
+      usage: null,
+      ...(this.verdict === undefined ? {} : { networkDenials: this.verdict }),
+    };
+  }
+  async cancel(): Promise<boolean> {
+    return false;
+  }
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+}
+
+// @covers TM-AGENT-006
+describe("network-layer denials are served as their own evidence stream", () => {
+  it("serves a broker denial on its own route, not folded into policy events", async () => {
+    // The two are different in kind — a policy decision is pre-execution and
+    // explains itself, a broker denial is post-execution and means the
+    // classifier missed it — so a client asking for one must not have to filter
+    // the other out of a merged list.
+    const { app } = await makeApp(
+      new ContainedRunner([
+        {
+          host: "telemetry.example",
+          port: 443,
+          reason: "destination not allowlisted",
+          observedAt: "2026-09-01T10:00:00.000Z",
+        },
+      ]),
+    );
+    const agent = (
+      (await post(app, "/api/agents", { name: "Contained" })).json() as { agent: { id: string } }
+    ).agent;
+    const runId = (
+      (await post(app, `/api/agents/${agent.id}/messages`, { content: "go" })).json() as {
+        run: { id: string };
+      }
+    ).run.id;
+    await expect.poll(() => runStatus(app, runId)).toBe("completed");
+
+    const network = await get(app, `/api/agents/${agent.id}/network-events`);
+    expect(network.statusCode).toBe(200);
+    const events = (network.json() as { networkEvents: Record<string, unknown>[] }).networkEvents;
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      runId,
+      host: "telemetry.example",
+      port: 443,
+      source: "egress-broker",
+    });
+
+    const policy = await get(app, `/api/agents/${agent.id}/policy-events`);
+    expect((policy.json() as { policyEvents: unknown[] }).policyEvents).toHaveLength(0);
+
+    const run = (await get(app, "/api/runs/" + runId)).json() as {
+      run: { networkEvidence?: string };
+    };
+    expect(run.run.networkEvidence).toBe("collected");
+  }, 30_000);
+
+  it("reports unreadable evidence as unknown rather than as a clean run", async () => {
+    // The failure this exists to prevent: an empty list plus a completed run
+    // reading as "nothing was refused", when in fact nobody could tell.
+    const { app } = await makeApp(new ContainedRunner(null));
+    const agent = (
+      (await post(app, "/api/agents", { name: "Blind" })).json() as { agent: { id: string } }
+    ).agent;
+    const runId = (
+      (await post(app, `/api/agents/${agent.id}/messages`, { content: "go" })).json() as {
+        run: { id: string };
+      }
+    ).run.id;
+    await expect.poll(() => runStatus(app, runId)).toBe("completed");
+
+    const network = await get(app, `/api/agents/${agent.id}/network-events`);
+    expect((network.json() as { networkEvents: unknown[] }).networkEvents).toHaveLength(0);
+
+    // Same empty list as a clean run; only this field separates them, and the
+    // run itself completed normally because evidence collection never fails one.
+    const run = (await get(app, "/api/runs/" + runId)).json() as {
+      run: { networkEvidence?: string; status: string };
+    };
+    expect(run.run.networkEvidence).toBe("unavailable");
+    expect(run.run.status).toBe("completed");
+  }, 30_000);
+});

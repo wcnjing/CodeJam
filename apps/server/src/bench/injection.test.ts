@@ -23,8 +23,9 @@ describe("the requested-command corpus", () => {
 
   it("is the full cross product, with stable unique ids", () => {
     // 3 collectors x (8 file-reading payloads x 3 secrets + 1 env payload x 1)
-    // x 30 carriers.
-    expect(rows.length).toBe(3 * (8 * 3 + 1) * 30);
+    // x 50 carriers. Was 30 until the second enumeration's carriers were folded
+    // in; the denominator is part of the claim, so it is asserted, not inferred.
+    expect(rows.length).toBe(3 * (8 * 3 + 1) * 50);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
   });
 
@@ -45,11 +46,28 @@ describe("the requested-command corpus", () => {
     }
   });
 
-  it("covers all three carrier classes", () => {
+  it("covers every carrier class", () => {
     const classes = new Set(rows.map((r) => r.carrierClass));
     expect(classes).toEqual(
-      new Set(["direct", "materialised-file", "materialised-stdin"]),
+      new Set([
+        "direct",
+        "materialised-file",
+        "materialised-stdin",
+        "shell-binding",
+        "deferred-registry",
+        "exec-wrapper",
+      ]),
     );
+  });
+
+  it("keeps the three original classes fully closed", () => {
+    // Every one of the 132 open bypasses is in a class added by the fourth
+    // widening. A leak in `direct`, `materialised-file` or `materialised-stdin`
+    // would be a regression in the ordinary rules -- a different finding with a
+    // different owner -- and must never be absorbed into the carrier ratchet.
+    const closed = new Set(["direct", "materialised-file", "materialised-stdin"]);
+    const leaked = runEnforcement().allowed.filter((r) => closed.has(r.carrierClass));
+    expect(leaked).toEqual([]);
   });
 
   it("is malicious by construction: every row names a non-allowlisted sink", () => {
@@ -125,16 +143,17 @@ describe("the enforcement measurement", () => {
     expect(result.ci.high).toBeGreaterThanOrEqual(result.rate);
   });
 
-  it("reports a zero-failure bound now that nothing is allowed", () => {
-    // This assertion used to read `expect(missUpperBound).toBeNull()`, which was
-    // correct while residuals existed and became wrong the moment they did not.
-    // 100% is exactly when the interval matters most: 0/2250 is not a rate of
-    // zero, it is a rate whose upper bound is ~0.13% at 95% confidence, on a
-    // corpus we wrote ourselves.
-    expect(result.allowed).toEqual([]);
-    expect(result.missUpperBound).not.toBeNull();
-    expect(result.missUpperBound!).toBeGreaterThan(0);
-    expect(result.missUpperBound!).toBeLessThan(0.01);
+  it("reports a two-sided interval while residuals exist", () => {
+    // This assertion has now been correct in three different forms, which is
+    // itself the lesson. It read `missUpperBound === null` while residuals
+    // existed; became wrong when the 30-carrier axis reached 0 and the
+    // zero-failure bound started applying; and is wrong again now that widening
+    // the axis reopened residuals. The subject keeps moving, so the test says
+    // which world it is asserting about rather than pinning a value.
+    expect(result.allowed.length).toBe(MAX_KNOWN_BYPASSES);
+    expect(result.missUpperBound).toBeNull();
+    expect(result.ci.low).toBeLessThanOrEqual(result.rate);
+    expect(result.ci.high).toBeGreaterThanOrEqual(result.rate);
   });
 });
 

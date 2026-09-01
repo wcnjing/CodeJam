@@ -8,18 +8,20 @@ import type {
   EvaluationSummary,
   Message,
   EvaluationRunSummary,
+  NetworkDenial,
   PolicyDecision,
   Principal,
   SystemInfo,
 } from "./types";
 import { AuditTimeline } from "./components/AuditTimeline";
 import { DecisionExplanation } from "./components/DecisionExplanation";
-import type { PolicyMode } from "./lib/ruleExplanations";
+import type { PolicyMode, RuntimeMode } from "./lib/ruleExplanations";
 import { PendingApprovalCard, ResolvedApprovalCard } from "./components/ApprovalCard";
 import { RecoveryBanner } from "./components/RecoveryBanner";
 import { WelcomePage } from "./components/WelcomePage";
 import { ExamplePrompts } from "./components/ExamplePrompts";
 import { TourBar } from "./components/TourBar";
+import { loadAgentEvidence } from "./lib/evidence";
 import { buildAuditTimeline } from "./lib/timeline";
 import { buildTourSteps } from "./lib/evaluationTour";
 
@@ -451,6 +453,15 @@ export default function App() {
   const policyMode: PolicyMode | null = system
     ? { enforcement: system.policyEnforcement, reviewRules: system.policyReviewRules }
     : null;
+  // Same idea one layer down: what a denial actually PREVENTED depends on
+  // whether there is a broker under the policy layer. Without this the
+  // consequence copy asserts the no-broker answer on every deployment.
+  const runtimeMode: RuntimeMode | null = system
+    ? {
+        provider: system.runtimeProvider,
+        egressIsolation: system.containerEgressIsolation,
+      }
+    : null;
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -458,6 +469,7 @@ export default function App() {
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [policyEvents, setPolicyEvents] = useState<PolicyDecision[]>([]);
+  const [networkEvents, setNetworkEvents] = useState<NetworkDenial[]>([]);
   const [showPolicy, setShowPolicy] = useState(false);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [principal, setPrincipal] = useState<Principal | null>(null);
@@ -509,8 +521,8 @@ export default function App() {
   );
 
   const timelineEvents = useMemo(
-    () => buildAuditTimeline(runs, policyEvents, approvals),
-    [runs, policyEvents, approvals],
+    () => buildAuditTimeline(runs, policyEvents, approvals, networkEvents),
+    [runs, policyEvents, approvals, networkEvents],
   );
 
   const selected = useMemo(
@@ -537,10 +549,18 @@ export default function App() {
   }, []);
 
   const refreshPolicyEvents = useCallback(async (agentId: string) => {
-    const result = await api.policyEvents(agentId);
-    if (mountedRef.current && selectedIdRef.current === agentId) {
-      setPolicyEvents(result.policyEvents);
-    }
+    // Both fetches go through one guarded loader so the network-events response
+    // cannot be applied after the operator has switched agents -- see
+    // lib/evidence.ts. It used to set state unconditionally while the policy
+    // fetch beside it checked, so a slow response for agent A repopulated the
+    // timeline with A's evidence under agent B.
+    await loadAgentEvidence(agentId, {
+      fetchNetworkEvents: api.networkEvents,
+      fetchPolicyEvents: api.policyEvents,
+      isCurrent: (id) => mountedRef.current && selectedIdRef.current === id,
+      setNetworkEvents,
+      setPolicyEvents,
+    });
   }, []);
 
   const refreshApprovals = useCallback(async (agentId: string) => {
@@ -660,6 +680,7 @@ export default function App() {
     setShowSettings(false);
     setShowPolicy(false);
     setPolicyEvents([]);
+    setNetworkEvents([]);
     setApprovals([]);
     setApprovalReason("");
     if (!selectedId) {
@@ -1210,6 +1231,7 @@ export default function App() {
                           command={budgetDecision.command}
                           detail={budgetDecision.detail}
                           mode={policyMode}
+                          runtime={runtimeMode}
                         />
                       )}
                     </article>
@@ -1228,6 +1250,7 @@ export default function App() {
                   <PendingApprovalCard
                     key={pendingApproval.id}
                     mode={policyMode}
+                    runtime={runtimeMode}
                     approval={pendingApproval}
                     principal={principal}
                     reason={approvalReason}
@@ -1254,6 +1277,7 @@ export default function App() {
                           command={blockedDecision.command}
                           detail={blockedDecision.detail}
                           mode={policyMode}
+                          runtime={runtimeMode}
                         />
                       )}
                     </article>

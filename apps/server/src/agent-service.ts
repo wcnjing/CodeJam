@@ -17,6 +17,8 @@ import type {
   CreateAgentInput,
   ApprovalRequest,
   Message,
+  NetworkDenial,
+  NetworkDenialObservation,
   PolicyDecision,
   PolicyObservation,
   UpdateAgentInput,
@@ -127,8 +129,27 @@ export class AgentService {
       // append-only log now, not in this blob, so filtering the array here would
       // silently do nothing.
       database.approvals = database.approvals.filter((item) => item.agentId !== id);
+      // Network denials DO live in this blob (v5), so unlike policy events they
+      // are filtered here rather than through the log. Same decision, different
+      // store: the Agent's evidence goes with the Agent.
+      database.networkEvents = database.networkEvents.filter((item) => item.agentId !== id);
     });
     // The Agent's safety evidence goes too, so it is not orphaned in the store.
+    // Both kinds, deliberately: a network denial names a host and a run id, and
+    // keeping it past the deletion of the agent that produced it would leave a
+    // record nothing can resolve — the orphan this deletes rather than creates.
+    //
+    // RETENTION POLICY, stated rather than implied: evidence does not outlive
+    // its Agent. Deleting an Agent is an operator action on their own workspace,
+    // not a compliance hold, and the two kinds of evidence are deliberately
+    // parallel everywhere else — divergent lifetimes would be a trap for anyone
+    // reading one list and reasoning about the other. Documented in
+    // docs/OPERATIONAL_GOVERNANCE.md and docs/THREAT_MODEL.md (TM-OPS-001).
+    //
+    // The two stores cannot be written atomically. Network events go with the
+    // blob above; if THIS call then fails, policy events linger for an Agent
+    // that is gone. That window predates network events and is unchanged by
+    // them; it is bounded by the call being idempotent and safe to retry.
     await this.store.removePolicyEventsForAgent(id);
     return { archivedWorkspace };
   }
@@ -173,6 +194,23 @@ export class AgentService {
       .snapshot()
       .policyEvents.filter((event) => event.agentId === agentId)
       .sort((left, right) => right.decidedAt.localeCompare(left.decidedAt));
+  }
+
+  /**
+   * Network-layer denials for an agent, newest first.
+   *
+   * Served separately from `getPolicyEvents` on purpose. A policy decision was
+   * made before the command ran and explains itself; a broker denial happened
+   * after it ran and means the classifier did not recognise the command. An
+   * operator reading one list has to be able to tell which is which, so they
+   * are not merged.
+   */
+  getNetworkEvents(agentId: string): NetworkDenial[] {
+    this.getAgent(agentId);
+    return this.store
+      .snapshot()
+      .networkEvents.filter((event) => event.agentId === agentId)
+      .sort((left, right) => right.observedAt.localeCompare(left.observedAt));
   }
 
   listApprovals(agentId?: string): ApprovalRequest[] {
@@ -460,6 +498,12 @@ export class AgentService {
       policyEnforcement: this.config.policyEnforcement,
       policyReviewRules: [...this.config.policyReviewRules],
       runtimeProvider: this.config.runtimeProvider,
+      // The UI's "if this had not been caught" copy differs by runtime: with a
+      // broker the destination was unreachable anyway, without one it was not.
+      // Served rather than inferred from runtimeProvider, because a container
+      // deployment can turn isolation off.
+      containerEgressIsolation:
+        this.config.runtimeProvider === "container" && this.config.containerEgressIsolation,
       containerEngine:
         this.config.runtimeProvider === "container"
           ? this.config.containerEngine
@@ -521,6 +565,47 @@ export class AgentService {
     }
   }
 
+  /**
+   * Writes the network layer's verdict for a run into the SAME mutation as the
+   * run's outcome, exactly as policy events are written.
+   *
+   * Three outcomes and they are not interchangeable:
+   *
+   *   undefined  no broker existed (isolation off, or local-process). The run
+   *              carries no networkEvidence at all, which reads as "not
+   *              applicable" rather than as a clean result.
+   *   null       a broker existed and its log could not be read. Recorded as
+   *              `unavailable`, so the UI says UNKNOWN. This is the state that
+   *              must never be allowed to look like "no denials".
+   *   []         read successfully, nothing refused. `collected` with no
+   *              events, which honestly means the run tried nothing it should
+   *              not have.
+   */
+  private recordNetworkEvidence(
+    database: Database,
+    runId: string,
+    agentId: string,
+    denials: NetworkDenialObservation[] | null | undefined,
+    at: string,
+  ): void {
+    if (denials === undefined) return;
+    const storedRun = database.runs.find((item) => item.id === runId);
+    if (storedRun) storedRun.networkEvidence = denials === null ? "unavailable" : "collected";
+    if (denials === null) return;
+    for (const denial of denials) {
+      database.networkEvents.push({
+        id: randomUUID(),
+        agentId,
+        runId,
+        host: denial.host,
+        port: denial.port,
+        reason: denial.reason,
+        source: "egress-broker",
+        observedAt: denial.observedAt || at,
+      });
+    }
+  }
+
   private async executeRun(
     agentAtStart: Agent,
     run: AgentRun,
@@ -553,6 +638,9 @@ export class AgentService {
           ...(this.store.snapshot().allowlist ?? []),
           ...extraAllowedHosts,
         ],
+        // Correlation for network-layer evidence: the broker is a detached
+        // container that would otherwise have no idea which run it serves.
+        runId: run.id,
       });
       const completedAt = now();
       await this.settleRun(run.id, agentAtStart.id, (database) => {
@@ -575,6 +663,16 @@ export class AgentService {
         agent.codexThreadId = result.threadId;
         agent.lastError = null;
         agent.updatedAt = completedAt;
+        // The network layer's verdict, in the same atomic write as the run's
+        // outcome — the same guarantee policy events already have, so evidence
+        // and outcome can never disagree.
+        this.recordNetworkEvidence(
+          database,
+          run.id,
+          agent.id,
+          result.networkDenials,
+          completedAt,
+        );
         // Monitor mode: the command was denied by policy but allowed to run.
         // Recording it is the whole point of shadow-running a policy change.
         for (const observation of result.violations ?? []) {
@@ -610,6 +708,15 @@ export class AgentService {
       const blocked = policyDenied && !held;
       const message = error instanceof Error ? error.message : String(error);
       await this.settleRun(run.id, agentAtStart.id, (database) => {
+        // A blocked, held or failed run is exactly when containment evidence
+        // matters most: the classifier may have missed what the network caught.
+        this.recordNetworkEvidence(
+          database,
+          run.id,
+          agentAtStart.id,
+          (error as { networkDenials?: NetworkDenialObservation[] | null }).networkDenials,
+          completedAt,
+        );
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (storedRun) {

@@ -6,6 +6,7 @@ import type {
   EvaluationSummary,
   Message,
   EvaluationRunSummary,
+  NetworkDenial,
   PolicyDecision,
   Principal,
   SystemInfo,
@@ -95,6 +96,8 @@ export const api = {
     request<EvaluationRunSummary>("/api/pentest" + (refresh ? "?refresh=1" : "")),
   policyEvents: (id: string) =>
     request<{ policyEvents: PolicyDecision[] }>("/api/agents/" + id + "/policy-events"),
+  networkEvents: (id: string) =>
+    request<{ networkEvents: NetworkDenial[] }>("/api/agents/" + id + "/network-events"),
   approvals: (id: string) =>
     request<{ approvals: ApprovalRequest[] }>("/api/agents/" + id + "/approvals"),
   resolveApproval: (
