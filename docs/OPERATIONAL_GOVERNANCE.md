@@ -14,7 +14,7 @@ that lens, crediting real coverage and naming the gaps.
 | **Incident & near-miss handling** | **Strong.** Enforced denials are incidents; monitor-mode observations are recorded near-misses; evidence is redacted and preserved; rollback (container destroyed, workspace intact) is automatic. | `policyEvents` (`enforced` flag), monitor mode |
 | **Explicit use boundaries** | Partial. Tool/host boundaries enforced at the Runtime; not yet re-triggered on environment change (see gaps). | allowlist, `.secrets/`, `AGENTS.md` |
 | **Change-management triggers** | Partial. CI ratchets fail on policy-rule regressions. But the policy's correctness depends on the Runtime image's toolset (curl absent, node present) and the model — neither is a governed trigger. | `policy-eval.test.ts` |
-| **Data & log governance** | Strong. Redaction is enforced before storage/display, and `policyEvents`/resolved `approvals` are now pruned past `AUDIT_RETENTION_DAYS` on every store write. Access/deletion controls beyond retention are still out of scope for the POC. | `redactCommand`, `JsonStore.prune` |
+| **Data & log governance** | Strong. Redaction is enforced before storage/display, and `policyEvents`/resolved `approvals` are pruned past `AUDIT_RETENTION_DAYS`. **Evidence does not outlive its Agent**: deleting an Agent removes its policy events *and* its network denials, in the same deletion path — see the retention policy below. Access controls beyond retention are still out of scope for the POC. | `redactCommand`, `JsonStore.prune`, `AgentService.deleteAgent` |
 | **Post-deployment monitoring** | Partial. The substrate exists (persisted decisions, enforce-vs-monitor, override records); no drift/subgroup/rate dashboard yet. | `policyEvents`, `approvals` |
 | **Appeal & redress** | Partial. The approval workflow is a structured reconsideration path for a held run. There is no path for an already-hard-blocked run. | `resolveApproval` |
 | **Supply-chain, decommissioning, independent challenge** | Minor / out of scope. Pinned runtime image and `POLICY_ENFORCEMENT` off-switch exist; the rest is contractual or organizational, not a POC concern. | `Dockerfile.runtime`, config |
@@ -70,3 +70,44 @@ a permanent config change.
    `chmod` and interpreter writes are not seen. The authority limit is real; its
    coverage is first-pass. Recorded as unreduced residual likelihood on
    TM-AGENT-007 rather than as a solved control.
+
+## Evidence retention policy
+
+Two rules, stated rather than left to be inferred from the code.
+
+**1. Age.** `policyEvents` and resolved `approvals` are pruned past
+`AUDIT_RETENTION_DAYS` (default 90). A *pending* approval is live state — a held
+run waiting on a human — not history, so it is exempt regardless of age and
+becomes eligible only once resolved.
+
+**2. Agent lifetime.** **Evidence does not outlive the Agent that produced it.**
+Deleting an Agent removes its messages, runs, approvals, policy events and
+network denials, in `AgentService.deleteAgent`.
+
+The second rule is a decision, not an omission, and the argument for it is worth
+recording because the opposite is defensible in other systems:
+
+- A network denial names a **host and a run id**. Kept past the deletion of the
+  Agent that produced it, it is a record nothing can resolve — an orphan, which
+  is the thing an audit trail is supposed not to accumulate.
+- Policy events already worked this way. The two kinds of evidence are
+  deliberately parallel everywhere else in this design (stored apart, rendered
+  apart, never merged). Divergent *lifetimes* would be a trap for anyone reading
+  one list and reasoning about the other.
+- Deleting an Agent is an operator action on their own workspace, not a
+  compliance hold. This POC has no legal-hold concept, no per-Agent
+  authorization, and no export path; retaining evidence past deletion would
+  imply a guarantee none of those support.
+
+**If you need evidence to survive deletion**, that is a different product: it
+needs an export or archive step before the delete, a retention class that
+deletion cannot override, and an answer for who may read records belonging to an
+Agent that no longer exists. None of those exist here, and adding retention
+without them would leave unreadable rows accumulating in a JSON blob.
+
+**Known divergence, not yet closed.** Rule 1 does not apply to `networkEvents`:
+they are pruned by rule 2 only. Age-based pruning covers `policyEvents` (via log
+compaction) and resolved `approvals` (via `JsonStore.prune`), so a long-lived
+Agent that keeps triggering broker denials accumulates them without bound. That
+is the TM-OPS-001 shape again, on a newer record type, and it is tracked rather
+than fixed here.

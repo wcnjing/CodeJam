@@ -204,5 +204,17 @@ budget default. These are recorded per-threat in the register.
 - **Audit retention depends on config** (TM-OPS-001) — `policyEvents`/resolved
   `approvals` are pruned past `AUDIT_RETENTION_DAYS` on every store write; a
   misconfigured (too-long) default is the residual risk, not unbounded growth.
+  Evidence is also bounded by Agent lifetime: deleting an Agent removes its
+  policy events **and** its network denials, so neither is left as a record
+  naming a run and a host that nothing can resolve. That is a stated retention
+  policy, written up in
+  [OPERATIONAL_GOVERNANCE.md](OPERATIONAL_GOVERNANCE.md#evidence-retention-policy),
+  not an implementation accident.
+- **`networkEvents` are not age-pruned** (TM-OPS-001, partial). They are removed
+  with their Agent, but `AUDIT_RETENTION_DAYS` does not reach them the way it
+  reaches policy events and resolved approvals, so a long-lived Agent that keeps
+  triggering broker denials accumulates them without bound. Recorded here rather
+  than fixed alongside the deletion path: age pruning for a second evidence type
+  is its own change, with its own compaction and its own test surface.
 - **Ordinary containers share a kernel** and are not hardened multi-tenant
   isolation, as the Starter Kit itself notes.

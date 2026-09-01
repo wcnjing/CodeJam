@@ -1,12 +1,12 @@
 {
   "_comment": "The Windows failure baseline, as a ratchet rather than a comment. `npm run test:windows-baseline` measures the server suite on Windows and compares it against this file, failing on drift in EITHER direction. A count that only lives in a workflow comment drifts silently, and a silently drifting count is worse than no gate: it reads as verified when nothing verified it. Every entry names WHY that file fails, so a reviewer can tell a POSIX-only assumption from a real regression without running anything.",
   "measuredOn": {
-    "commit": "9a152f2",
+    "commit": "21d328f + PR #13 review fixes",
     "os": "Windows 11 26200",
     "node": "24.16.0",
     "workspace": "@sentinel/server"
   },
-  "totalTests": 392,
+  "totalTests": 393,
   "failedTests": 21,
   "byFile": {
     "budget.test.ts": {

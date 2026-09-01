@@ -21,6 +21,7 @@ import { RecoveryBanner } from "./components/RecoveryBanner";
 import { WelcomePage } from "./components/WelcomePage";
 import { ExamplePrompts } from "./components/ExamplePrompts";
 import { TourBar } from "./components/TourBar";
+import { loadAgentEvidence } from "./lib/evidence";
 import { buildAuditTimeline } from "./lib/timeline";
 import { buildTourSteps } from "./lib/evaluationTour";
 
@@ -548,14 +549,18 @@ export default function App() {
   }, []);
 
   const refreshPolicyEvents = useCallback(async (agentId: string) => {
-    // A failure here must not blank the list into something that reads as
-    // "no denials happened": leave the previous value in place instead.
-    const network = await api.networkEvents(agentId).catch(() => null);
-    if (network) setNetworkEvents(network.networkEvents);
-    const result = await api.policyEvents(agentId);
-    if (mountedRef.current && selectedIdRef.current === agentId) {
-      setPolicyEvents(result.policyEvents);
-    }
+    // Both fetches go through one guarded loader so the network-events response
+    // cannot be applied after the operator has switched agents -- see
+    // lib/evidence.ts. It used to set state unconditionally while the policy
+    // fetch beside it checked, so a slow response for agent A repopulated the
+    // timeline with A's evidence under agent B.
+    await loadAgentEvidence(agentId, {
+      fetchNetworkEvents: api.networkEvents,
+      fetchPolicyEvents: api.policyEvents,
+      isCurrent: (id) => mountedRef.current && selectedIdRef.current === id,
+      setNetworkEvents,
+      setPolicyEvents,
+    });
   }, []);
 
   const refreshApprovals = useCallback(async (agentId: string) => {

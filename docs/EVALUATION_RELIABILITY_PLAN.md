@@ -28,19 +28,22 @@ Environments:
 | `npm run test` | **CI windows, Node 24** | exit 1 — **94/106 pass, 12 fail** across 16 files, 3.24s |
 | `npm run check` | local Windows | exit 1 — the same 12 failures (see below) |
 
-<!-- figures: local reason="Re-measured on the merged commit on a developer machine because the row above it had gone stale by more than a factor of one and a half. No CI run exists for this branch yet; the provenance label registered in docs/figures-exempt.json retires this block when one does." -->
-
 **Those rows are the ORIGINAL baseline and are kept as history. The suite has
-grown well past them.** Measured on the merged commit (`9a152f2`, Windows 11,
-Node 24.16.0), the `@sentinel/server` workspace is **392 tests, 21 failing**;
-`@sentinel/web` is 22 passing and `@sentinel/evaluation` 6, both platform-clean.
+grown well past them.** On [run 33465066517](https://github.com/wcnjing/CodeJam/actions/runs/33465066517):
+
+| Check | Environment | Result |
+| --- | --- | --- |
+| `npm run test` | CI ubuntu, Node 22 | exit 0 — 384 passed, 8 skipped across 33 server files, plus 22 web and 6 evaluation |
+| `npm run test` | CI ubuntu, Node 24 | exit 0 — identical |
+| `npm run test` | CI windows, Node 24 | exit 1 — **21 failed, 367 passed, 4 skipped (392)** across 6 of 33 files |
+| `npm run test:windows-baseline` | CI windows, Node 24 | exit 0 — *"total 21 failed of 392 (baseline 21 of 392) — Baseline held"* |
+
 The 12 became 21 as POSIX-only tests were added — `container-isolation.test.ts`
 and `safe-write.test.ts` did not exist when this section was written — and the
 count is now **stored and gated** rather than restated: see
 [`.github/windows-baseline.json`](../.github/windows-baseline.json) and
-`npm run test:windows-baseline`.
-
-<!-- /figures -->
+`npm run test:windows-baseline`. The gate's first CI run is the one cited above,
+so the baseline is a clean-runner measurement rather than one laptop's.
 
 That gate is the real correction here. The number lived in three places — this
 document, the CI workflow comment, and the README — and all three drifted apart

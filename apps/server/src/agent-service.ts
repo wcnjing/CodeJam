@@ -129,8 +129,27 @@ export class AgentService {
       // append-only log now, not in this blob, so filtering the array here would
       // silently do nothing.
       database.approvals = database.approvals.filter((item) => item.agentId !== id);
+      // Network denials DO live in this blob (v5), so unlike policy events they
+      // are filtered here rather than through the log. Same decision, different
+      // store: the Agent's evidence goes with the Agent.
+      database.networkEvents = database.networkEvents.filter((item) => item.agentId !== id);
     });
     // The Agent's safety evidence goes too, so it is not orphaned in the store.
+    // Both kinds, deliberately: a network denial names a host and a run id, and
+    // keeping it past the deletion of the agent that produced it would leave a
+    // record nothing can resolve — the orphan this deletes rather than creates.
+    //
+    // RETENTION POLICY, stated rather than implied: evidence does not outlive
+    // its Agent. Deleting an Agent is an operator action on their own workspace,
+    // not a compliance hold, and the two kinds of evidence are deliberately
+    // parallel everywhere else — divergent lifetimes would be a trap for anyone
+    // reading one list and reasoning about the other. Documented in
+    // docs/OPERATIONAL_GOVERNANCE.md and docs/THREAT_MODEL.md (TM-OPS-001).
+    //
+    // The two stores cannot be written atomically. Network events go with the
+    // blob above; if THIS call then fails, policy events linger for an Agent
+    // that is gone. That window predates network events and is unchanged by
+    // them; it is bounded by the call being idempotent and safe to retry.
     await this.store.removePolicyEventsForAgent(id);
     return { archivedWorkspace };
   }
